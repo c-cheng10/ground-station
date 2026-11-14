@@ -16,6 +16,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -24,6 +25,7 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / "giovanni-cache"
 API = "https://api.giovanni.earthdata.nasa.gov"
+REQUEST_ERRORS = (URLError, TimeoutError, ConnectionError, HTTPException)
 # Each measurement comes from its most consistent record (see TRAINING_DATA.md):
 # (cache file name, Giovanni variable id, first year, last year).
 GLDAS20 = [(f"2_0_{v}", f"GLDAS_NOAH025_M_2_0_{v}", 1948, 2014) for v in
@@ -112,7 +114,7 @@ def fetch(token, name, data, first, last, lat, lon):
             with urlopen(request, timeout=180) as response:
                 body = response.read().decode("utf-8")
             break
-        except (URLError, TimeoutError) as error:
+        except REQUEST_ERRORS as error:
             if isinstance(error, HTTPError) and error.code in (401, 403):
                 raise SystemExit("Giovanni refused the token. Generate a new one at urs.earthdata.nasa.gov and update .env.")
             if attempt == 3:
@@ -136,7 +138,7 @@ def quota(token):
 def download_job(token, job):
     try:
         return fetch(token, *job)
-    except (URLError, TimeoutError) as error:
+    except REQUEST_ERRORS as error:
         _, data, _, _, lat, lon = job
         print(f"  failed {data} at {lat},{lon}: {error}", flush=True)
         return "failed"
