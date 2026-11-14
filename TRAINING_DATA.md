@@ -58,3 +58,16 @@ The historical [POWER correlation migration](supabase/correlations.sql) belongs 
 Apply [giovanni_refresh.sql](supabase/giovanni_refresh.sql) and deploy [refresh-climate-giovanni](supabase/functions/refresh-climate-giovanni/index.ts) with legacy JWT verification enabled. Set the server-only `EARTHDATA_TOKEN` to a current [Earthdata token](https://urs.earthdata.nasa.gov/documentation/for_users/user_token) for an account that has authorised [Giovanni](https://api.giovanni.earthdata.nasa.gov/signin).
 
 Monthly charts read refreshed observations. Annual trends and correlations use complete calendar years. The bundled trend map, CSV and forecast evaluation update when the dataset and model are rebuilt.
+
+## Graph neural network world model (experimental)
+
+`train_gnn.py` adds a graph network to a frozen ridge forecast. Each land point is a node linked to its eight closest neighbours and up to four points 1,500–2,500 km away. The network exchanges information between linked points in two rounds by default, then learns corrections to the ridge forecast. Training feeds predictions back in over three months by default.
+
+Create a virtual environment and install the training dependencies.
+
+```sh
+python -m venv .venv
+.venv/bin/python -m pip install -r requirements-gnn.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+```
+
+On Windows, use `.venv/Scripts/python`. Build `gldas-dataset.npz` with the pipeline above, then run `.venv/bin/python train_gnn.py --quick` for two training epochs or omit `--quick` for the full run. The script saves `gnn-world-model.pt` and reports forecast errors for the hybrid and its ridge core. The site runs the bundled ridge forecast.
