@@ -84,6 +84,7 @@
     .app { position: fixed; inset: 0; }
     .stage { position: absolute; inset: 0; touch-action: none; cursor: grab; }
     .stage.dragging { cursor: grabbing; }
+    .stage[data-drawing] { cursor: crosshair; user-select: none; }
     .stage canvas { position: absolute; inset: 0; }
     .pin { position: absolute; z-index: 4; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--ink); border: 3px solid #fff; box-shadow: 0 2px 8px rgb(15 35 56 / 0.45); pointer-events: none; }
     .pin::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 2px solid var(--ink); animation: pulse 1.8s var(--ease-out) infinite; }
@@ -99,9 +100,13 @@
     .topbar { top: max(var(--map-inset), env(safe-area-inset-top)); left: max(var(--map-inset), env(safe-area-inset-left)); right: max(var(--map-inset), env(safe-area-inset-right)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 12px 8px 16px; }
     .app[data-drawer] .topbar { right: calc(var(--drawer) + var(--map-inset)); }
     .brand { font-weight: 800; font-size: 1.02rem; line-height: 1.2; letter-spacing: -0.02em; }
+    .map-tools { display: flex; gap: 8px; min-width: 0; }
     .map-field { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 0.9rem; font-weight: 700; color: var(--muted); }
     .map-field select { min-width: 0; min-height: 44px; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 9px; background: var(--sunken); color: var(--ink); }
     .map-field select:hover { border-color: var(--control); }
+    @media (min-width: 761px) {
+      .app[data-drawer] .map-field span { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
+    }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     .chips button {
       flex: none; min-height: 38px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface);
@@ -112,6 +117,9 @@
     .chips button:disabled { color: var(--muted); background: var(--surface); cursor: default; opacity: 0.6; }
     .topbar-actions { display: flex; gap: 4px; margin-inline-start: auto; }
     .topbar-actions .icon-button { box-shadow: none; }
+    #draw-circle { min-height: 44px; }
+    #draw-circle[aria-pressed="true"] { background: var(--control); color: #fff; border-color: var(--control); }
+    .circle-hint { flex: 1 0 100%; margin: 0; padding: 7px 0 2px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.875rem; }
 
     /* Welcome card */
     .welcome { top: 92px; left: var(--map-inset); width: min(325px, calc(100vw - 32px)); max-height: calc(100dvh - 284px); overflow: auto; overscroll-behavior: contain; padding: 20px; }
@@ -191,7 +199,6 @@
     .answer h2 { font-size: clamp(1.45rem, 2.4vw, 1.9rem); letter-spacing: -0.025em; margin-top: 12px; }
     .why { margin: 10px 0 0; color: var(--muted); }
     .plain { margin: 14px 0 0; }
-    .plain + .plain { margin-top: 6px; }
     .answer-stripes { margin-top: 18px; height: 48px; border-radius: 10px; overflow: hidden; }
     .stripes-note, .chart-note, .note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
     .chart { margin: 0; }
@@ -290,16 +297,24 @@
 
     @media (max-width: 760px) {
       :root { --drawer: 100%; --map-inset: 8px; }
-      .topbar, .app[data-drawer] .topbar { right: max(8px, env(safe-area-inset-right)); padding: 6px 8px 8px 12px; gap: 4px 8px; }
-      .brand { flex: 1; }
-      .map-field { order: 3; flex: 1 0 100%; }
-      .map-field select { flex: 1; margin-right: 4px; }
+      .topbar, .app[data-drawer] .topbar {
+        right: max(8px, env(safe-area-inset-right)); padding: 6px 8px 8px 12px; gap: 4px 8px;
+        display: grid; grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas: "brand actions" "tools tools" "hint hint";
+      }
+      .brand { grid-area: brand; font-size: 1rem; }
+      .topbar-actions { grid-area: actions; }
+      .map-tools { grid-area: tools; }
+      .map-field { flex: 1; }
+      .map-field span { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
+      .map-field select { width: 100%; }
+      .circle-hint { grid-area: hint; }
       .welcome { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); max-height: min(55dvh, calc(100dvh - 132px)); z-index: 7; }
       .legend-card { bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); padding: 10px 12px; }
       .extremes { max-height: 22dvh; overflow: auto; }
       .zoom { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
       .app[data-drawer] :is(.zoom, .legend-card), .app:has(.welcome:not([hidden])) .legend-card { visibility: hidden; }
-      .drawer { top: auto; height: 68dvh; border-radius: 16px 16px 0 0; transform: translateY(105%); }
+      .drawer { top: auto; height: min(68dvh, calc(100dvh - 134px)); border-radius: 16px 16px 0 0; transform: translateY(105%); }
       .drawer-head { padding: 10px 12px 10px 16px; }
       .drawer-body { padding: 0 16px max(24px, env(safe-area-inset-bottom)); }
       .dialog-body { grid-template-columns: 1fr; }
@@ -314,7 +329,7 @@
   <a class="skip" href="#map-variable">Skip to map measurements</a>
   <div class="app" id="app">
     <div class="stage" id="trend-map-stage">
-      <canvas id="trend-map" tabindex="0" role="img" aria-labelledby="trend-map-title" aria-describedby="map-help"></canvas>
+      <canvas id="trend-map" tabindex="0" role="img" aria-labelledby="trend-map-title" aria-describedby="map-help circle-hint"></canvas>
       <div class="pin" id="map-pin" hidden></div>
       <div class="tip" id="map-tip" hidden></div>
     </div>
@@ -322,7 +337,10 @@
 
     <header class="float topbar">
       <h1 class="brand">Climate Trend Explorer</h1>
-      <label class="map-field" for="map-variable">Map measurement <select id="map-variable" name="measurement"></select></label>
+      <div class="map-tools">
+        <label class="map-field" for="map-variable"><span>Map measurement</span> <select id="map-variable" name="measurement"></select></label>
+        <button type="button" class="button secondary small" id="draw-circle" aria-pressed="false" aria-controls="trend-map">Draw circle</button>
+      </div>
       <div class="topbar-actions">
         <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
         <button type="button" class="icon-button" id="show-welcome" aria-label="Start here: examples and tips">
@@ -332,6 +350,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg>
         </button>
       </div>
+      <p class="circle-hint" id="circle-hint" role="status" hidden></p>
     </header>
 
     <p class="error" role="alert" id="data-error" hidden></p>
@@ -402,21 +421,12 @@
             <div class="chips" id="variable-options" role="group" aria-label="Measurements in the results"></div>
             <p class="description" id="variable-hint" hidden></p>
           </section>
-          <div class="refresh-actions">
-            <button type="button" class="button secondary small" id="refresh-giovanni">Refresh from Giovanni</button>
-            <button type="button" class="button secondary small" id="ask-at-point">Ask AI about this point</button>
-            <p id="refresh-status" class="description refresh-status" role="status"></p>
-          </div>
           <article class="answer" id="single-report" aria-labelledby="result-headline">
             <span class="verdict" id="trend-verdict"></span>
             <h2 id="result-headline"></h2>
-            <p class="why" id="variable-why"></p>
             <div aria-live="polite">
               <p class="plain" id="trend-meaning"></p>
-              <p class="plain" id="trend-chance"></p>
             </div>
-            <div class="answer-stripes"><canvas id="result-stripes" aria-hidden="true"></canvas></div>
-            <p class="stripes-note" id="stripes-note"></p>
 
             <figure class="chart" aria-labelledby="chart-title">
               <div class="chart-head">
@@ -435,6 +445,10 @@
                 <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
               </figcaption>
             </figure>
+            <div class="answer-stripes"><canvas id="result-stripes" aria-hidden="true"></canvas></div>
+            <p class="stripes-note" id="stripes-note"></p>
+            <p class="why" id="variable-why"></p>
+            <p class="plain" id="trend-chance" aria-live="polite"></p>
 
             <dl class="numbers">
               <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
@@ -485,6 +499,11 @@
             <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
           </section>
 
+          <div class="refresh-actions" id="point-actions">
+            <button type="button" class="button secondary small" id="refresh-giovanni">Refresh from Giovanni</button>
+            <button type="button" class="button secondary small" id="ask-at-point">Ask AI about this point</button>
+            <p id="refresh-status" class="description refresh-status" role="status"></p>
+          </div>
           <section class="section-card" id="research" aria-labelledby="research-title">
             <h3 id="research-title">Research context</h3>
             <p class="description" id="research-scope"></p>
@@ -553,6 +572,7 @@
         <h3>The data</h3>
         <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
         <p>The database holds 1,656 land points. The map shows a trend for each point and measurement with enough data.</p>
+        <p>Draw circle selects every grid point whose centre falls inside the outline on this map. Each point counts equally. The area chart uses months when every selected point has a value.</p>
       </div>
       <div>
         <h3>The trend test</h3>

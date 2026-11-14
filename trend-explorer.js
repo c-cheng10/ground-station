@@ -217,17 +217,57 @@
   const pText = (p) => p < 0.001 ? "<0.001" : format(p, 3);
 
   // Every land point's record is stored in Supabase by build_gldas_dataset.py (NASA Giovanni data).
-  async function loadPoint(point, signal) {
+  async function loadPoints(ids, signal) {
     const url = new URL("/rest/v1/climate_points", data.supabaseUrl);
-    url.search = new URLSearchParams({ id: `eq.${pointId(point)}`, select: "*" });
+    const filter = ids.length === 1 ? `eq.${ids[0]}` : `in.(${ids.map((id) => JSON.stringify(id)).join(",")})`;
+    url.search = new URLSearchParams({ id: filter, select: "*" });
     const response = await fetch(url, {
       signal, cache: "no-store",
       headers: { apikey: data.supabaseAnonKey, Authorization: `Bearer ${data.supabaseAnonKey}` },
     });
     if (!response.ok) throw new Error(`Supabase returned HTTP ${response.status}.`);
-    const [row] = await response.json();
-    if (row?.id !== pointId(point)) throw new Error(`No stored record for ${pointId(point)}.`);
+    const rows = await response.json();
+    const received = new Set(rows.map(({ id }) => id));
+    if (rows.length !== ids.length || !ids.every((id) => received.has(id))) {
+      throw new Error("Some selected grid points did not return a stored record.");
+    }
+    return rows;
+  }
+
+  async function loadPoint(point, signal) {
+    const [row] = await loadPoints([pointId(point)], signal);
     return row;
+  }
+
+  async function loadArea(ids, signal) {
+    const columns = [...data.variables, data.compare].filter(Boolean).map(({ id }) => id.toLowerCase());
+    const totals = columns.map(() => []);
+    const counts = columns.map(() => []);
+    let offset = 0;
+    let loaded = 0;
+    const readBatches = async () => {
+      while (offset < ids.length && !signal.aborted) {
+        const batch = ids.slice(offset, offset + 40);
+        offset += batch.length;
+        const rows = await loadPoints(batch, signal);
+        for (const row of rows) {
+          columns.forEach((column, index) => {
+            row[column]?.forEach((value, month) => {
+              if (!Number.isFinite(value)) return;
+              totals[index][month] = (totals[index][month] ?? 0) + value;
+              counts[index][month] = (counts[index][month] ?? 0) + 1;
+            });
+          });
+        }
+        loaded += batch.length;
+        if (!signal.aborted) regionMessage.textContent = `Loading NASA data from ${format(loaded, 0)} of ${format(ids.length, 0)} grid points…`;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, Math.ceil(ids.length / 40)) }, readBatches));
+    // A month has a mean only when the same set of grid points contributes to it.
+    return Object.fromEntries(columns.map((column, index) => [column,
+      Array.from(totals[index], (sum, month) => counts[index][month] === ids.length ? sum / ids.length : null),
+    ]));
   }
 
   // Choose the longest uninterrupted run of complete years, breaking ties with the newest one.
@@ -279,7 +319,10 @@
   }
 
   async function selectSite(nextSite) {
-    if (regionRequest && site.id === nextSite.id) return;
+    if (regionRequest && site.id === nextSite.id) {
+      openDrawer();
+      return;
+    }
     regionRequest?.abort();
     const request = new AbortController();
     regionRequest = request;
@@ -295,25 +338,30 @@
     byId("story").hidden = true;
     explorer.scrollTop = 0;
     openDrawer();
-    flyTo(nextSite.latitude, nextSite.longitude, Math.max(mapView.zoom, 3));
+    flyTo(nextSite.latitude, nextSite.longitude, nextSite.areaIds ? mapView.zoom : Math.max(mapView.zoom, 3));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
-      const row = await loadPoint(nextSite, request.signal);
+      const row = nextSite.areaIds ? await loadArea(nextSite.areaIds, request.signal) : await loadPoint(nextSite, request.signal);
       if (regionRequest !== request) return;
       analysis = analyseRow(row);
       if (!Object.keys(analysis.series).length) {
-        setRegionStatus(`No measurement has four consecutive complete years at ${nextSite.name}.`);
+        setRegionStatus(nextSite.areaIds
+          ? "No measurement has four consecutive complete years shared by all selected points. Try a smaller circle."
+          : `No measurement has four consecutive complete years at ${nextSite.name}.`);
         return;
       }
       regionResults.dataset.site = nextSite.id;
-      regionResults.dataset.point = row.id;
+      if (!nextSite.areaIds) regionResults.dataset.point = row.id;
+      byId("point-actions").hidden = Boolean(nextSite.areaIds);
+      byId("research").hidden = Boolean(nextSite.areaIds);
       regionResults.hidden = false;
       setRegionStatus("");
       renderDetails();
     } catch (error) {
       if (regionRequest !== request) return;
-      console.warn("Point data load failed", error);
+      request.abort();
+      console.warn("Climate data load failed", error);
       setRegionStatus(`The stored data for ${nextSite.name} didn’t load. Check your internet connection, then try again.`, true);
     } finally {
       if (regionRequest === request) regionRequest = null;
@@ -321,7 +369,7 @@
   }
 
   async function refreshPoint() {
-    if (!analysis || regionRequest) return;
+    if (!analysis || site.areaIds || regionRequest) return;
     const selectedSite = site;
     const request = new AbortController();
     regionRequest = request;
@@ -465,6 +513,7 @@
     regionResults.hidden = true;
     byId("story").hidden = true;
     openDrawer();
+    drawTrendMap();
     setRegionStatus("No stored Giovanni point is close enough. Choose a place near one of the map squares.");
   }
 
@@ -475,6 +524,10 @@
   }
 
   function coordinates(item) {
+    if (item.areaIds) {
+      const count = item.areaIds.length;
+      return `Monthly average across ${format(count, 0)} NASA grid ${count === 1 ? "point" : "points"}. Each month uses the same points.`;
+    }
     return `${item.region} at ${latLon(item)}. Each source uses its own grid resolution.`;
   }
 
@@ -577,7 +630,8 @@
       const trend = analysis.series[variable.id].trend;
       const unit = trendUnit(variable);
       byId("chart-title").textContent = `${variable.name} over time (${variable.unit})`;
-      byId("result-headline").textContent = `${variable.name} in ${site.name} ${{
+      const location = site.areaIds ? "the selected area" : site.name;
+      byId("result-headline").textContent = `${variable.name} in ${location} ${{
         rising: "is rising", falling: "is falling", inconclusive: "shows no clear trend yet",
       }[trend.verdict]}`;
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
@@ -681,7 +735,7 @@
 
   function renderForecast(variable) {
     const index = model ? model.variables.indexOf(variable.id) : -1;
-    const forecast = index < 0 ? null : forecastData();
+    const forecast = index < 0 || site.areaIds ? null : forecastData();
     byId("forecast").hidden = !forecast;
     if (!forecast) return;
     for (const [id, button] of forecastButtons) button.setAttribute("aria-pressed", String(id === forecastView));
@@ -1004,12 +1058,17 @@
   const world = byId("trend-map");
   const mapTip = byId("map-tip");
   const pin = byId("map-pin");
+  const circleButton = byId("draw-circle");
+  const circleHint = byId("circle-hint");
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   // Phones start zoomed in a little so squares are big enough to tap.
   const homeZoom = innerWidth < 760 ? 1.8 : 1;
   const mapView = { lon: 15, lat: 12, zoom: homeZoom };
   let revealLon = reduceMotion ? 180 : -180;
   let flight = 0;
+  let drawingCircle = false;
+  let circleDraft = null;
+  let circlePointer = null;
 
   const mapSize = () => [world.clientWidth, world.clientHeight];
   // Plate carrée sized so the whole world (360° by the 144° the land records span) fits at zoom 1.
@@ -1081,7 +1140,34 @@
         ctx.stroke();
       }
     }
-    if (site) {
+    const circle = drawingCircle ? circleDraft : site?.circle;
+    if (circle) {
+      const [x, y] = project(circle.longitude, circle.latitude);
+      ctx.beginPath();
+      ctx.arc(x, y, circle.radius * project.k, 0, 2 * Math.PI);
+      ctx.fillStyle = "rgb(31 78 156 / 0.15)";
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 5;
+      ctx.stroke();
+      ctx.strokeStyle = "#1f4e9c";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    if (drawingCircle) {
+      ctx.beginPath();
+      ctx.moveTo(width / 2 - 7, height / 2);
+      ctx.lineTo(width / 2 + 7, height / 2);
+      ctx.moveTo(width / 2, height / 2 - 7);
+      ctx.lineTo(width / 2, height / 2 + 7);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.strokeStyle = "#1f4e9c";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    if (site && !site.circle && !drawingCircle) {
       const [x, y] = project(site.longitude, site.latitude);
       pin.hidden = false;
       pin.style.left = `${x}px`;
@@ -1163,6 +1249,7 @@
   }
 
   function openDrawer() {
+    if (drawingCircle) setCircleMode(false);
     if (!app.hasAttribute("data-drawer")) {
       app.setAttribute("data-drawer", "");
       byId("welcome").hidden = true;
@@ -1179,8 +1266,70 @@
 
   const pointers = new Map();
   let drag = null;
+  const circleInstructions = "Drag from the centre, or select the centre and edge. With the keyboard, move the map with the arrow keys and press Enter for each point.";
+  const describeCircle = (message) => { circleHint.textContent = message; };
+
+  function setCircleMode(enabled) {
+    drawingCircle = enabled;
+    circleDraft = null;
+    circlePointer = null;
+    stage.toggleAttribute("data-drawing", enabled);
+    circleButton.setAttribute("aria-pressed", String(enabled));
+    circleHint.hidden = !enabled;
+    describeCircle(enabled ? circleInstructions : "");
+    mapTip.hidden = true;
+    if (enabled) {
+      cancelAnimationFrame(flight);
+      app.removeAttribute("data-drawer");
+      for (const option of mapVariable.options) option.disabled = false;
+      byId("welcome").hidden = true;
+      world.focus({ preventScroll: true });
+    }
+    drawTrendMap();
+  }
+
+  function setCircleEdge(x, y) {
+    const [longitude, latitude] = projector(...mapSize()).invert(x, y);
+    circleDraft.radius = Math.hypot(longitude - circleDraft.longitude, latitude - circleDraft.latitude);
+    drawTrendMap();
+  }
+
+  function setCircleCentre(x, y) {
+    const [longitude, latitude] = projector(...mapSize()).invert(x, y);
+    circleDraft = { longitude, latitude, radius: 0 };
+    describeCircle("Centre set. Select the circle’s edge, or move the map with the arrow keys and press Enter.");
+    drawTrendMap();
+  }
+
+  function completeCircle() {
+    const circle = circleDraft;
+    const { latitude, longitude, radius } = circle;
+    // Use the same projected circle to select grid centres and draw the outline.
+    const areaIds = points.filter(([lat, lon]) => Math.hypot(lat - latitude, lon - longitude) <= radius)
+      .map(([lat, lon]) => `${lat},${lon}`);
+    if (!areaIds.length) {
+      circleDraft = null;
+      describeCircle("No grid points inside. Draw a larger circle or move it over the map squares.");
+      drawTrendMap();
+      return;
+    }
+    setCircleMode(false);
+    selectSite({ id: `area:${latitude},${longitude},${radius}`, name: "Selected area",
+      latitude, longitude, circle, areaIds });
+  }
+
+  circleButton.addEventListener("click", () => setCircleMode(!drawingCircle));
   stage.addEventListener("pointerdown", (event) => {
     if (event.button > 0) return;
+    if (drawingCircle) {
+      if (circlePointer) return;
+      stage.setPointerCapture(event.pointerId);
+      const { offsetX: x, offsetY: y } = event;
+      circlePointer = { id: event.pointerId, hasCentre: Boolean(circleDraft), x, y };
+      if (!circleDraft) setCircleCentre(x, y);
+      else setCircleEdge(x, y);
+      return;
+    }
     stage.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, [event.offsetX, event.offsetY]);
     cancelAnimationFrame(flight);
@@ -1192,6 +1341,12 @@
     mapTip.hidden = true;
   });
   stage.addEventListener("pointermove", (event) => {
+    if (drawingCircle) {
+      if (circleDraft && (circlePointer?.id === event.pointerId || (!circlePointer && event.pointerType === "mouse"))) {
+        setCircleEdge(event.offsetX, event.offsetY);
+      }
+      return;
+    }
     if (!drag) {
       if (event.pointerType === "mouse") showTip(event.offsetX, event.offsetY);
       return;
@@ -1211,6 +1366,22 @@
     drawTrendMap();
   });
   const endPointer = (event) => {
+    if (drawingCircle) {
+      if (circlePointer?.id !== event.pointerId) return;
+      const { x, y, hasCentre } = circlePointer;
+      circlePointer = null;
+      if (event.type === "pointercancel") {
+        if (!hasCentre) {
+          circleDraft = null;
+          describeCircle(circleInstructions);
+        }
+        drawTrendMap();
+      } else if (hasCentre || Math.hypot(event.offsetX - x, event.offsetY - y) >= 5) {
+        setCircleEdge(event.offsetX, event.offsetY);
+        completeCircle();
+      }
+      return;
+    }
     pointers.delete(event.pointerId);
     if (!drag || pointers.size) return;
     const clicked = drag.moved < 5 && event.type === "pointerup";
@@ -1239,8 +1410,16 @@
       drawTrendMap();
     } else if (event.key === "+" || event.key === "=") zoomAt(width / 2, height / 2, 1.5);
     else if (event.key === "-") zoomAt(width / 2, height / 2, 1 / 1.5);
-    else if (event.key === "Enter") choosePoint(mapView.lat, mapView.lon);
+    else if (event.key === "Enter") {
+      if (!drawingCircle) choosePoint(mapView.lat, mapView.lon);
+      else if (!circleDraft) setCircleCentre(width / 2, height / 2);
+      else {
+        setCircleEdge(width / 2, height / 2);
+        completeCircle();
+      }
+    }
     else return;
+    if (drawingCircle && circleDraft && moves[event.key]) setCircleEdge(width / 2, height / 2);
     event.preventDefault();
   });
   byId("zoom-in").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom * 2, false));
@@ -1256,7 +1435,8 @@
   byId("close-welcome").addEventListener("click", hideWelcome);
   byId("explore-map").addEventListener("click", hideWelcome);
   byId("show-welcome").addEventListener("click", () => {
-    app.removeAttribute("data-drawer");
+    if (drawingCircle) setCircleMode(false);
+    closeDrawer();
     byId("welcome").hidden = false;
     byId("close-welcome").focus();
   });
@@ -1271,7 +1451,10 @@
   how.addEventListener("click", (event) => { if (event.target === how) how.close(); });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || how.open || assistantDialog.open) return;
-    if (app.hasAttribute("data-drawer")) closeDrawer();
+    if (drawingCircle) {
+      setCircleMode(false);
+      circleButton.focus();
+    } else if (app.hasAttribute("data-drawer")) closeDrawer();
     else if (!byId("welcome").hidden) hideWelcome();
   });
   byId("locate").addEventListener("click", () => {
