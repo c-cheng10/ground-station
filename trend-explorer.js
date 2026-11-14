@@ -156,7 +156,12 @@
       analysis = null;
       regionResults.hidden = true;
       console.warn("Region data load failed", error);
-      setRegionStatus(`Could not load ${nextSite.name} from NASA POWER. Check your connection and try again.`, true);
+      // POWER fills land-only variables (soil, evaporation) with -999 over water.
+      if (!data.sites.includes(nextSite) && /did not return/.test(error.message)) {
+        setRegionStatus(`NASA POWER has no complete land record around ${nextSite.name}. Soil and evaporation data stop at coasts and oceans, so choose a point farther inland.`);
+      } else {
+        setRegionStatus(`Could not load ${nextSite.name} from NASA POWER. Check your connection and try again.`, true);
+      }
     } finally {
       if (regionRequest === request) regionRequest = null;
     }
@@ -190,10 +195,30 @@
     const scale = Math.min(innerWidth / (longitudeSpan * frame.aspect), innerHeight / latitudeSpan);
     const xOffset = (width - longitudeSpan * frame.aspect * scale) / 2;
     const yOffset = (height - latitudeSpan * scale) / 2;
-    return (longitude, latitude) => [
+    const project = (longitude, latitude) => [
       xOffset + (longitude - frame.west) * frame.aspect * scale,
       yOffset + (frame.north - latitude) * scale,
     ];
+    project.invert = (x, y) => [
+      frame.west + (x - xOffset) / (frame.aspect * scale),
+      frame.north - (y - yOffset) / scale,
+    ];
+    return project;
+  }
+
+  // Snap to NASA POWER's 0.5° × 0.625° cell centres so the 3×3 patch matches its grid exactly.
+  function pointSite(latitude, longitude) {
+    const lat = Math.max(-88.5, Math.min(88.5, Math.round(latitude / 0.5) * 0.5));
+    const lon = Math.max(-179.375, Math.min(179.375, Math.round(longitude / 0.625) * 0.625));
+    const item = { latitude: lat, longitude: lon };
+    return {
+      ...item,
+      id: `point:${lat},${lon}`,
+      name: latLon(item),
+      region: "Chosen point",
+      bounds: { south: lat - 0.75, north: lat + 0.75, west: lon - 0.9375, east: lon + 0.9375 },
+      cellCount: 9,
+    };
   }
 
   function drawMap() {
@@ -236,7 +261,9 @@
       }
     }
 
-    for (const item of data.sites.filter((item) => item.continent === mapContinent)) {
+    const areas = data.sites.filter((item) => item.continent === mapContinent);
+    if (site && !data.sites.includes(site)) areas.push(site);
+    for (const item of areas) {
       const { west, east, south, north } = item.bounds;
       const [left, top] = project(west, north);
       const [right, bottom] = project(east, south);
@@ -278,10 +305,14 @@
     drawMap();
   }
 
-  function coordinates(item) {
+  function latLon(item) {
     const latitude = `${format(Math.abs(item.latitude), 1)}° ${item.latitude < 0 ? "S" : "N"}`;
     const longitude = `${format(Math.abs(item.longitude), 2)}° ${item.longitude < 0 ? "W" : "E"}`;
-    return `${item.region} · ${latitude}, ${longitude} · ${item.cellCount} grid cells`;
+    return `${latitude}, ${longitude}`;
+  }
+
+  function coordinates(item) {
+    return `${item.region} · ${latLon(item)} · ${item.cellCount} grid cells`;
   }
 
   function trendUnit(variable) {
@@ -569,8 +600,19 @@
   explorer.hidden = false;
   renderSiteList();
   renderMap();
-  setRegionStatus("Choose a study area to load its NASA POWER records.");
+  setRegionStatus("Choose a study area, or click anywhere on the map, to load its NASA POWER records.");
   retryRegion.addEventListener("click", () => selectSite(site));
+  byId("map-stage").addEventListener("click", (event) => {
+    if (event.target.closest("button")) return;
+    const rect = map.getBoundingClientRect();
+    const [longitude, latitude] = mapProjection(rect.width, rect.height).invert(event.clientX - rect.left, event.clientY - rect.top);
+    selectSite(pointSite(latitude, longitude));
+  });
+  byId("point-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const { latitude, longitude } = event.target.elements;
+    selectSite(pointSite(latitude.valueAsNumber, longitude.valueAsNumber));
+  });
 
   const observer = new ResizeObserver((entries) => {
     if (entries.some(({ target }) => target === byId("map-stage"))) drawMap();

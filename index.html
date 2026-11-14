@@ -55,7 +55,9 @@
     .continent-controls button[aria-pressed="true"] { background: var(--control); color: #fffefa; }
     .map-content { display: grid; grid-template-columns: minmax(0, 1fr) 257px; }
     .map-stage { min-width: 0; height: 475px; position: relative; background: #dbe9e7; overflow: hidden; }
-    .map-stage canvas { position: absolute; inset: 0; }
+    .map-stage canvas { position: absolute; inset: 0; cursor: crosshair; }
+    .point-form { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 18px; border-top: 1px solid var(--rule); font-size: 0.9rem; }
+    .point-form input { width: 7.5em; font: inherit; }
     .map-marker {
       position: absolute; z-index: 1; transform: translate(-50%, -50%); background: transparent; border: 0;
       width: 43px; height: 43px; border-radius: 50%; display: grid; place-items: center;
@@ -195,6 +197,12 @@
           </div>
           <div id="site-list" class="site-list" role="group" aria-label="Study areas"></div>
         </div>
+        <form class="point-form" id="point-form">
+          <span>Or click the map, or enter any point on Earth:</span>
+          <label>Latitude <input name="latitude" type="number" min="-90" max="90" step="any" required></label>
+          <label>Longitude <input name="longitude" type="number" min="-180" max="180" step="any" required></label>
+          <button type="submit" class="compare-toggle">Load point</button>
+        </form>
       </section>
       <div id="region-status" class="region-status" hidden>
         <p id="region-message" role="status"></p>
