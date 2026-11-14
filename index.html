@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#0f2338">
+  <meta name="theme-color" content="#d6e3ed">
   <meta name="description" content="A living map of how Earth’s climate has changed. Click any place on land to test decades of NASA data for a real trend.">
   <title>Climate Trend Explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -36,7 +36,8 @@
       --shadow-1: 0 1px 2px rgb(15 35 56 / 0.08), 0 4px 14px rgb(15 35 56 / 0.08);
       --shadow-2: 0 2px 6px rgb(15 35 56 / 0.08), 0 18px 48px rgb(15 35 56 / 0.18);
       --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-      --drawer: min(460px, 42vw);
+      --drawer: min(510px, 43vw);
+      --map-inset: 16px;
       font-family: "Atkinson Hyperlegible Next", system-ui, sans-serif;
       color: var(--ink);
       background: var(--ocean);
@@ -50,7 +51,7 @@
     h1, h2, h3, h4 { text-wrap: balance; line-height: 1.15; margin: 0; }
     p { text-wrap: pretty; }
     a { color: var(--control); text-underline-offset: 0.2em; }
-    button, input { font: inherit; touch-action: manipulation; color: inherit; }
+    button, input, select { font: inherit; touch-action: manipulation; color: inherit; }
     button { cursor: pointer; }
     :focus-visible { outline: 3px solid #4d86d9; outline-offset: 2px; }
     canvas { display: block; width: 100%; height: 100%; }
@@ -77,7 +78,7 @@
     .icon-button:hover { background: var(--tint); }
     .icon-button:active { transform: scale(0.94); }
     .icon-button svg { width: 20px; height: 20px; }
-    .float { position: absolute; z-index: 5; background: rgb(255 255 255 / 0.94); backdrop-filter: blur(10px); border-radius: 16px; box-shadow: var(--shadow-1); }
+    .float { position: absolute; z-index: 5; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow-1); }
 
     /* The map is the page */
     .app { position: fixed; inset: 0; }
@@ -95,29 +96,29 @@
     .tip strong { display: block; }
     .tip small { color: #b9c9db; }
 
-    /* Top bar: brand, measurement chips, help */
-    .topbar { top: max(14px, env(safe-area-inset-top)); left: 14px; right: 14px; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; }
-    .brand { font-weight: 800; font-size: 1.02rem; white-space: nowrap; }
-    .brand small { display: block; font-weight: 500; font-size: 0.78rem; color: var(--muted); }
-    .chips { flex: 1; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; mask-image: linear-gradient(90deg, #000 92%, transparent); }
-    .chips::-webkit-scrollbar { display: none; }
+    .topbar { top: max(var(--map-inset), env(safe-area-inset-top)); left: max(var(--map-inset), env(safe-area-inset-left)); right: max(var(--map-inset), env(safe-area-inset-right)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 12px 8px 16px; }
+    .app[data-drawer] .topbar { right: calc(var(--drawer) + var(--map-inset)); }
+    .brand { font-weight: 800; font-size: 1.02rem; line-height: 1.2; letter-spacing: -0.02em; }
+    .map-field { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 0.9rem; font-weight: 700; color: var(--muted); }
+    .map-field select { min-width: 0; min-height: 44px; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 9px; background: var(--sunken); color: var(--ink); }
+    .map-field select:hover { border-color: var(--control); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     .chips button {
       flex: none; min-height: 38px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface);
       font-size: 0.9rem; font-weight: 500; transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
     }
     .chips button:hover { border-color: #9fb6d8; background: var(--tint); }
     .chips button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 700; }
-    .topbar-actions { display: flex; gap: 6px; }
+    .chips button:disabled { color: var(--muted); background: var(--surface); cursor: default; opacity: 0.6; }
+    .topbar-actions { display: flex; gap: 4px; margin-inline-start: auto; }
+    .topbar-actions .icon-button { box-shadow: none; }
 
     /* Welcome card */
-    .welcome { top: 92px; left: 14px; width: min(360px, calc(100vw - 28px)); max-height: calc(100vh - 300px); overflow: auto; overscroll-behavior: contain; padding: 22px; animation: rise 520ms var(--ease-out) both 900ms; }
-    .welcome h1 { font-size: 1.55rem; letter-spacing: -0.025em; padding-right: 30px; }
+    .welcome { top: 92px; left: var(--map-inset); width: min(325px, calc(100vw - 32px)); max-height: calc(100dvh - 284px); overflow: auto; overscroll-behavior: contain; padding: 20px; }
+    .welcome h2 { font-size: 1.4rem; letter-spacing: -0.025em; padding-right: 30px; }
     .welcome > p { color: var(--muted); margin: 10px 0 0; }
     .welcome .close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; box-shadow: none; background: transparent; }
-    .steps { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: step; }
-    .steps li { counter-increment: step; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; font-size: 0.95rem; }
-    .steps li::before { content: counter(step); display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--tint); color: var(--control); font-weight: 800; font-size: 0.85rem; }
-    .welcome h2 { font-size: 1rem; margin-top: 20px; }
+    .welcome h3 { font-size: 0.95rem; margin-top: 16px; }
     .examples { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
     .examples button {
       width: 100%; text-align: left; border: 1px solid var(--rule); background: var(--surface); border-radius: 12px; padding: 0; overflow: hidden;
@@ -136,7 +137,7 @@
     @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 
     /* Legend and biggest changes, bottom left */
-    .legend-card { left: 14px; bottom: max(14px, env(safe-area-inset-bottom)); width: min(360px, calc(100vw - 28px)); padding: 14px 16px; }
+    .legend-card { left: var(--map-inset); bottom: max(var(--map-inset), env(safe-area-inset-bottom)); width: min(325px, calc(100vw - 32px)); padding: 12px 14px; }
     .legend-card h2 { font-size: 0.98rem; }
     .legend-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
     .trend-key { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -162,11 +163,10 @@
     }
     .app[data-drawer] .drawer { transform: none; visibility: visible; transition: transform 420ms var(--ease-out); }
     .drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px 22px; border-bottom: 1px solid var(--rule); }
-    .drawer-head h2 { flex: 1; font-size: 1rem; }
-    .drawer-head small { display: block; font-weight: 500; color: var(--muted); font-size: 0.82rem; }
-    .drawer-head .icon-button { box-shadow: none; background: var(--sunken); }
+    .drawer-head h2 { flex: 1; min-width: 0; font-size: 1.2rem; }
+    .drawer-head small { display: block; margin-top: 3px; font-weight: 500; color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+    .drawer-head .icon-button { flex: none; box-shadow: none; background: var(--sunken); }
     .drawer-body { flex: 1; overflow: auto; overscroll-behavior: contain; padding: 0 22px 32px; }
-    .grabber { display: none; }
 
     .region-status { padding: 40px 6px; text-align: center; }
     .region-status p { margin: 0 auto; max-width: 40ch; color: var(--muted); }
@@ -179,11 +179,10 @@
     .story { margin-top: 18px; padding: 14px 16px; background: #fff7e6; border-radius: 12px; }
     .story h3 { font-size: 0.95rem; margin-bottom: 4px; }
     .story p { margin: 0; font-size: 0.95rem; }
-    .results > * { animation: rise 420ms var(--ease-out) both; }
-    .results > *:nth-child(2) { animation-delay: 60ms; }
-    .results > *:nth-child(3) { animation-delay: 120ms; }
-
-    .answer { padding-top: 20px; }
+    .measurements { padding: 16px 0; border-bottom: 1px solid var(--rule); }
+    .measurements h3 { font-size: 1rem; }
+    #variable-hint { margin: 8px 0 0; }
+    .answer { padding-top: 16px; }
     .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 800; border-radius: 999px; padding: 5px 13px 5px 10px; }
     .verdict::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
     .verdict[data-state="rising"] { background: #f8e3dc; color: #7d2a18; }
@@ -280,7 +279,7 @@
     dialog { width: min(760px, calc(100vw - 28px)); max-height: calc(100vh - 40px); border: 0; border-radius: 20px; padding: 0; box-shadow: var(--shadow-2); color: var(--ink); }
     dialog::backdrop { background: rgb(15 35 56 / 0.45); backdrop-filter: blur(3px); }
     dialog[open] { animation: rise 380ms var(--ease-out); }
-    .dialog-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 14px 26px; background: #fff; border-bottom: 1px solid var(--rule); }
+    .dialog-head { position: sticky; z-index: 2; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 14px 26px; background: #fff; border-bottom: 1px solid var(--rule); }
     .dialog-head h2 { font-size: 1.35rem; }
     .dialog-body { padding: 8px 26px 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 28px; }
     .dialog-body h3 { font-size: 1.02rem; margin-top: 16px; }
@@ -290,27 +289,29 @@
     .error { position: absolute; z-index: 30; top: 90px; left: 14px; right: 14px; padding: 16px; background: #fff; border-radius: 12px; box-shadow: var(--shadow-1); }
 
     @media (max-width: 760px) {
-      :root { --drawer: 100vw; }
-      .topbar { flex-wrap: wrap; padding: 8px; gap: 8px; left: 8px; right: 8px; top: max(8px, env(safe-area-inset-top)); }
-      .brand { padding-left: 8px; flex: 1; }
-      .chips { order: 3; flex-basis: 100%; }
-      .welcome { top: auto; left: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100vw - 16px); max-height: 62vh; z-index: 7; }
-      .legend-card { left: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100vw - 80px); padding: 10px 12px; }
-      .legend-card p, .changes { display: none; }
+      :root { --drawer: 100%; --map-inset: 8px; }
+      .topbar, .app[data-drawer] .topbar { right: max(8px, env(safe-area-inset-right)); padding: 6px 8px 8px 12px; gap: 4px 8px; }
+      .brand { flex: 1; }
+      .map-field { order: 3; flex: 1 0 100%; }
+      .map-field select { flex: 1; margin-right: 4px; }
+      .welcome { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); max-height: min(55dvh, calc(100dvh - 132px)); z-index: 7; }
+      .legend-card { bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); padding: 10px 12px; }
+      .extremes { max-height: 22dvh; overflow: auto; }
       .zoom { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
-      .app[data-drawer] .zoom { right: 8px; }
-      .drawer { top: auto; height: 68vh; width: 100vw; border-radius: 20px 20px 0 0; transform: translateY(105%); }
-      .grabber { display: block; width: 44px; height: 5px; margin: 8px auto 0; border-radius: 999px; background: var(--rule); }
-      .drawer-head { padding-top: 6px; }
+      .app[data-drawer] :is(.zoom, .legend-card), .app:has(.welcome:not([hidden])) .legend-card { visibility: hidden; }
+      .drawer { top: auto; height: 68dvh; border-radius: 16px 16px 0 0; transform: translateY(105%); }
+      .drawer-head { padding: 10px 12px 10px 16px; }
+      .drawer-body { padding: 0 16px max(24px, env(safe-area-inset-bottom)); }
       .dialog-body { grid-template-columns: 1fr; }
     }
+    .drawer-body { min-height: 0; }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
     }
   </style>
 </head>
 <body>
-  <a class="skip" href="#drawer-title">Skip to the results</a>
+  <a class="skip" href="#map-variable">Skip to map measurements</a>
   <div class="app" id="app">
     <div class="stage" id="trend-map-stage">
       <canvas id="trend-map" tabindex="0" role="img" aria-labelledby="trend-map-title" aria-describedby="map-help"></canvas>
@@ -320,8 +321,8 @@
     <p class="sr-only" id="map-help">Click a place, or press Enter for the centre of the map. Arrow keys move the map; plus and minus zoom.</p>
 
     <header class="float topbar">
-      <div class="brand">Climate Trend Explorer<small>NASA data, 1948–2025</small></div>
-      <div class="chips" id="variable-options" role="group" aria-label="Measurement shown on the map"></div>
+      <h1 class="brand">Climate Trend Explorer</h1>
+      <label class="map-field" for="map-variable">Map measurement <select id="map-variable" name="measurement"></select></label>
       <div class="topbar-actions">
         <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
         <button type="button" class="icon-button" id="show-welcome" aria-label="Start here: examples and tips">
@@ -337,19 +338,14 @@
 
     <section class="float welcome" id="welcome" aria-labelledby="welcome-title">
       <button type="button" class="icon-button close" id="close-welcome" aria-label="Close the welcome card">×</button>
-      <h1 id="welcome-title">Is the climate where you live really changing?</h1>
-      <p>The map shows how each place has changed, measured by NASA satellites and models. Red is warming, blue is cooling.</p>
-      <ol class="steps">
-        <li>Pick what to see at the top: temperature, rain, snow and more.</li>
-        <li>Click any place on land.</li>
-        <li>Read the answer: is the change real, or could it be chance?</li>
-      </ol>
-      <h2>Or start with a real investigation</h2>
-      <ul class="examples" id="example-list"></ul>
+      <h2 id="welcome-title">How is your climate changing?</h2>
+      <p>Choose a measurement and select a map square to see decades of NASA observations and test for a trend.</p>
       <div class="welcome-actions">
-        <button type="button" class="button primary small" id="locate">Use my location</button>
-        <button type="button" class="button secondary small" id="explore-map">Explore the map</button>
+        <button type="button" class="button primary small" id="explore-map">Explore the map</button>
+        <button type="button" class="button secondary small" id="locate">Use my location</button>
       </div>
+      <h3>Try an investigation</h3>
+      <ul class="examples" id="example-list"></ul>
       <details class="goto">
         <summary>Go to coordinates</summary>
         <form id="point-form">
@@ -364,7 +360,7 @@
       <h2 id="trend-map-title">Change per decade</h2>
       <p id="trend-map-sub"></p>
       <div class="trend-key"><span id="trend-low"></span><span class="ramp" id="trend-ramp" aria-hidden="true"></span><span id="trend-high"></span></div>
-      <p>Faded squares could be chance.</p>
+      <p>Faded squares show no clear trend.</p>
       <details class="changes">
         <summary>Biggest changes</summary>
         <div class="extremes">
@@ -383,7 +379,6 @@
     </div>
 
     <aside class="drawer" id="drawer" aria-labelledby="drawer-title">
-      <div class="grabber" aria-hidden="true"></div>
       <div class="drawer-head">
         <h2 id="drawer-title" tabindex="-1"><span id="drawer-place">A place</span><small id="site-description"></small></h2>
         <button type="button" class="icon-button" id="close-drawer" aria-label="Close the results">×</button>
@@ -399,6 +394,14 @@
         </div>
 
         <div id="region-results" class="results" hidden>
+          <section class="measurements" aria-labelledby="measurement-title">
+            <div class="compare-row">
+              <h3 id="measurement-title">Measurements</h3>
+              <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false" aria-describedby="variable-hint">Compare</button>
+            </div>
+            <div class="chips" id="variable-options" role="group" aria-label="Measurements in the results"></div>
+            <p class="description" id="variable-hint" hidden></p>
+          </section>
           <div class="refresh-actions">
             <button type="button" class="button secondary small" id="refresh-giovanni">Refresh from Giovanni</button>
             <button type="button" class="button secondary small" id="ask-at-point">Ask AI about this point</button>
@@ -495,11 +498,7 @@
           </section>
 
           <section class="section-card" aria-labelledby="overview-title">
-            <div class="compare-row">
-              <h3 id="overview-title"></h3>
-              <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false">Compare measurements</button>
-            </div>
-            <p class="description" id="variable-hint">Choose a name to open its result.</p>
+            <h3 id="overview-title"></h3>
             <div class="table-wrap">
               <table>
                 <thead><tr><th scope="col">Measurement</th><th scope="col">Change per decade</th><th scope="col">Result</th></tr></thead>

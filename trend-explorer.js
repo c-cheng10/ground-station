@@ -117,6 +117,7 @@
 
   const chart = byId("chart");
   const tooltip = byId("chart-tooltip");
+  const mapVariable = byId("map-variable");
   const optionButtons = new Map();
   const viewButtons = new Map();
   const numberFormats = new Map();
@@ -290,7 +291,9 @@
     refreshStatus.textContent = "";
     chartLayout = null;
     byId("drawer-place").textContent = nextSite.name;
-    byId("site-description").textContent = "";
+    byId("site-description").textContent = coordinates(nextSite);
+    byId("story").hidden = true;
+    explorer.scrollTop = 0;
     openDrawer();
     flyTo(nextSite.latitude, nextSite.longitude, Math.max(mapView.zoom, 3));
     regionResults.hidden = true;
@@ -421,7 +424,7 @@
   function renderTrendMap() {
     const variable = trendMapVariable();
     const entry = trendMap[variable.id];
-    for (const [id, button] of optionButtons) button.setAttribute("aria-pressed", String(selectedIds.has(id)));
+    mapVariable.value = variable.id;
     if (!entry) return;
     const unit = `${trendUnit(variable)} per decade`;
     byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
@@ -539,8 +542,10 @@
   }
 
   function renderDetails() {
-    renderTrendMap();
-    if (!analysis) return;
+    if (!analysis) {
+      renderTrendMap();
+      return;
+    }
     activeIndex = null;
     byId("chart-selection").textContent = "";
     byId("story").hidden = story?.siteId !== site.id;
@@ -548,6 +553,10 @@
     if (!available.length) return;
     selectedIds = new Set([...selectedIds].filter((id) => analysis.series[id]));
     if (!selectedIds.size) selectedIds.add(available[0].id);
+    if (app.hasAttribute("data-drawer")) {
+      for (const option of mapVariable.options) option.disabled = !analysis.series[option.value];
+    }
+    renderTrendMap();
     if (available.length < 2) compareMode = false;
     const variables = available.filter(({ id }) => selectedIds.has(id));
     for (const [id, button] of optionButtons) {
@@ -557,7 +566,8 @@
     const comparing = variables.length > 1;
     byId("compare-toggle").setAttribute("aria-pressed", String(compareMode));
     byId("compare-toggle").disabled = available.length < 2;
-    byId("variable-hint").textContent = compareMode ? "Choose two or more measurements to see how they move together." : "Choose one measurement to see its trend.";
+    byId("variable-hint").hidden = !compareMode;
+    byId("variable-hint").textContent = "Select two or more measurements to compare.";
     byId("single-report").hidden = comparing;
     byId("correlations").hidden = !comparing;
     if (comparing) {
@@ -575,7 +585,6 @@
       const scale = stripeScales[variable.id] || stripeScales.T2M;
       const { firstYear, lastYear } = analysis.series[variable.id];
       byId("stripes-note").textContent = `Each stripe is one year from ${firstYear} to ${lastYear}. ${scale.note}`;
-      byId("site-description").textContent = coordinates(site);
       const verdict = byId("trend-verdict");
       verdict.dataset.state = trend.verdict;
       verdict.textContent = verdictLabels[trend.verdict];
@@ -906,6 +915,7 @@
   }
 
   for (const variable of data.variables) {
+    mapVariable.add(new Option(variable.name, variable.id));
     const button = create("button", variable.name);
     button.dataset.variable = variable.id;
     button.addEventListener("click", () => {
@@ -920,6 +930,12 @@
     optionButtons.set(variable.id, button);
     byId("variable-options").append(button);
   }
+  mapVariable.addEventListener("change", () => {
+    compareMode = false;
+    selectedIds = new Set([mapVariable.value]);
+    if (app.hasAttribute("data-drawer")) renderDetails();
+    else renderTrendMap();
+  });
   for (const [id, label] of Object.entries(forecastViews)) {
     const button = create("button", label);
     button.addEventListener("click", () => {
@@ -1139,7 +1155,7 @@
       create("strong", countryAt(lat, lon) || "Coastal area"),
       create("span", `${format(entry.slope[k], variable.decimals + 1, true)} ${trendUnit(variable)} per decade`),
       create("br"),
-      create("small", entry.significant[k] ? "A real trend. Click for details." : "Could be chance. Click for details."),
+      create("small", entry.significant[k] ? "Clear trend. Select for details." : "No clear trend. Select for details."),
     );
     mapTip.hidden = false;
     mapTip.style.left = `${Math.min(x, mapSize()[0] - mapTip.offsetWidth - 24)}px`;
@@ -1151,11 +1167,13 @@
       app.setAttribute("data-drawer", "");
       byId("welcome").hidden = true;
     }
+    for (const option of mapVariable.options) option.disabled = Boolean(analysis && !analysis.series[option.value]);
     byId("drawer-title").focus({ preventScroll: true });
   }
 
   function closeDrawer() {
     app.removeAttribute("data-drawer");
+    for (const option of mapVariable.options) option.disabled = false;
     world.focus({ preventScroll: true });
   }
 
