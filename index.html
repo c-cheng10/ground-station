@@ -2,10 +2,10 @@
 <html lang="en-CA">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#0b1a2b">
-  <meta name="description" content="Pick any place on land and test decades of NASA data for a real climate trend.">
+  <meta name="theme-color" content="#0f2338">
+  <meta name="description" content="A living map of how Earth’s climate has changed. Click any place on land to test decades of NASA data for a real trend.">
   <title>Climate Trend Explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,6 +14,7 @@
   <script defer src="trend-config.js"></script>
   <script defer src="points-index.js"></script>
   <script defer src="featured-stripes.js"></script>
+  <script defer src="trend-map.js"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
   <script defer src="trend-explorer.js"></script>
@@ -21,230 +22,232 @@
   <script defer src="correlation-assistant.js"></script>
   <style>
     :root {
-      --night: #0b1a2b;
-      --ground: #e7edf2;
+      --ocean: #d6e3ed;
+      --land: #f6f8fa;
       --surface: #ffffff;
-      --sunken: #f3f6f9;
+      --sunken: #f2f5f8;
       --ink: #0f2338;
-      --muted: #47596b;
-      --rule: #d8e0e8;
+      --muted: #48596b;
+      --rule: #dbe2e9;
       --control: #1f4e9c;
       --control-hover: #183e7c;
       --tint: #e3ebf6;
       --warm: #a8402a;
-      --shadow-1: 0 1px 2px rgb(15 35 56 / 0.06), 0 3px 10px rgb(15 35 56 / 0.05);
-      --shadow-2: 0 2px 4px rgb(15 35 56 / 0.05), 0 14px 36px rgb(15 35 56 / 0.11);
+      --shadow-1: 0 1px 2px rgb(15 35 56 / 0.08), 0 4px 14px rgb(15 35 56 / 0.08);
+      --shadow-2: 0 2px 6px rgb(15 35 56 / 0.08), 0 18px 48px rgb(15 35 56 / 0.18);
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --drawer: min(460px, 42vw);
       font-family: "Atkinson Hyperlegible Next", system-ui, sans-serif;
       color: var(--ink);
-      background: var(--ground);
+      background: var(--ocean);
       line-height: 1.5;
       -webkit-tap-highlight-color: transparent;
     }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
-    body { margin: 0; }
+    html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
     ::selection { background: #bcd0ec; color: var(--ink); }
-    h1, h2, h3 { text-wrap: balance; line-height: 1.12; margin: 0; }
+    h1, h2, h3, h4 { text-wrap: balance; line-height: 1.15; margin: 0; }
     p { text-wrap: pretty; }
     a { color: var(--control); text-underline-offset: 0.2em; }
-    button, input { font: inherit; touch-action: manipulation; }
+    button, input { font: inherit; touch-action: manipulation; color: inherit; }
     button { cursor: pointer; }
-    :focus-visible { outline: 3px solid #4d86d9; outline-offset: 3px; }
-    .shell { width: min(1240px, calc(100% - 64px)); margin-inline: auto; }
-    .skip { position: absolute; left: 16px; top: -60px; z-index: 20; padding: 10px 14px; background: var(--surface); border-radius: 8px; }
-    .skip:focus { top: 12px; }
-    .sr-only { position: absolute; overflow: hidden; clip-path: inset(50%); width: 1px; height: 1px; white-space: nowrap; }
+    :focus-visible { outline: 3px solid #4d86d9; outline-offset: 2px; }
     canvas { display: block; width: 100%; height: 100%; }
+    .sr-only { position: absolute; overflow: hidden; clip-path: inset(50%); width: 1px; height: 1px; white-space: nowrap; }
+    .skip { position: absolute; left: 16px; top: -60px; z-index: 50; padding: 10px 14px; background: var(--surface); border-radius: 8px; }
+    .skip:focus { top: 12px; }
 
     .button {
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 10px 20px;
-      border-radius: 999px; border: 1px solid transparent; font-weight: 700; text-decoration: none;
-      transition: background-color 160ms ease-out, transform 120ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 9px 18px;
+      border-radius: 999px; border: 1px solid transparent; font-weight: 700; text-decoration: none; white-space: nowrap;
+      transition: background-color 160ms ease-out, transform 120ms ease-out, border-color 160ms ease-out;
     }
-    .button:active { transform: translateY(1px); }
-    .button.primary { background: var(--control); color: #fff; box-shadow: 0 1px 2px rgb(15 35 56 / 0.2); }
+    .button:active { transform: scale(0.97); }
+    .button.primary { background: var(--control); color: #fff; }
     .button.primary:hover { background: var(--control-hover); }
     .button.secondary { background: var(--surface); color: var(--control); border-color: #b4c6e0; }
     .button.secondary:hover { background: var(--tint); border-color: var(--control); }
-    .button.small { min-height: 38px; padding: 6px 15px; font-size: 0.9rem; }
-
-    /* Hero: the stripes are the backdrop */
-    .hero { position: relative; isolation: isolate; color: #f2f6fa; background: var(--night); min-height: min(90vh, 780px); display: flex; flex-direction: column; }
-    .hero-stripes { position: absolute; inset: 0; z-index: -2; }
-    .hero::before {
-      content: ""; position: absolute; inset: 0; z-index: -1;
-      background:
-        linear-gradient(90deg, rgb(11 26 43 / 0.96) 0%, rgb(11 26 43 / 0.86) 42%, rgb(11 26 43 / 0.35) 78%, rgb(11 26 43 / 0.15) 100%),
-        linear-gradient(0deg, rgb(11 26 43 / 0.9) 0%, rgb(11 26 43 / 0) 32%);
+    .button.small { min-height: 36px; padding: 5px 14px; font-size: 0.9rem; }
+    .icon-button {
+      display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; border: 0;
+      background: var(--surface); color: var(--ink); font-size: 1.3rem; font-weight: 700; box-shadow: var(--shadow-1);
+      transition: background-color 160ms ease-out, transform 120ms ease-out;
     }
-    .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding-block: 22px; }
-    .brand { font-weight: 800; font-size: 1.1rem; white-space: nowrap; color: #fff; text-decoration: none; }
-    .nav { display: flex; flex-wrap: wrap; gap: 4px 22px; }
-    .nav a { color: #c8d6e6; text-decoration: none; font-size: 0.95rem; white-space: nowrap; }
-    .nav a:hover { color: #fff; text-decoration: underline; }
-    .hero-body { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-block: 40px 56px; }
-    .hero h1 { font-size: clamp(2.6rem, 6.4vw, 5.2rem); font-weight: 800; letter-spacing: -0.04em; max-width: 13ch; }
-    .hero-lead { font-size: clamp(1.08rem, 1.6vw, 1.25rem); color: #cddaea; margin: 24px 0 32px; max-width: 54ch; }
-    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-    .hero .button.primary { background: #fff; color: var(--ink); }
-    .hero .button.primary:hover { background: #dfe9f6; }
-    .hero .button.secondary { background: rgb(255 255 255 / 0.06); color: #fff; border-color: rgb(255 255 255 / 0.35); }
-    .hero .button.secondary:hover { background: rgb(255 255 255 / 0.14); border-color: #fff; }
-    .hero-key { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-bottom: 26px; color: #b9c9db; font-size: 0.9rem; }
-    .scale { display: inline-flex; align-items: center; gap: 8px; }
-    .scale span[aria-hidden] { width: 120px; height: 10px; border-radius: 999px; background: linear-gradient(90deg, #2166ac, #f7f7f7, #b2182b); }
+    .icon-button:hover { background: var(--tint); }
+    .icon-button:active { transform: scale(0.94); }
+    .icon-button svg { width: 20px; height: 20px; }
+    .float { position: absolute; z-index: 5; background: rgb(255 255 255 / 0.94); backdrop-filter: blur(10px); border-radius: 16px; box-shadow: var(--shadow-1); }
 
-    /* Sections */
-    .section { padding-block: 72px 0; scroll-margin-top: 12px; }
-    .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px 40px; margin-bottom: 28px; }
-    .section-head h2 { font-size: clamp(1.7rem, 3.2vw, 2.5rem); letter-spacing: -0.03em; }
-    .section-head p { margin: 0; color: var(--muted); max-width: 52ch; font-size: 1.02rem; }
+    /* The map is the page */
+    .app { position: fixed; inset: 0; }
+    .stage { position: absolute; inset: 0; touch-action: none; cursor: grab; }
+    .stage.dragging { cursor: grabbing; }
+    .stage canvas { position: absolute; inset: 0; }
+    .pin { position: absolute; z-index: 4; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--ink); border: 3px solid #fff; box-shadow: 0 2px 8px rgb(15 35 56 / 0.45); pointer-events: none; }
+    .pin::after { content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 2px solid var(--ink); animation: pulse 1.8s var(--ease-out) infinite; }
+    @keyframes pulse { from { transform: scale(0.5); opacity: 0.9; } to { transform: scale(2.2); opacity: 0; } }
+    .tip {
+      position: absolute; z-index: 6; pointer-events: none; padding: 8px 12px; border-radius: 10px; background: var(--ink); color: #fff;
+      font-size: 0.88rem; line-height: 1.35; white-space: nowrap; box-shadow: 0 6px 18px rgb(15 35 56 / 0.3); font-variant-numeric: tabular-nums;
+      transform: translate(14px, -50%); transition: opacity 120ms ease-out;
+    }
+    .tip strong { display: block; }
+    .tip small { color: #b9c9db; }
 
-    /* Example cases */
-    .examples { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
-    .example {
-      display: flex; flex-direction: column; background: var(--surface); border-radius: 16px; overflow: hidden;
-      box-shadow: var(--shadow-1); transition: transform 180ms ease-out, box-shadow 180ms ease-out;
+    /* Top bar: brand, measurement chips, help */
+    .topbar { top: max(14px, env(safe-area-inset-top)); left: 14px; right: 14px; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; }
+    .brand { font-weight: 800; font-size: 1.02rem; white-space: nowrap; }
+    .brand small { display: block; font-weight: 500; font-size: 0.78rem; color: var(--muted); }
+    .chips { flex: 1; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; mask-image: linear-gradient(90deg, #000 92%, transparent); }
+    .chips::-webkit-scrollbar { display: none; }
+    .chips button {
+      flex: none; min-height: 38px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface);
+      font-size: 0.9rem; font-weight: 500; transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
     }
-    .example:hover { transform: translateY(-3px); box-shadow: var(--shadow-2); }
-    .example canvas { height: 92px; }
-    .example-body { display: flex; flex-direction: column; gap: 10px; padding: 22px 22px 24px; flex: 1; }
-    .example h3 { font-size: 1.2rem; letter-spacing: -0.015em; }
-    .example .where { margin: 0; color: var(--muted); font-size: 0.88rem; }
-    .example p { margin: 0; flex: 1; }
-    .example .button { align-self: start; margin-top: 6px; }
+    .chips button:hover { border-color: #9fb6d8; background: var(--tint); }
+    .chips button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; font-weight: 700; }
+    .topbar-actions { display: flex; gap: 6px; }
 
-    /* Workspace: sticky controls on the left, the answer on the right */
-    .workspace { display: grid; grid-template-columns: 370px minmax(0, 1fr); gap: 24px; align-items: start; }
-    .sidebar { position: sticky; top: 16px; display: grid; gap: 16px; max-height: calc(100vh - 32px); overflow: auto; overscroll-behavior: contain; border-radius: 16px; }
-    .card { background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-1); }
-    .card-pad { padding: 20px; }
-    .card h3.step { font-size: 1.1rem; letter-spacing: -0.01em; }
-    .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
-    .hint { margin: 0 0 12px; color: var(--muted); font-size: 0.9rem; }
-    .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 999px; background: var(--sunken); border: 1px solid var(--rule); }
-    .segmented button { border: 0; background: transparent; border-radius: 999px; padding: 5px 12px; color: var(--muted); font-size: 0.85rem; min-height: 32px; transition: background-color 160ms ease-out, color 160ms ease-out; }
-    .segmented button:hover { color: var(--ink); }
-    .segmented button[aria-pressed="true"] { background: var(--control); color: #fff; }
-    .map-stage { position: relative; height: 250px; border-radius: 12px; overflow: hidden; background: #d6e3ee; box-shadow: inset 0 0 0 1px var(--rule); }
-    .map-stage canvas { position: absolute; inset: 0; cursor: crosshair; }
-    .map-marker {
-      position: absolute; z-index: 1; transform: translate(-50%, -50%); background: transparent; border: 0;
-      width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+    /* Welcome card */
+    .welcome { top: 92px; left: 14px; width: min(360px, calc(100vw - 28px)); max-height: calc(100vh - 300px); overflow: auto; overscroll-behavior: contain; padding: 22px; animation: rise 520ms var(--ease-out) both 900ms; }
+    .welcome h1 { font-size: 1.55rem; letter-spacing: -0.025em; padding-right: 30px; }
+    .welcome > p { color: var(--muted); margin: 10px 0 0; }
+    .welcome .close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; box-shadow: none; background: transparent; }
+    .steps { margin: 16px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: step; }
+    .steps li { counter-increment: step; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; font-size: 0.95rem; }
+    .steps li::before { content: counter(step); display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--tint); color: var(--control); font-weight: 800; font-size: 0.85rem; }
+    .welcome h2 { font-size: 1rem; margin-top: 20px; }
+    .examples { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+    .examples button {
+      width: 100%; text-align: left; border: 1px solid var(--rule); background: var(--surface); border-radius: 12px; padding: 0; overflow: hidden;
+      transition: transform 160ms ease-out, box-shadow 160ms ease-out, border-color 160ms ease-out;
     }
-    .map-marker::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--control); box-shadow: 0 0 0 2px #fff; transition: transform 160ms ease-out; }
-    .map-marker:hover::before { transform: scale(1.3); }
-    .map-marker[aria-pressed="true"]::before { background: var(--warm); box-shadow: 0 0 0 2px #fff, 0 0 0 6px #a8402a40; }
-    .map-marker-label { display: none; }
-    .site-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
-    .site-list-title { grid-column: 1 / -1; margin: 4px 0 0; font-size: 0.86rem; color: var(--muted); }
-    .site-list button {
-      text-align: left; background: var(--sunken); color: var(--ink); border: 1px solid transparent; border-radius: 10px;
-      padding: 8px 10px; min-height: 50px; transition: background-color 160ms ease-out, border-color 160ms ease-out;
-    }
-    .site-list button:hover { border-color: #b4c6e0; }
-    .site-list button[aria-pressed="true"] { background: var(--tint); border-color: var(--control); }
-    .site-list strong { display: block; font-size: 0.9rem; line-height: 1.25; }
-    .site-list small { color: var(--muted); font-size: 0.8rem; }
-    .point-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rule); }
-    .point-form p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 0.86rem; }
-    .point-form label { display: grid; gap: 4px; font-size: 0.85rem; font-weight: 700; }
-    .point-form input { width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid #b0c0ce; border-radius: 10px; background: #fff; font-variant-numeric: tabular-nums; }
-    .point-form input:hover { border-color: var(--control); }
-    .point-form button { grid-column: 1 / -1; }
-    .variable-options { display: grid; gap: 6px; }
-    .variable-options button {
-      text-align: left; background: var(--sunken); color: var(--ink); border: 1px solid transparent; border-radius: 10px;
-      padding: 9px 12px; min-height: 42px; font-weight: 500; transition: background-color 160ms ease-out, border-color 160ms ease-out;
-    }
-    .variable-options button:hover { border-color: #b4c6e0; }
-    .variable-options button[aria-pressed="true"] { background: var(--control); color: #fff; font-weight: 700; }
-    .compare-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
-    .compare-row p { margin: 0; color: var(--muted); font-size: 0.86rem; flex: 1 1 160px; }
+    .examples button:hover { transform: translateY(-2px); box-shadow: var(--shadow-1); border-color: #b4c6e0; }
+    .examples canvas { height: 22px; }
+    .examples span { display: block; padding: 8px 12px 10px; font-weight: 700; font-size: 0.93rem; }
+    .welcome-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .goto { margin-top: 14px; font-size: 0.9rem; }
+    .goto summary { cursor: pointer; color: var(--control); font-weight: 700; }
+    .goto form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .goto label { display: grid; gap: 4px; font-weight: 700; font-size: 0.85rem; }
+    .goto input { width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid #b0c0ce; border-radius: 10px; background: #fff; }
+    .goto button { grid-column: 1 / -1; }
+    @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 
-    .main { display: grid; gap: 20px; min-width: 0; }
-    .region-status { padding: 48px 32px; text-align: center; }
-    .region-status p { margin: 0 auto; max-width: 46ch; font-size: 1.1rem; color: var(--muted); }
-    .region-status button { margin-top: 16px; }
+    /* Legend and biggest changes, bottom left */
+    .legend-card { left: 14px; bottom: max(14px, env(safe-area-inset-bottom)); width: min(360px, calc(100vw - 28px)); padding: 14px 16px; }
+    .legend-card h2 { font-size: 0.98rem; }
+    .legend-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
+    .trend-key { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .trend-key .ramp { flex: 1; height: 10px; border-radius: 999px; }
+    .changes { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; }
+    .changes summary { cursor: pointer; font-weight: 700; color: var(--control); font-size: 0.9rem; min-height: 28px; }
+    .extremes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 6px; }
+    .extremes h3 { font-size: 0.85rem; color: var(--muted); }
+    .extremes ol { margin: 4px 0 0; padding-left: 18px; font-size: 0.84rem; }
+    .extremes li { padding: 1px 0; }
+    .link-button { padding: 2px 0; border: 0; background: transparent; color: var(--control); font-weight: 700; text-align: left; }
+    .link-button:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+
+    /* Zoom controls, bottom right (they move left when the panel opens) */
+    .zoom { position: absolute; z-index: 5; right: 14px; bottom: max(14px, env(safe-area-inset-bottom)); display: grid; gap: 6px; transition: right 380ms var(--ease-out); }
+    .app[data-drawer] .zoom { right: calc(var(--drawer) + 28px); }
+
+    /* The answer panel */
+    .drawer {
+      position: absolute; z-index: 10; top: 0; right: 0; bottom: 0; width: var(--drawer); background: var(--surface);
+      box-shadow: var(--shadow-2); display: flex; flex-direction: column;
+      transform: translateX(105%); visibility: hidden; transition: transform 420ms var(--ease-out), visibility 0s linear 420ms;
+    }
+    .app[data-drawer] .drawer { transform: none; visibility: visible; transition: transform 420ms var(--ease-out); }
+    .drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px 22px; border-bottom: 1px solid var(--rule); }
+    .drawer-head h2 { flex: 1; font-size: 1rem; }
+    .drawer-head small { display: block; font-weight: 500; color: var(--muted); font-size: 0.82rem; }
+    .drawer-head .icon-button { box-shadow: none; background: var(--sunken); }
+    .drawer-body { flex: 1; overflow: auto; overscroll-behavior: contain; padding: 0 22px 32px; }
+    .grabber { display: none; }
+
+    .region-status { padding: 40px 6px; text-align: center; }
+    .region-status p { margin: 0 auto; max-width: 40ch; color: var(--muted); }
+    .region-status button { margin-top: 14px; }
     .region-status[data-loading] p::before {
       content: ""; display: block; width: 28px; height: 28px; margin: 0 auto 14px;
       border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .agree { margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: var(--sunken); }
-    .agree h3 { font-size: 1rem; margin-bottom: 4px; }
-    .agree p { margin: 0; color: var(--muted); font-size: 0.95rem; }
-    .story { padding: 18px 22px; background: #fff7e6; border-radius: 16px; box-shadow: var(--shadow-1); }
-    .story h3 { font-size: 1rem; margin-bottom: 4px; }
-    .story p { margin: 0; max-width: 78ch; }
+    .story { margin-top: 18px; padding: 14px 16px; background: #fff7e6; border-radius: 12px; }
+    .story h3 { font-size: 0.95rem; margin-bottom: 4px; }
+    .story p { margin: 0; font-size: 0.95rem; }
+    .results > * { animation: rise 420ms var(--ease-out) both; }
+    .results > *:nth-child(2) { animation-delay: 60ms; }
+    .results > *:nth-child(3) { animation-delay: 120ms; }
 
-    /* The answer */
-    .answer { padding: 30px 32px 28px; }
-    .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 0.95rem; font-weight: 800; border-radius: 999px; padding: 6px 14px 6px 10px; }
+    .answer { padding-top: 20px; }
+    .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 800; border-radius: 999px; padding: 5px 13px 5px 10px; }
     .verdict::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
     .verdict[data-state="rising"] { background: #f8e3dc; color: #7d2a18; }
     .verdict[data-state="falling"] { background: #dbe8f6; color: #173f6b; }
     .verdict[data-state="inconclusive"] { background: #e4e9ee; color: #39495a; }
-    .answer h2 { font-size: clamp(1.7rem, 3.4vw, 2.6rem); letter-spacing: -0.03em; margin-top: 14px; max-width: 24ch; }
-    .why { margin: 12px 0 0; font-size: 1.08rem; color: var(--muted); max-width: 64ch; }
-    .plain { margin: 18px 0 0; font-size: 1.05rem; max-width: 68ch; }
+    .answer h2 { font-size: clamp(1.45rem, 2.4vw, 1.9rem); letter-spacing: -0.025em; margin-top: 12px; }
+    .why { margin: 10px 0 0; color: var(--muted); }
+    .plain { margin: 14px 0 0; }
     .plain + .plain { margin-top: 6px; }
-    .answer-stripes { margin-top: 24px; height: 56px; border-radius: 10px; overflow: hidden; }
-    .stripes-note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
+    .answer-stripes { margin-top: 18px; height: 48px; border-radius: 10px; overflow: hidden; }
+    .stripes-note, .chart-note, .note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
     .chart { margin: 0; }
-    .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 30px; }
-    .chart-head h3 { font-size: 1.05rem; }
-    .chart-stage { position: relative; height: 330px; margin-top: 14px; }
-    .chart-tooltip {
-      position: absolute; z-index: 1; pointer-events: none; white-space: nowrap; border-radius: 8px; background: var(--ink);
-      color: #fff; padding: 7px 10px; font-size: 0.85rem; font-variant-numeric: tabular-nums; box-shadow: 0 6px 18px rgb(15 35 56 / 0.25);
-    }
-    .chart-note { color: var(--muted); font-size: 0.88rem; margin: 8px 0 0; }
-    .legend { display: flex; flex-wrap: wrap; gap: 18px; color: var(--muted); font-size: 0.86rem; margin-top: 10px; }
+    .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 26px; }
+    .chart-head h3 { font-size: 1rem; }
+    .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 999px; background: var(--sunken); border: 1px solid var(--rule); }
+    .segmented button { border: 0; background: transparent; border-radius: 999px; padding: 4px 11px; color: var(--muted); font-size: 0.84rem; min-height: 30px; transition: background-color 160ms ease-out, color 160ms ease-out; }
+    .segmented button:hover { color: var(--ink); }
+    .segmented button[aria-pressed="true"] { background: var(--control); color: #fff; }
+    .chart-stage { position: relative; height: 260px; margin-top: 12px; }
+    .chart-tooltip { position: absolute; z-index: 1; pointer-events: none; white-space: nowrap; border-radius: 8px; background: var(--ink); color: #fff; padding: 6px 10px; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+    .legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.84rem; margin-top: 8px; }
     .legend-item { display: flex; align-items: center; gap: 8px; }
     .swatch { width: 24px; border-top: 2.5px solid var(--control); }
-    .swatch.trend { border-top: 2.5px dashed var(--warm); }
-    /* Row 1: the main trend test. Row 2: the Mann-Kendall second opinion. */
-    .numbers { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 26px 0 0; }
-    .numbers div { grid-column: span 2; }
-    .numbers div:nth-child(n + 4) { grid-column: span 3; }
-    .numbers div { background: var(--sunken); border-radius: 12px; padding: 12px 14px; }
-    .numbers dt { color: var(--muted); font-size: 0.84rem; }
-    .numbers dd { margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .note { color: var(--muted); font-size: 0.9rem; margin: 12px 0 0; }
-    .forecast { margin-top: 30px; padding-top: 6px; border-top: 1px solid var(--rule); }
-    .skill { display: inline-block; margin: 14px 0 0; padding: 8px 14px; border-radius: 12px; background: #e6f2ec; color: #12503a; font-weight: 700; }
-    .skill[data-weak] { background: #f4efe2; color: #6a4b12; }
-    .forecast-stage { height: 280px; }
-    .swatch.forecast { border-top: 2.5px dashed var(--warm); }
+    .swatch.trend, .swatch.forecast { border-top: 2.5px dashed var(--warm); }
     .swatch.band { height: 12px; border: 0; border-radius: 3px; background: #a8402a33; }
-    .about { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr; gap: 18px 32px; }
-    .about p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+    .numbers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 22px 0 0; }
+    .numbers div { background: var(--sunken); border-radius: 12px; padding: 10px 12px; }
+    .numbers div:first-child { grid-column: 1 / -1; }
+    .numbers dt { color: var(--muted); font-size: 0.82rem; }
+    .numbers dd { margin: 2px 0 0; font-size: 1.08rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .agree { margin-top: 16px; padding: 14px 16px; border-radius: 12px; background: var(--sunken); }
+    .agree h3 { font-size: 0.95rem; margin-bottom: 4px; }
+    .agree p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+    .forecast { margin-top: 26px; padding-top: 4px; border-top: 1px solid var(--rule); }
+    .skill { display: inline-block; margin: 12px 0 0; padding: 8px 12px; border-radius: 12px; background: #e6f2ec; color: #12503a; font-weight: 700; font-size: 0.92rem; }
+    .skill[data-weak] { background: #f4efe2; color: #6a4b12; }
+    .description { color: var(--muted); font-size: 0.9rem; margin: 8px 0 0; }
+    .forecast-stage { height: 220px; }
+    .about { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--rule); display: grid; gap: 12px; }
+    .about p { margin: 0; color: var(--muted); font-size: 0.9rem; }
     .glossary summary { cursor: pointer; font-weight: 700; color: var(--control); }
-    .glossary summary:hover { text-decoration: underline; text-underline-offset: 0.2em; }
-    .glossary dl { margin: 10px 0 0; }
-    .glossary dt { font-weight: 700; font-size: 0.92rem; margin-top: 10px; }
-    .glossary dd { margin: 2px 0 0; color: var(--muted); font-size: 0.9rem; }
-
-    .card h3.card-title { font-size: 1.2rem; letter-spacing: -0.015em; }
-    .description { color: var(--muted); font-size: 0.92rem; margin: 8px 0 0; max-width: 75ch; }
-    .table-wrap { margin-top: 14px; border-radius: 12px; overflow: auto; box-shadow: inset 0 0 0 1px var(--rule); }
+    .glossary dl { margin: 8px 0 0; }
+    .glossary dt { font-weight: 700; font-size: 0.9rem; margin-top: 8px; }
+    .glossary dd { margin: 2px 0 0; color: var(--muted); font-size: 0.88rem; }
+    .section-card { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--rule); }
+    .section-card h3 { font-size: 1.05rem; }
+    .compare-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .compare-row p { margin: 0; color: var(--muted); font-size: 0.88rem; flex: 1 1 180px; }
+    .table-wrap { margin-top: 12px; border-radius: 12px; overflow: auto; box-shadow: inset 0 0 0 1px var(--rule); }
     table { border-collapse: collapse; width: 100%; }
-    th, td { text-align: left; padding: 11px 14px; font-size: 0.92rem; border-bottom: 1px solid var(--rule); }
+    th, td { text-align: left; padding: 9px 12px; font-size: 0.88rem; border-bottom: 1px solid var(--rule); }
     thead { background: var(--sunken); }
-    thead th { color: var(--muted); font-size: 0.84rem; font-weight: 700; }
+    thead th { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
     tbody tr:last-child > * { border-bottom: 0; }
     tbody tr[data-selected] { background: var(--tint); }
     td { font-variant-numeric: tabular-nums; }
     .pick-variable { padding: 2px 0; border: 0; color: var(--control); background: transparent; font-weight: 700; text-align: left; }
     .pick-variable:hover { text-decoration: underline; text-underline-offset: 0.2em; }
-    .lag-control { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 700; margin-top: 18px; }
-    .lag-control input { accent-color: var(--control); width: min(280px, 60vw); }
+    .lag-control { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 700; margin-top: 14px; }
+    .lag-control input { accent-color: var(--control); flex: 1; min-width: 140px; }
     .lag-control output { font-variant-numeric: tabular-nums; min-width: 6em; }
-    .matrix td { text-align: center; font-weight: 700; min-width: 72px; }
+    .matrix td { text-align: center; font-weight: 700; min-width: 64px; }
     .matrix tbody th { white-space: nowrap; }
 
-    /* How it works */
     .research-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 14px; }
     .research-form label { display: grid; gap: 4px; font-size: 0.85rem; font-weight: 700; }
     .research-form input { width: 7em; min-height: 38px; padding: 6px 10px; border: 1px solid #b0c0ce; border-radius: 10px; background: #fff; }
@@ -255,7 +258,7 @@
     .research-sources li p { margin-top: 2px; }
 
     /* Correlation assistant */
-    .assistant { scroll-margin-top: 16px; }
+    .assistant { padding: 18px 26px 26px; }
     .assistant fieldset { border: 0; padding: 0; margin: 14px 0 0; min-width: 0; }
     .assistant label { display: block; font-weight: 700; margin-bottom: 6px; }
     .assistant textarea {
@@ -269,301 +272,306 @@
     .assistant-result { background: var(--sunken); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
     .assistant-result p { margin: 0; }
     .assistant-result .description { margin-top: 4px; }
+    .refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+    .refresh-status:empty { display: none; }
+    .refresh-actions button:disabled { cursor: wait; opacity: 0.65; }
 
-    /* How it works */
-    .method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
-    .method-grid .card { padding: 24px; }
-    .method-grid h3 { font-size: 1.15rem; margin-bottom: 10px; }
-    .method-grid p { margin: 0 0 10px; color: var(--muted); }
-    .footer { margin-top: 80px; background: var(--night); color: #b9c9db; padding-block: 36px; font-size: 0.92rem; }
-    .footer p { margin: 0; max-width: 80ch; }
-    .footer a { color: #e2ebf5; }
-    .error { background: var(--surface); padding: 18px; border-radius: 16px; margin-top: 20px; box-shadow: var(--shadow-1); }
+    /* How it works dialog */
+    dialog { width: min(760px, calc(100vw - 28px)); max-height: calc(100vh - 40px); border: 0; border-radius: 20px; padding: 0; box-shadow: var(--shadow-2); color: var(--ink); }
+    dialog::backdrop { background: rgb(15 35 56 / 0.45); backdrop-filter: blur(3px); }
+    dialog[open] { animation: rise 380ms var(--ease-out); }
+    .dialog-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 14px 26px; background: #fff; border-bottom: 1px solid var(--rule); }
+    .dialog-head h2 { font-size: 1.35rem; }
+    .dialog-body { padding: 8px 26px 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 28px; }
+    .dialog-body h3 { font-size: 1.02rem; margin-top: 16px; }
+    .dialog-body p { color: var(--muted); margin: 6px 0 0; font-size: 0.94rem; }
+    .dialog-body .credits { grid-column: 1 / -1; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 0.86rem; }
 
-    @media (max-width: 1000px) {
-      .workspace { grid-template-columns: 1fr; }
-      .sidebar { position: static; max-height: none; overflow: visible; grid-template-columns: 1fr 1fr; align-items: start; }
-      .examples, .method-grid { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 700px) {
-      .shell { width: calc(100% - 32px); }
-      .nav a:not(.keep) { display: none; }
-      .hero { min-height: auto; }
-      .hero::before { background: linear-gradient(0deg, rgb(11 26 43 / 0.96) 0%, rgb(11 26 43 / 0.88) 100%); }
-      .hero-actions .button { flex: 1 1 100%; }
-      .section { padding-top: 52px; }
-      .sidebar { grid-template-columns: 1fr; }
-      .answer { padding: 22px 18px; }
-      .card-pad { padding: 16px; }
-      .about { grid-template-columns: 1fr; }
-      .numbers { grid-template-columns: 1fr 1fr; }
-      .numbers div, .numbers div:nth-child(n + 4) { grid-column: span 1; }
-      .numbers div:first-child { grid-column: 1 / -1; }
-      .chart-stage { height: 250px; }
-      th, td { padding: 9px 10px; font-size: 0.86rem; }
+    .error { position: absolute; z-index: 30; top: 90px; left: 14px; right: 14px; padding: 16px; background: #fff; border-radius: 12px; box-shadow: var(--shadow-1); }
+
+    @media (max-width: 760px) {
+      :root { --drawer: 100vw; }
+      .topbar { flex-wrap: wrap; padding: 8px; gap: 8px; left: 8px; right: 8px; top: max(8px, env(safe-area-inset-top)); }
+      .brand { padding-left: 8px; flex: 1; }
+      .chips { order: 3; flex-basis: 100%; }
+      .welcome { top: auto; left: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100vw - 16px); max-height: 62vh; z-index: 7; }
+      .legend-card { left: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100vw - 80px); padding: 10px 12px; }
+      .legend-card p, .changes { display: none; }
+      .zoom { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
+      .app[data-drawer] .zoom { right: 8px; }
+      .drawer { top: auto; height: 68vh; width: 100vw; border-radius: 20px 20px 0 0; transform: translateY(105%); }
+      .grabber { display: block; width: 44px; height: 5px; margin: 8px auto 0; border-radius: 999px; background: var(--rule); }
+      .drawer-head { padding-top: 6px; }
+      .dialog-body { grid-template-columns: 1fr; }
     }
     @media (prefers-reduced-motion: reduce) {
-      *, *::before { animation: none !important; transition: none !important; }
+      *, *::before, *::after { animation: none !important; transition: none !important; }
     }
   </style>
 </head>
 <body>
-  <a class="skip" href="#explore">Skip to the explorer</a>
-  <header class="hero">
-    <canvas class="hero-stripes" id="hero-stripes" role="img" aria-label="Climate stripes for Southern Ontario air temperature, 1980 to 2025."></canvas>
-    <div class="shell topbar">
-      <a class="brand" href="#">Climate Trend Explorer</a>
-      <nav class="nav" aria-label="Sections">
-        <a href="#examples">Examples</a>
-        <a href="#explore">Explorer</a>
-        <a href="#how">How it works</a>
-        <a class="keep" href="study-areas.csv" download>Download the data</a>
-        <a class="keep" href="#correlation-assistant">Ask AI</a>
-      </nav>
+  <a class="skip" href="#drawer-title">Skip to the results</a>
+  <div class="app" id="app">
+    <div class="stage" id="trend-map-stage">
+      <canvas id="trend-map" tabindex="0" role="img" aria-labelledby="trend-map-title" aria-describedby="map-help"></canvas>
+      <div class="pin" id="map-pin" hidden></div>
+      <div class="tip" id="map-tip" hidden></div>
     </div>
-    <div class="shell hero-body">
-      <h1>Is the climate where you live really changing?</h1>
-      <p class="hero-lead">Pick a stored land location, choose something to measure, and test decades of NASA satellite and model data for a trend.</p>
-      <div class="hero-actions">
-        <a class="button primary" href="#examples">Try an example</a>
-        <a class="button secondary" href="#explore">Pick my own place</a>
-      </div>
-    </div>
-    <div class="shell hero-key">
-      <span class="scale"><span>Colder</span><span aria-hidden="true"></span><span>Warmer</span></span>
-      <span>Southern Ontario air temperature, one stripe per year from 1980 to 2025.</span>
-    </div>
-  </header>
+    <p class="sr-only" id="map-help">Click a place, or press Enter for the centre of the map. Arrow keys move the map; plus and minus zoom.</p>
 
-  <main>
-    <noscript><p class="shell error">Turn on JavaScript to explore the records. The data download works without it.</p></noscript>
-    <p class="shell error" role="alert" id="data-error" hidden></p>
-
-    <section class="shell section" id="examples" aria-labelledby="examples-title">
-      <div class="section-head">
-        <h2 id="examples-title">Start with a real investigation</h2>
-        <p>Each one loads a question and tells you what to look for. Learn to read a result here, then test your own place.</p>
+    <header class="float topbar">
+      <div class="brand">Climate Trend Explorer<small>NASA data, 1948–2025</small></div>
+      <div class="chips" id="variable-options" role="group" aria-label="Measurement shown on the map"></div>
+      <div class="topbar-actions">
+        <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
+        <button type="button" class="icon-button" id="show-welcome" aria-label="Start here: examples and tips">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+        </button>
+        <button type="button" class="icon-button" id="show-how" aria-label="How it works">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg>
+        </button>
       </div>
+    </header>
+
+    <p class="error" role="alert" id="data-error" hidden></p>
+
+    <section class="float welcome" id="welcome" aria-labelledby="welcome-title">
+      <button type="button" class="icon-button close" id="close-welcome" aria-label="Close the welcome card">×</button>
+      <h1 id="welcome-title">Is the climate where you live really changing?</h1>
+      <p>The map shows how each place has changed, measured by NASA satellites and models. Red is warming, blue is cooling.</p>
+      <ol class="steps">
+        <li>Pick what to see at the top: temperature, rain, snow and more.</li>
+        <li>Click any place on land.</li>
+        <li>Read the answer: is the change real, or could it be chance?</li>
+      </ol>
+      <h2>Or start with a real investigation</h2>
       <ul class="examples" id="example-list"></ul>
+      <div class="welcome-actions">
+        <button type="button" class="button primary small" id="locate">Use my location</button>
+        <button type="button" class="button secondary small" id="explore-map">Explore the map</button>
+      </div>
+      <details class="goto">
+        <summary>Go to coordinates</summary>
+        <form id="point-form">
+          <label>Latitude <input name="latitude" type="number" inputmode="decimal" autocomplete="off" min="-90" max="90" step="any" placeholder="43.7" required></label>
+          <label>Longitude <input name="longitude" type="number" inputmode="decimal" autocomplete="off" min="-180" max="180" step="any" placeholder="-79.4" required></label>
+          <button type="submit" class="button secondary small">Go</button>
+        </form>
+      </details>
     </section>
 
-    <section class="shell section" id="explore" aria-labelledby="explore-title">
-      <div class="section-head">
-        <h2 id="explore-title">Explore any place</h2>
-        <p>Choose a place and a measurement. The answer updates as soon as the data arrives.</p>
+    <section class="float legend-card" aria-labelledby="trend-map-title">
+      <h2 id="trend-map-title">Change per decade</h2>
+      <p id="trend-map-sub"></p>
+      <div class="trend-key"><span id="trend-low"></span><span class="ramp" id="trend-ramp" aria-hidden="true"></span><span id="trend-high"></span></div>
+      <p>Faded squares could be chance.</p>
+      <details class="changes">
+        <summary>Biggest changes</summary>
+        <div class="extremes">
+          <div><h3>Fastest rising</h3><ol id="rising-list"></ol></div>
+          <div><h3>Fastest falling</h3><ol id="falling-list"></ol></div>
+        </div>
+      </details>
+    </section>
+
+    <div class="zoom" role="group" aria-label="Map zoom">
+      <button type="button" class="icon-button" id="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" class="icon-button" id="zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" class="icon-button" id="zoom-reset" aria-label="Show the whole world">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg>
+      </button>
+    </div>
+
+    <aside class="drawer" id="drawer" aria-labelledby="drawer-title">
+      <div class="grabber" aria-hidden="true"></div>
+      <div class="drawer-head">
+        <h2 id="drawer-title" tabindex="-1"><span id="drawer-place">A place</span><small id="site-description"></small></h2>
+        <button type="button" class="icon-button" id="close-drawer" aria-label="Close the results">×</button>
       </div>
-      <div class="workspace" id="explorer" hidden>
-        <aside class="sidebar" aria-label="Choose a place and a measurement">
-          <div class="card card-pad">
-            <div class="card-head">
-              <h3 class="step" id="map-title">1. Pick a place</h3>
-              <div id="continent-controls" class="segmented" role="group" aria-label="Map region"></div>
-            </div>
-            <p class="hint">Click near a stored land point or choose a study area below.</p>
-            <div class="map-stage" id="map-stage">
-              <canvas id="map" aria-hidden="true"></canvas>
-              <div id="map-markers" role="group" aria-label="Study areas on map"></div>
-            </div>
-            <div id="site-list" class="site-list" role="group" aria-labelledby="site-list-title"></div>
-            <form class="point-form" id="point-form">
-              <p>Or type any point on Earth. South and west are negative.</p>
-              <label>Latitude <input name="latitude" type="number" inputmode="decimal" autocomplete="off" min="-90" max="90" step="any" placeholder="43.7" required></label>
-              <label>Longitude <input name="longitude" type="number" inputmode="decimal" autocomplete="off" min="-180" max="180" step="any" placeholder="-79.4" required></label>
-              <button type="submit" class="button secondary small">Test this point</button>
-            </form>
+      <div class="drawer-body" id="explorer">
+        <div id="region-status" class="region-status" hidden aria-live="polite">
+          <p id="region-message"></p>
+          <button type="button" class="button secondary small" id="retry-region" hidden>Try again</button>
+        </div>
+        <div class="story" id="story" hidden aria-live="polite">
+          <h3 id="story-title"></h3>
+          <p id="story-text"></p>
+        </div>
+
+        <div id="region-results" class="results" hidden>
+          <div class="refresh-actions">
+            <button type="button" class="button secondary small" id="refresh-giovanni">Refresh from Giovanni</button>
+            <button type="button" class="button secondary small" id="ask-at-point">Ask AI about this point</button>
+            <p id="refresh-status" class="description refresh-status" role="status"></p>
           </div>
-          <div class="card card-pad">
-            <h3 class="step" id="variables-title">2. Choose a measurement</h3>
-            <p class="hint" id="variable-hint">Choose one measurement to see its trend.</p>
-            <div id="variable-options" class="variable-options" role="group" aria-label="Measurements"></div>
+          <article class="answer" id="single-report" aria-labelledby="result-headline">
+            <span class="verdict" id="trend-verdict"></span>
+            <h2 id="result-headline"></h2>
+            <p class="why" id="variable-why"></p>
+            <div aria-live="polite">
+              <p class="plain" id="trend-meaning"></p>
+              <p class="plain" id="trend-chance"></p>
+            </div>
+            <div class="answer-stripes"><canvas id="result-stripes" aria-hidden="true"></canvas></div>
+            <p class="stripes-note" id="stripes-note"></p>
+
+            <figure class="chart" aria-labelledby="chart-title">
+              <div class="chart-head">
+                <h3 id="chart-title"></h3>
+                <div class="segmented" id="chart-options" role="group" aria-label="Chart view"></div>
+              </div>
+              <p class="chart-note" id="chart-note" hidden></p>
+              <div class="chart-stage" id="chart-stage">
+                <canvas id="chart" tabindex="0" role="img" aria-labelledby="chart-title" aria-describedby="chart-instructions chart-selection"></canvas>
+                <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
+              </div>
+              <p class="sr-only" id="chart-instructions">Use the left and right arrow keys to read values.</p>
+              <p class="sr-only" id="chart-selection" aria-live="polite"></p>
+              <figcaption class="legend">
+                <span class="legend-item"><span class="swatch" aria-hidden="true"></span><span id="legend-value">Annual value</span></span>
+                <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
+              </figcaption>
+            </figure>
+
+            <dl class="numbers">
+              <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
+              <div><dt>Likely range (95%)</dt><dd id="trend-ci"></dd></div>
+              <div><dt>p-value</dt><dd id="trend-p"></dd></div>
+              <div><dt>Theil-Sen per decade</dt><dd id="trend-sen"></dd></div>
+              <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
+            </dl>
+            <p class="note" id="trend-agree"></p>
+            <div class="agree" id="datasets-agree" hidden>
+              <h3>Do the datasets agree?</h3>
+              <p id="datasets-agree-text"></p>
+            </div>
+
+            <section class="forecast" id="forecast" aria-labelledby="forecast-title" hidden>
+              <div class="chart-head">
+                <h3 id="forecast-title">What happens next?</h3>
+                <div class="segmented" id="forecast-options" role="group" aria-label="Forecast view"></div>
+              </div>
+              <p class="skill" id="forecast-skill"></p>
+              <p class="description" id="forecast-text"></p>
+              <div class="chart-stage forecast-stage" id="forecast-stage">
+                <canvas id="forecast-chart" role="img" aria-labelledby="forecast-title" aria-describedby="forecast-text"></canvas>
+              </div>
+              <div class="legend" id="forecast-legend"></div>
+            </section>
+
+            <div class="about">
+              <p id="variable-description"></p>
+              <details class="glossary">
+                <summary>What do these numbers mean?</summary>
+                <dl>
+                  <dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd>
+                  <dt>Likely range (95%)</dt><dd>The real rate of change probably sits in this range. If it crosses zero, the data can’t tell rising from falling.</dd>
+                  <dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. Scientists usually call 0.05 (1 in 20) or smaller significant.</dd>
+                  <dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it.</dd>
+                  <dt>Why p-values are adjusted</dt><dd>Testing 9 measurements at once raises the odds that one looks significant by luck, so the tool raises the bar (the Holm method).</dd>
+                </dl>
+              </details>
+            </div>
+          </article>
+
+          <section class="section-card" id="correlations" aria-labelledby="correlations-title" hidden>
+            <h3 id="correlations-title">How the measurements move together</h3>
+            <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, and each pair is compared over the years both records cover. A link is not proof that one causes the other.</p>
+            <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
+            <p class="description" id="lag-note"></p>
+            <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
+          </section>
+
+          <section class="section-card" id="research" aria-labelledby="research-title">
+            <h3 id="research-title">Research context</h3>
+            <p class="description" id="research-scope"></p>
+            <form class="research-form" id="research-form" aria-describedby="research-scope">
+              <label for="research-start">From year<input type="number" id="research-start" step="1" required></label>
+              <label for="research-end">To year<input type="number" id="research-end" step="1" required></label>
+              <button class="button secondary small" id="research-submit" type="submit">Find research</button>
+            </form>
+            <p class="description research-status" id="research-status" role="status"></p>
+            <ol class="research-sources" id="research-sources" aria-label="Research sources" hidden></ol>
+          </section>
+
+          <section class="section-card" aria-labelledby="overview-title">
             <div class="compare-row">
-              <p>Want to see how two measurements move together?</p>
-              <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false">Compare</button>
+              <h3 id="overview-title"></h3>
+              <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false">Compare measurements</button>
             </div>
-          </div>
-        </aside>
-
-        <div class="main">
-          <div id="region-status" class="card region-status" hidden aria-live="polite">
-            <p id="region-message"></p>
-            <button type="button" class="button secondary small" id="retry-region" hidden>Try again</button>
-          </div>
-          <div class="story" id="story" hidden aria-live="polite">
-            <h3 id="story-title"></h3>
-            <p id="story-text"></p>
-          </div>
-
-          <div id="region-results" class="main" hidden>
-            <article class="card answer" id="single-report" aria-labelledby="result-headline">
-              <span class="verdict" id="trend-verdict"></span>
-              <h2 id="result-headline"></h2>
-              <p class="why" id="variable-why"></p>
-              <div aria-live="polite">
-                <p class="plain" id="trend-meaning"></p>
-                <p class="plain" id="trend-chance"></p>
-              </div>
-              <div class="answer-stripes"><canvas id="result-stripes" aria-hidden="true"></canvas></div>
-              <p class="stripes-note" id="stripes-note"></p>
-
-              <figure class="chart" aria-labelledby="chart-title">
-                <div class="chart-head">
-                  <h3 id="chart-title"></h3>
-                  <div class="segmented" id="chart-options" role="group" aria-label="Chart view"></div>
-                </div>
-                <p class="chart-note" id="chart-note" hidden></p>
-                <div class="chart-stage" id="chart-stage">
-                  <canvas id="chart" tabindex="0" role="img" aria-labelledby="chart-title" aria-describedby="chart-instructions chart-selection"></canvas>
-                  <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
-                </div>
-                <p class="sr-only" id="chart-instructions">Use the left and right arrow keys to read values.</p>
-                <p class="sr-only" id="chart-selection" aria-live="polite"></p>
-                <figcaption class="legend">
-                  <span class="legend-item"><span class="swatch" aria-hidden="true"></span><span id="legend-value">Annual value</span></span>
-                  <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
-                </figcaption>
-              </figure>
-
-              <dl class="numbers">
-                <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
-                <div><dt>Likely range (95%)</dt><dd id="trend-ci"></dd></div>
-                <div><dt>p-value</dt><dd id="trend-p"></dd></div>
-                <div><dt>Theil-Sen per decade</dt><dd id="trend-sen"></dd></div>
-                <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
-              </dl>
-              <p class="note" id="trend-agree"></p>
-              <div class="agree" id="datasets-agree" hidden>
-                <h3>Do the datasets agree?</h3>
-                <p id="datasets-agree-text"></p>
-              </div>
-
-              <section class="forecast" id="forecast" aria-labelledby="forecast-title" hidden>
-                <div class="chart-head">
-                  <h3 id="forecast-title">What happens next?</h3>
-                  <div class="segmented" id="forecast-options" role="group" aria-label="Forecast view"></div>
-                </div>
-                <p class="skill" id="forecast-skill"></p>
-                <p class="description" id="forecast-text"></p>
-                <div class="chart-stage forecast-stage" id="forecast-stage">
-                  <canvas id="forecast-chart" role="img" aria-labelledby="forecast-title" aria-describedby="forecast-text"></canvas>
-                </div>
-                <div class="legend" id="forecast-legend"></div>
-              </section>
-
-              <div class="about">
-                <div>
-                  <p id="variable-description"></p>
-                  <p class="description" id="site-description"></p>
-                </div>
-                <details class="glossary">
-                  <summary>What do these numbers mean?</summary>
-                  <dl>
-                    <dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd>
-                    <dt>Likely range (95%)</dt><dd>The real rate of change probably sits in this range. If it crosses zero, the data can’t tell rising from falling.</dd>
-                    <dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. Scientists usually call 0.05 (1 in 20) or smaller significant.</dd>
-                    <dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it.</dd>
-                    <dt>Why p-values are adjusted</dt><dd>Testing several measurements raises the odds that one looks significant by chance. The Holm method accounts for those tests.</dd>
-                  </dl>
-                </details>
-              </div>
-            </article>
-
-            <section class="card card-pad" id="correlations" aria-labelledby="correlations-title" hidden>
-              <h3 class="card-title" id="correlations-title">How the measurements move together</h3>
-              <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, so you only see month-to-month surprises. Records cover different years, so each pair is compared over the years both have. A link is not proof that one causes the other.</p>
-              <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
-              <p class="description" id="lag-note"></p>
-              <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
-            </section>
-
-            <section class="card card-pad" id="research" aria-labelledby="research-title">
-              <h3 class="card-title" id="research-title">Research context</h3>
-              <p class="description" id="research-scope"></p>
-              <form class="research-form" id="research-form" aria-describedby="research-scope">
-                <label for="research-start">From year<input type="number" id="research-start" step="1" required></label>
-                <label for="research-end">To year<input type="number" id="research-end" step="1" required></label>
-                <button class="button secondary small" id="research-submit" type="submit">Find research</button>
-              </form>
-              <p class="description research-status" id="research-status" role="status"></p>
-              <ol class="research-sources" id="research-sources" aria-label="Research sources" hidden></ol>
-            </section>
-
-            <section class="card card-pad" aria-labelledby="overview-title">
-              <h3 class="card-title" id="overview-title"></h3>
-              <p class="description">Choose a name to open its result.</p>
-              <div class="table-wrap">
-                <table>
-                  <thead><tr><th scope="col">Measurement</th><th scope="col">Change per decade</th><th scope="col">Result</th></tr></thead>
-                  <tbody id="overview-rows"></tbody>
-                </table>
-              </div>
-            </section>
-          </div>
-          <section class="card card-pad assistant" id="correlation-assistant" aria-labelledby="assistant-title">
-            <h3 class="card-title" id="assistant-title">Ask about climate data</h3>
-            <p class="description" id="assistant-help">Name a study area or select one on the map. Ask about a correlation up to six months apart, or request research on a measurement and time period.</p>
-            <form id="assistant-form">
-              <fieldset>
-                <label for="assistant-question">Your question</label>
-                <textarea id="assistant-question" rows="2" maxlength="500" required aria-describedby="assistant-help"></textarea>
-                <div class="assistant-actions">
-                  <button type="submit" class="button primary small">Ask AI</button>
-                  <button type="button" class="button secondary small" data-question="In Southern Ontario, how does precipitation correlate with root-zone soil wetness one month later?">Try rain and soil wetness</button>
-                  <button type="button" class="button secondary small" data-question="What is the same-month correlation between air temperature and relative humidity in the Cerrado?">Try temperature and humidity</button>
-                  <button type="button" class="button secondary small" data-question="Find research on precipitation and root-zone soil wetness in Southern Ontario in 2016.">Try drought research</button>
-                </div>
-              </fieldset>
-            </form>
-            <div role="status">
-              <p class="assistant-reply" id="assistant-reply"></p>
-              <div class="assistant-result" id="assistant-result" hidden>
-                <p><strong id="assistant-result-title"></strong></p>
-                <p id="assistant-result-value"></p>
-                <p class="description" id="assistant-result-window"></p>
-              </div>
-              <p class="description" id="assistant-research-notice" hidden></p>
-              <ol class="research-sources" id="assistant-research-sources" aria-label="Research sources" hidden></ol>
+            <p class="description" id="variable-hint">Choose a name to open its result.</p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th scope="col">Measurement</th><th scope="col">Change per decade</th><th scope="col">Result</th></tr></thead>
+                <tbody id="overview-rows"></tbody>
+              </table>
             </div>
           </section>
         </div>
       </div>
-    </section>
+    </aside>
+  </div>
 
-    <section class="shell section" id="how" aria-labelledby="how-title">
-      <div class="section-head">
-        <h2 id="how-title">How it works</h2>
-        <p>The same steps a climate scientist takes, done for you in a few seconds.</p>
-      </div>
-      <div class="method-grid">
-        <div class="card">
-          <h3>The data</h3>
-          <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (1980–2025), a weather model constantly corrected with observations. Precipitation comes from the GPM satellites (1998–2025). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
-          <p>The map uses the available land points stored in the team’s database. Coverage grows as new points are imported.</p>
-        </div>
-        <div class="card">
-          <h3>The trend test</h3>
-          <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next.</p>
-          <p>The Mann-Kendall test checks the answer a second way. Both tests use the Holm method to account for testing multiple measurements.</p>
-        </div>
-        <div class="card">
-          <h3>The forecast</h3>
-          <p>The forecast model uses the previous 12 months, a five-year average and an El Niño index. It predicts the next month and feeds that prediction back in for up to 12 months.</p>
-          <p>The bundled comparison covers 2020–2025 at 74 held-out locations. The anomaly baseline includes 2020, so this is not a strictly untouched time holdout.</p>
-        </div>
-        <div class="card">
-          <h3>Honest limits</h3>
-          <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years.</p>
-          <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check.</p>
-          <p>The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now. For that, use the trend line and its range.</p>
-          <p><a id="data-source">NASA Giovanni</a> and the <a id="method-source">trend uncertainty method</a>.</p>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <footer class="footer">
-    <div class="shell">
-      <p>Built for the NASA Space Apps Challenge. Data from NASA GES DISC Giovanni (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 index from NOAA ERSSTv5). Map outlines from <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>.</p>
+  <dialog id="assistant-dialog" aria-labelledby="assistant-title">
+    <div class="dialog-head">
+      <h2 id="assistant-title">Ask about climate data</h2>
+      <button type="button" class="icon-button" id="close-assistant" aria-label="Close">×</button>
     </div>
-  </footer>
+    <div class="assistant" id="correlation-assistant">
+      <p class="description" id="assistant-help">Name a study area or select one on the map. Ask about a correlation with a time delay of up to six months, or request research on a measurement and time period.</p>
+      <form id="assistant-form">
+        <fieldset>
+          <label for="assistant-question">Your question</label>
+          <textarea id="assistant-question" rows="2" maxlength="500" required aria-describedby="assistant-help"></textarea>
+          <div class="assistant-actions">
+            <button type="submit" class="button primary small">Ask AI</button>
+            <button type="button" class="button secondary small" data-question="In Southern Ontario, how does precipitation correlate with root-zone soil wetness one month later?">Try rain and soil wetness</button>
+            <button type="button" class="button secondary small" data-question="What is the same-month correlation between air temperature and relative humidity in the Cerrado?">Try temperature and humidity</button>
+            <button type="button" class="button secondary small" data-question="Find research on precipitation and root-zone soil wetness in Southern Ontario in 2016.">Try drought research</button>
+          </div>
+        </fieldset>
+      </form>
+      <div role="status">
+        <p class="assistant-reply" id="assistant-reply"></p>
+        <div class="assistant-result" id="assistant-result" hidden>
+          <p><strong id="assistant-result-title"></strong></p>
+          <p id="assistant-result-value"></p>
+          <p class="description" id="assistant-result-window"></p>
+        </div>
+        <p class="description" id="assistant-research-notice" hidden></p>
+        <ol class="research-sources" id="assistant-research-sources" aria-label="Research sources" hidden></ol>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="how" aria-labelledby="how-title">
+    <div class="dialog-head">
+      <h2 id="how-title">How it works</h2>
+      <button type="button" class="icon-button" id="close-how" aria-label="Close">×</button>
+    </div>
+    <div class="dialog-body">
+      <div>
+        <h3>The data</h3>
+        <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
+        <p>The database holds 1,656 land points. The map shows a trend for each point and measurement with enough data.</p>
+      </div>
+      <div>
+        <h3>The trend test</h3>
+        <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next. The Mann-Kendall test checks the answer a second way, and both are adjusted for testing 9 measurements at once (the Holm method).</p>
+        <p>On the map, each square uses the Mann-Kendall test, corrected for checking about 1,700 places at once (the Benjamini–Hochberg method). Faded squares didn’t pass.</p>
+      </div>
+      <div>
+        <h3>The forecast</h3>
+        <p>A world model learned how air temperature, humidity and rain push each other from month to month, and how El Niño in the Pacific nudges them. It reads the last 12 months plus the last 5 years’ average, predicts next month, then feeds that prediction back in to reach 12 months.</p>
+        <p>It was tested on 2020–2025 at 350 locations held out from training. The 2001–2020 anomaly baseline includes the first test year.</p>
+      </div>
+      <div>
+        <h3>Honest limits</h3>
+        <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years.</p>
+        <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check. The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now.</p>
+      </div>
+      <p class="credits">Built for the NASA Space Apps Challenge. Data: <a id="data-source">NASA GES DISC Giovanni</a> (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 from NOAA ERSSTv5). Trend uncertainty: <a id="method-source">Newey–West method</a>. Map outlines: <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>. <a href="study-areas.csv" download>Download the study-area data (CSV)</a>.</p>
+    </div>
+  </dialog>
 </body>
 </html>

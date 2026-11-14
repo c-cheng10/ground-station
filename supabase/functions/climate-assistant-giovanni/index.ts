@@ -47,9 +47,12 @@ function isPointId(value: unknown): value is string {
 }
 
 function monthIndex(value: unknown) {
+  const now = new Date();
+  const latestClosedIndex = now.getUTCFullYear() * 12 + now.getUTCMonth();
   if (typeof value !== "number" || !Number.isInteger(value) ||
-      value < 194801 || value > 202512 || value % 100 < 1 || value % 100 > 12) return NaN;
-  return Math.floor(value / 100) * 12 + value % 100;
+      value < 194801 || value % 100 < 1 || value % 100 > 12) return NaN;
+  const index = Math.floor(value / 100) * 12 + value % 100;
+  return index <= latestClosedIndex ? index : NaN;
 }
 
 function validCorrelationLookup(row: JsonObject, argumentsJson: unknown) {

@@ -35,7 +35,9 @@ as $function$
         ) as feature(variable_id, source, monthly_values)
         cross join lateral unnest(feature.monthly_values) with ordinality as sample(value, month_index)
         where feature.variable_id in (variable_x, variable_y)
-          and sample.month_index <= (2025 - 1948 + 1) * 12
+          and sample.month_index <=
+              (extract(year from statement_timestamp() at time zone 'UTC')::integer - 1948) * 12
+              + extract(month from statement_timestamp() at time zone 'UTC')::integer - 1
           and sample.value > '-Infinity'::real and sample.value < 'Infinity'::real
     ),
     complete_years as (

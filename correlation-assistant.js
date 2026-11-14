@@ -19,7 +19,9 @@
   const monthFormat = new Intl.DateTimeFormat("en-CA", { month: "short", year: "numeric", timeZone: "UTC" });
 
   function validMonth(yyyymm) {
-    return Number.isInteger(yyyymm) && yyyymm >= config.startYear * 100 + 1 && yyyymm <= config.endYear * 100 + 12 &&
+    const now = new Date();
+    const currentMonth = now.getUTCFullYear() * 100 + now.getUTCMonth() + 1;
+    return Number.isInteger(yyyymm) && yyyymm >= config.startYear * 100 + 1 && yyyymm < currentMonth &&
       yyyymm % 100 >= 1 && yyyymm % 100 <= 12;
   }
 

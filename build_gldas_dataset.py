@@ -180,6 +180,48 @@ def write_site_files(lats, lons, data, spans):
                                      *["" if np.isnan(col[y]) else f"{col[y]:.4f}" for col in yearly]])
 
 
+def mann_kendall(series):
+    """Theil-Sen slope per decade and two-sided Mann-Kendall p-value (with ties), as on the site."""
+    n = len(series)
+    i, j = np.triu_indices(n, 1)
+    diff = series[j] - series[i]
+    s = np.sign(diff).sum()
+    _, counts = np.unique(series, return_counts=True)
+    variance = (n * (n - 1) * (2 * n + 5) - (counts * (counts - 1) * (2 * counts + 5)).sum()) / 18
+    z = 0 if s == 0 or variance == 0 else (s - np.sign(s)) / math.sqrt(variance)
+    return float(np.median(diff / (j - i)) * 10), math.erfc(abs(z) / math.sqrt(2))
+
+
+def benjamini_hochberg(p, alpha=0.05):
+    """True where a result stays significant after testing every place at once."""
+    order = np.argsort(p)
+    passed = p[order] <= alpha * np.arange(1, len(p) + 1) / len(p)
+    keep = np.zeros(len(p), bool)
+    if passed.any():
+        keep[order[:np.flatnonzero(passed).max() + 1]] = True
+    return keep
+
+
+def write_trend_map(data, spans):
+    """Each point's trend for each measurement, in points-index order, for the site's trend map."""
+    out = {}
+    for k, (vid, *_) in enumerate(VARIABLES):
+        first, last = math.ceil(spans[k][0] / 12), (spans[k][1] + 1) // 12 - 1
+        slopes, pvalues = [], []
+        for point in data:
+            yearly = annual(point[:, k])[first:last + 1]
+            slope, p = mann_kendall(yearly) if not np.isnan(yearly).any() else (math.nan, 1.0)
+            slopes.append(slope), pvalues.append(p)
+        slopes, significant = np.array(slopes), benjamini_hochberg(np.array(pvalues))
+        out[vid] = {"slope": [None if math.isnan(s) else round(float(s), 4) for s in slopes],
+                    "significant": [int(x) for x in significant],
+                    # Colour scale: 95th percentile of the size of change, so a few extremes don't wash it out.
+                    "scale": round(float(np.nanpercentile(np.abs(slopes[slopes != 0]), 95)), 4),
+                    "years": [START_YEAR + first, START_YEAR + last]}
+        print(f"  trend map {vid:<12} {significant.mean():5.1%} of places significant")
+    (ROOT / "trend-map.js").write_text("window.TREND_MAP = " + json.dumps(out, separators=(",", ":")) + ";\n", encoding="utf-8")
+
+
 def upload(env, lats, lons, data):
     url = env["SUPABASE_URL"].rstrip("/") + "/rest/v1/climate_points?on_conflict=id"
     key = env["SUPABASE_SERVICE_ROLE_KEY"]
@@ -214,7 +256,10 @@ def main():
     np.savez_compressed(ROOT / "gldas-dataset.npz", lat=np.array(lats), lon=np.array(lons), values=data,
                         enso=enso(), ids=np.array(IDS), start_year=START_YEAR)
     write_site_files(lats, lons, data, spans)
+    write_trend_map(data, spans)
     env = read_env()
+    if "--no-upload" in __import__("sys").argv:
+        return
     if env.get("SUPABASE_SERVICE_ROLE_KEY"):
         upload(env, lats, lons, data)
     else:

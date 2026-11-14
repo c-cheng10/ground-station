@@ -28,6 +28,21 @@ Each measurement uses the most consistent NASA record Giovanni offers for it:
 
 The table `climate_points` holds one row per land point: every measurement is a monthly array starting January 1948, with nulls outside its record. Anyone can read it with the public anon key; only the service role writes.
 
+## Current build
+
+1,656 land points (58 coastal cells were skipped because the models treat them as ocean). The trend map flags a significant change at 73% of places for air temperature, 77% for specific humidity, but only 4% for precipitation.
+
+World model skill against the recent-average guess on 2020–2025, at 350 held-out locations (lead 1 / 3 / 6 / 12 months). The anomaly baseline includes 2020, so the first test year overlaps preprocessing.
+
+| Measurement | 1 | 3 | 6 | 12 |
+|---|---|---|---|---|
+| Relative humidity | +0.17 | +0.07 | +0.04 | +0.02 |
+| Air temperature | +0.10 | +0.08 | +0.06 | +0.04 |
+| Specific humidity | +0.11 | +0.02 | +0.00 | −0.02 |
+| Precipitation | +0.07 | +0.05 | +0.05 | +0.04 |
+
+The linear model (ridge, alpha 10,000) beat 32- and 64-unit neural networks on 2015–2019 forecasts, so it ships.
+
 ## Giovanni assistant and research
 
 The browser and MCP use the exact stored coordinate ID (`latitude,longitude`). For a named study area, the browser checks that its configured point is present in the index. The MCP looks up that exact ID in the database. Each variable uses its longest contiguous run of at least four complete calendar years. For an equally long run, the later one wins. Lagged comparisons pair X at month `t` with Y at `t + lag` and report both observed date ranges, both sources, and the actual number of pairs.
@@ -35,3 +50,11 @@ The browser and MCP use the exact stored coordinate ID (`latitude,longitude`). F
 For a separate Giovanni deployment, apply [giovanni_correlations.sql](supabase/giovanni_correlations.sql) after creating `climate_points`, and [assistant.sql](supabase/assistant.sql) once if the shared assistant quota function is absent. Deploy [climate-assistant-giovanni](supabase/functions/climate-assistant-giovanni/index.ts), [climate-mcp-giovanni](supabase/functions/climate-mcp-giovanni/index.ts) and [climate-research-giovanni](supabase/functions/climate-research-giovanni/index.ts) with legacy JWT verification enabled. Set the server-only `GROQ_API_KEY` in Edge Function Secrets. Optional `OPENALEX_API_KEY` raises the research search allowance. Named-area research returns up to three linked sources matched to the requested variables and study period.
 
 The historical [POWER correlation migration](supabase/correlations.sql) belongs to the earlier POWER schema.
+
+## Refresh a stored point
+
+**Refresh from Giovanni** fetches newly available complete months for the selected point. It can extend MERRA-2 temperature and humidity, GPM IMERG precipitation, and the GLDAS 2.1 temperature comparison. The GLDAS 2.0 land measurements retain their fixed record ending in 2014. Existing observations are preserved, including when requests overlap.
+
+Apply [giovanni_refresh.sql](supabase/giovanni_refresh.sql) and deploy [refresh-climate-giovanni](supabase/functions/refresh-climate-giovanni/index.ts) with legacy JWT verification enabled. Set the server-only `EARTHDATA_TOKEN` to a current [Earthdata token](https://urs.earthdata.nasa.gov/documentation/for_users/user_token) for an account that has authorised [Giovanni](https://api.giovanni.earthdata.nasa.gov/signin).
+
+Monthly charts read refreshed observations. Annual trends and correlations use complete calendar years. The bundled trend map, CSV and forecast evaluation update when the dataset and model are rebuilt.

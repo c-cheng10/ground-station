@@ -2,7 +2,7 @@
   "use strict";
 
   const data = window.TREND_CONFIG;
-  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {} } = window;
+  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {}, TREND_MAP: trendMap = {} } = window;
   const byId = (id) => document.getElementById(id);
   const explorer = byId("explorer");
   if (!data || !data.sites.length || !data.variables.length || !points.length || !TrendStatistics) {
@@ -15,12 +15,6 @@
   const pointIds = new Set(points.map(([lat, lon]) => `${lat},${lon}`));
   const storedSites = data.sites.filter((item) => pointIds.has(pointId(item)));
 
-  const mapFrames = {
-    World: { west: -180, east: 180, south: -58, north: 84, aspect: 1 },
-    Americas: { west: -170, east: -30, south: -57, north: 74, aspect: 0.85 },
-    "Europe & Africa": { west: -25, east: 60, south: -38, north: 72, aspect: 0.85 },
-    "Asia & Oceania": { west: 55, east: 180, south: -48, north: 78, aspect: 0.85 },
-  };
   const verdictLabels = {
     rising: "Rising",
     falling: "Falling",
@@ -110,7 +104,8 @@
   const regionStatus = byId("region-status");
   const regionMessage = byId("region-message");
   const retryRegion = byId("retry-region");
-  let mapContinent = "World";
+  const refreshGiovanni = byId("refresh-giovanni");
+  const refreshStatus = byId("refresh-status");
   let site = null;
   let analysis = null;
   let regionRequest = null;
@@ -120,11 +115,9 @@
   let activeIndex = null;
   let chartLayout;
 
-  const map = byId("map");
   const chart = byId("chart");
   const tooltip = byId("chart-tooltip");
   const optionButtons = new Map();
-  const continentButtons = new Map();
   const viewButtons = new Map();
   const numberFormats = new Map();
 
@@ -227,7 +220,8 @@
     const url = new URL("/rest/v1/climate_points", data.supabaseUrl);
     url.search = new URLSearchParams({ id: `eq.${pointId(point)}`, select: "*" });
     const response = await fetch(url, {
-      signal, headers: { apikey: data.supabaseAnonKey, Authorization: `Bearer ${data.supabaseAnonKey}` },
+      signal, cache: "no-store",
+      headers: { apikey: data.supabaseAnonKey, Authorization: `Bearer ${data.supabaseAnonKey}` },
     });
     if (!response.ok) throw new Error(`Supabase returned HTTP ${response.status}.`);
     const [row] = await response.json();
@@ -237,7 +231,7 @@
 
   // Choose the longest uninterrupted run of complete years, breaking ties with the newest one.
   function completeYearRun(values) {
-    const totalYears = data.endYear - data.startYear + 1;
+    const totalYears = Math.floor(values.length / 12);
     let best = [0, 0];
     let start = 0;
     for (let year = 0; year < totalYears; year += 1) {
@@ -265,7 +259,17 @@
       const annual = span.map((_, k) => monthly.slice(k * 12, k * 12 + 12).reduce((a, b) => a + b, 0) / 12);
       const result = TrendStatistics.analyseRegion({ annual: { [variable.id]: annual }, monthly: { [variable.id]: monthly } },
         span, [variable.id], span[0], span.at(-1));
-      series[variable.id] = { ...result.series[variable.id], firstYear: span[0], lastYear: span.at(-1) };
+      const fitted = result.series[variable.id];
+      const extra = values.slice(endYear * 12, values.findLastIndex(Number.isFinite) + 1);
+      // Include newer observations in monthly views while fitting trends to complete years.
+      const seasonalMean = fitted.monthlyValues.slice(0, 12).map((value, month) => value - fitted.monthlyAnomalies[month]);
+      series[variable.id] = {
+        ...fitted,
+        firstYear: span[0], lastYear: span.at(-1),
+        monthlyValues: [...fitted.monthlyValues, ...extra],
+        monthlyAnomalies: [...fitted.monthlyAnomalies, ...extra.map((value, index) =>
+          Number.isFinite(value) ? value - seasonalMean[index % 12] : null)],
+      };
       residuals[variable.id] = result.residuals[variable.id];
       starts[variable.id] = firstYear * 12;
     }
@@ -282,9 +286,13 @@
     analysis = null;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
+    refreshGiovanni.disabled = false;
+    refreshStatus.textContent = "";
     chartLayout = null;
-    updateSiteButtons();
-    drawMap();
+    byId("drawer-place").textContent = nextSite.name;
+    byId("site-description").textContent = "";
+    openDrawer();
+    flyTo(nextSite.latitude, nextSite.longitude, Math.max(mapView.zoom, 3));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
@@ -309,51 +317,59 @@
     }
   }
 
-  function visibleSites() {
-    const { west, east, south, north } = mapFrames[mapContinent];
-    return storedSites.filter(({ latitude, longitude }) =>
-      longitude >= west && longitude <= east && latitude >= south && latitude <= north);
-  }
-
-  function updateSiteButtons() {
-    for (const button of document.querySelectorAll("button[data-site]")) {
-      button.setAttribute("aria-pressed", String(button.dataset.site === site?.id));
+  async function refreshPoint() {
+    if (!analysis || regionRequest) return;
+    const selectedSite = site;
+    const request = new AbortController();
+    regionRequest = request;
+    refreshGiovanni.disabled = true;
+    refreshStatus.textContent = "Checking Giovanni for new months…";
+    try {
+      const response = await fetch(new URL("/functions/v1/refresh-climate-giovanni", data.supabaseUrl), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${data.supabaseAnonKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ point_id: analysis.row.id }),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(45_000)]),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.error || "Could not refresh Giovanni data. Try again.");
+      if (!Number.isInteger(result?.added_values) || result.added_values < 0 ||
+          !Number.isInteger(result.added_months) || result.added_months < 0) {
+        throw new Error("Giovanni refresh returned an invalid result.");
+      }
+      if (regionRequest !== request) return;
+      const partial = Array.isArray(result.unavailable_variables) && result.unavailable_variables.length > 0;
+      if (result.added_values === 0) {
+        refreshStatus.textContent = partial
+          ? "Giovanni did not return every measurement. No new values were saved."
+          : "Giovanni has no new months for this point.";
+        return;
+      }
+      const latest = Number.isInteger(result.latest_month) && result.latest_month % 100 >= 1 && result.latest_month % 100 <= 12
+        ? ` Latest: ${monthFormat.format(new Date(Date.UTC(Math.floor(result.latest_month / 100), result.latest_month % 100 - 1)))}.`
+        : "";
+      const saved = `Saved ${result.added_values} values across ${monthsText(result.added_months)}.${latest}`;
+      refreshStatus.textContent = partial ? `${saved} Some measurements were unavailable.` : saved;
+      let row;
+      try {
+        row = await loadPoint(selectedSite, request.signal);
+      } catch {
+        if (regionRequest === request) refreshStatus.textContent += " Reopen this point to reload the charts.";
+        return;
+      }
+      if (regionRequest !== request) return;
+      analysis = analyseRow(row);
+      renderDetails();
+    } catch (error) {
+      if (regionRequest === request) {
+        refreshStatus.textContent = error.name === "TimeoutError" ? "Giovanni refresh timed out. Try again." : error.message;
+      }
+    } finally {
+      if (regionRequest === request) {
+        regionRequest = null;
+        refreshGiovanni.disabled = false;
+      }
     }
-  }
-
-  function renderSiteList() {
-    const buttons = visibleSites().map((item) => {
-      const button = create("button");
-      button.dataset.site = item.id;
-      button.append(create("strong", item.name), create("small", item.region));
-      button.addEventListener("click", () => selectSite(item));
-      return button;
-    });
-    const title = create("p", "Study areas", "site-list-title");
-    title.id = "site-list-title";
-    byId("site-list").replaceChildren(title, ...buttons);
-    updateSiteButtons();
-  }
-
-  function mapProjection(width, height) {
-    const frame = mapFrames[mapContinent];
-    const side = Math.min(22, width * 0.045);
-    const innerWidth = width - 2 * side;
-    const innerHeight = height - 2 * side;
-    const longitudeSpan = frame.east - frame.west;
-    const latitudeSpan = frame.north - frame.south;
-    const scale = Math.min(innerWidth / (longitudeSpan * frame.aspect), innerHeight / latitudeSpan);
-    const xOffset = (width - longitudeSpan * frame.aspect * scale) / 2;
-    const yOffset = (height - latitudeSpan * scale) / 2;
-    const project = (longitude, latitude) => [
-      xOffset + (longitude - frame.west) * frame.aspect * scale,
-      yOffset + (frame.north - latitude) * scale,
-    ];
-    project.invert = (x, y) => [
-      frame.west + (x - xOffset) / (frame.aspect * scale),
-      frame.north - (y - yOffset) / scale,
-    ];
-    return project;
   }
 
   // Snap to the nearest stored land point; null when the nearest is too far to stand for the click.
@@ -367,103 +383,86 @@
     }
     if (bestKm > 350) return null;
     const item = { latitude: best[0], longitude: best[1] };
+    const named = storedSites.find((point) => pointId(point) === pointId(item));
+    if (named) return named;
     return {
       ...item,
       id: `point:${best[0]},${best[1]}`,
-      name: latLon(item),
+      name: countryAt(best[0], best[1]) || latLon(item),
       region: "Nearest NASA grid point",
       bounds: { south: best[0] - 0.125, north: best[0] + 0.125, west: best[1] - 0.125, east: best[1] + 0.125 },
     };
   }
 
+  function stripeColour(scale, t) {
+    const end = t < 0 ? scale.low : scale.high;
+    return end.map((channel) => Math.round(247 + (channel - 247) * Math.min(1, Math.abs(t))));
+  }
+
+  function countryAt(latitude, longitude) {
+    for (const country of window.WORLD_MAP?.countries || []) {
+      for (const [ring] of country.polygons) {
+        let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+          const [x1, y1] = ring[i];
+          const [x2, y2] = ring[j];
+          if ((y1 > latitude) !== (y2 > latitude) && longitude < x1 + (latitude - y1) * (x2 - x1) / (y2 - y1)) inside = !inside;
+        }
+        if (inside) return country.name;
+      }
+    }
+    return null;
+  }
+
+  function trendMapVariable() {
+    return data.variables.find((item) => item.id === [...selectedIds][0]) || data.variables[0];
+  }
+
+  function renderTrendMap() {
+    const variable = trendMapVariable();
+    const entry = trendMap[variable.id];
+    for (const [id, button] of optionButtons) button.setAttribute("aria-pressed", String(selectedIds.has(id)));
+    if (!entry) return;
+    const unit = `${trendUnit(variable)} per decade`;
+    byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
+    const scale = stripeScales[variable.id] || stripeScales.T2M;
+    byId("trend-ramp").style.background = `linear-gradient(90deg, rgb(${scale.low}), rgb(247 247 247), rgb(${scale.high}))`;
+    byId("trend-low").textContent = `${format(-entry.scale, variable.decimals + 1, true)}`;
+    byId("trend-high").textContent = `${format(entry.scale, variable.decimals + 1, true)} ${unit}`;
+    const ranked = points.map(([lat, lon], k) => ({ lat, lon, slope: entry.slope[k], significant: entry.significant[k] }))
+      .filter((item) => item.significant && item.slope !== null);
+    const list = (id, items) => byId(id).replaceChildren(...(items.length ? items.map((item) => {
+      const button = create("button", "", "pick-variable");
+      button.textContent = `${(countryAt(item.lat, item.lon) || "Coastal area")}: ${format(item.slope, variable.decimals + 1, true)} ${unit}`;
+      button.addEventListener("click", () => choosePoint(item.lat, item.lon));
+      const li = create("li");
+      li.append(button);
+      return li;
+    }) : [create("li", "No place passes the significance test.")]));
+    list("rising-list", ranked.filter((item) => item.slope > 0).sort((a, b) => b.slope - a.slope).slice(0, 5));
+    list("falling-list", ranked.filter((item) => item.slope < 0).sort((a, b) => a.slope - b.slope).slice(0, 5));
+    drawTrendMap();
+  }
+
   function choosePoint(latitude, longitude) {
     const target = pointSite(latitude, longitude);
-    if (target) selectSite(target);
-    else setRegionStatus("There’s no downloaded land point near that spot. Choose a point nearer the marked data coverage.");
-  }
-
-  function drawMap() {
-    const drawing = prepareCanvas(map);
-    if (!drawing) return;
-    const { ctx, width, height } = drawing;
-    const project = mapProjection(width, height);
-    const frame = mapFrames[mapContinent];
-    ctx.strokeStyle = "#bccbd8";
-    ctx.lineWidth = 0.75;
-    ctx.setLineDash([2, 4]);
-    ctx.beginPath();
-    for (let lat = Math.ceil(frame.south / 10) * 10; lat <= frame.north; lat += 10) {
-      ctx.moveTo(...project(frame.west, lat));
-      ctx.lineTo(...project(frame.east, lat));
+    if (target) {
+      selectSite(target);
+      return;
     }
-    for (let lon = Math.ceil(frame.west / 10) * 10; lon <= frame.east; lon += 10) {
-      ctx.moveTo(...project(lon, frame.north));
-      ctx.lineTo(...project(lon, frame.south));
-    }
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    ctx.fillStyle = "#f8fafb";
-    ctx.strokeStyle = "#9fb0c0";
-    ctx.lineWidth = 0.9;
-    for (const country of window.WORLD_MAP?.countries || []) {
-      for (const polygon of country.polygons) {
-        ctx.beginPath();
-        for (const ring of polygon) {
-          ring.forEach(([lon, lat], index) => {
-            const point = project(lon, lat);
-            if (index === 0) ctx.moveTo(...point);
-            else ctx.lineTo(...point);
-          });
-          ctx.closePath();
-        }
-        ctx.fill("evenodd");
-        ctx.stroke();
-      }
-    }
-
-    const areas = visibleSites();
-    if (site && !data.sites.includes(site)) areas.push(site);
-    for (const item of areas) {
-      const { west, east, south, north } = item.bounds;
-      const [left, top] = project(west, north);
-      const [right, bottom] = project(east, south);
-      const selected = item.id === site?.id;
-      ctx.strokeStyle = selected ? "#a8402a" : "#1f4e9c";
-      ctx.fillStyle = selected ? "#a8402a40" : "#1f4e9c2e";
-      ctx.lineWidth = selected ? 2 : 1.4;
-      ctx.fillRect(left, top, right - left, bottom - top);
-      ctx.strokeRect(left, top, right - left, bottom - top);
-    }
-
-    for (const element of byId("map-markers").children) {
-      const item = data.sites.find((item) => item.id === element.dataset.mapSite);
-      const [left, top] = project(item.longitude, item.latitude);
-      element.style.left = `${left}px`;
-      element.style.top = `${top}px`;
-      if (element.classList.contains("map-marker-label")) {
-        element.classList.toggle("align-left", left > width * 0.63);
-        element.style.maxWidth = `${Math.floor(width * 0.38)}px`;
-      }
-    }
-  }
-
-  function renderMap() {
-    const container = byId("map-markers");
-    container.replaceChildren();
-    for (const item of visibleSites()) {
-      const marker = create("button", "", "map-marker");
-      marker.dataset.site = item.id;
-      marker.dataset.mapSite = item.id;
-      marker.setAttribute("aria-label", `${item.name}, ${item.region}`);
-      marker.addEventListener("click", () => selectSite(item));
-      const label = create("span", item.name, "map-marker-label");
-      label.dataset.mapSite = item.id;
-      label.setAttribute("aria-hidden", "true");
-      container.append(marker, label);
-    }
-    updateSiteButtons();
-    drawMap();
+    regionRequest?.abort();
+    regionRequest = null;
+    site = null;
+    analysis = null;
+    chartLayout = null;
+    delete regionResults.dataset.site;
+    delete regionResults.dataset.point;
+    byId("drawer-place").textContent = "No land data here";
+    byId("site-description").textContent = "";
+    regionResults.hidden = true;
+    byId("story").hidden = true;
+    openDrawer();
+    setRegionStatus("No stored Giovanni point is close enough. Choose a place near one of the map squares.");
   }
 
   function latLon(item) {
@@ -540,6 +539,7 @@
   }
 
   function renderDetails() {
+    renderTrendMap();
     if (!analysis) return;
     activeIndex = null;
     byId("chart-selection").textContent = "";
@@ -567,7 +567,7 @@
       const trend = analysis.series[variable.id].trend;
       const unit = trendUnit(variable);
       byId("chart-title").textContent = `${variable.name} over time (${variable.unit})`;
-      byId("result-headline").textContent = `${variable.name} ${data.sites.includes(site) ? "in" : "at"} ${site.name} ${{
+      byId("result-headline").textContent = `${variable.name} in ${site.name} ${{
         rising: "is rising", falling: "is falling", inconclusive: "shows no clear trend yet",
       }[trend.verdict]}`;
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
@@ -591,7 +591,7 @@
       const meaning = trend.verdict === "rising" ? risingMeans[variable.id] : fallingMeans[variable.id];
       const total = `${format(trend.endValue - trend.startValue, variable.decimals, true)} ${unit}`;
       byId("trend-meaning").textContent = trend.verdict === "inconclusive"
-        ? `No clear trend yet. The trend line moves ${total} from ${firstYear} to ${lastYear}, but the ups and downs between years are big enough to hide a steady change.`
+        ? `No clear trend yet. The trend line moves ${total} from ${firstYear} to ${lastYear}, but the ups and downs between years are big enough to hide a steady change. ${yearsToSignificance(trend, lastYear - firstYear + 1)}`
         : `${meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`} From ${firstYear} to ${lastYear} the trend line moves ${total}.`;
       byId("trend-chance").textContent = `If nothing were really changing, a trend this strong would show up by chance ${chanceText(trend.adjustedPValue)}.`;
       renderAgreement(variable);
@@ -599,6 +599,17 @@
       renderForecast(variable);
     }
     updateOverview();
+  }
+
+  // A trend's t-statistic grows with record length n as n^1.5 when the rate and the year-to-year
+  // scatter stay the same, so we can estimate the years needed to reach |t| = 2 (about p = 0.05).
+  // shortcut: ignores the stricter bar from adjusting for several measurements; say so in the text.
+  function yearsToSignificance(trend, years) {
+    const t = Math.abs(trend.slope) / ((trend.ciHigh - trend.ciLow) / (2 * 2));
+    if (!Number.isFinite(t) || t < 0.3) return "There’s barely any change to detect, so a longer record probably wouldn’t show a trend either.";
+    const more = Math.ceil(years * (2 / t) ** (2 / 3) - years);
+    if (more > 100) return "At this slow rate, it would take more than a century of extra data to tell it apart from chance.";
+    return `If it kept changing at this rate, about ${Math.max(1, more)} more ${more === 1 ? "year" : "years"} of data would likely make it significant on a standard test.`;
   }
 
   // Air temperature only: compare MERRA-2 with GLDAS 2.1 over the years both cover.
@@ -640,7 +651,7 @@
     const raw = Object.fromEntries(model.variables.map((id) => [id, analysis.row[id.toLowerCase()]]));
     if (Object.values(raw).some((values) => !Array.isArray(values))) return null;
     // Forecasts start after the last month every forecast measurement has (GPM lags a few months).
-    let months = Math.min(...Object.values(raw).map((values) => values.length));
+    let months = Math.min(model.enso.length, ...Object.values(raw).map((values) => values.length));
     while (months > 0 && Object.values(raw).some((values) => !Number.isFinite(values[months - 1]))) months -= 1;
     const testStart = (model.testYears[0] - model.startYear) * 12;
     const normalStart = (model.normal[0] - model.startYear) * 12;
@@ -773,9 +784,12 @@
     byId("legend-value").textContent = display.legend;
     byId("trend-legend").hidden = view !== "annual";
     const note = byId("chart-note");
-    note.hidden = view !== "anomaly";
     const shown = analysis?.series[[...selectedIds][0]];
-    note.textContent = shown ? `Each value shows how far that month was from the average for the same calendar month over ${shown.firstYear}–${shown.lastYear}.` : "";
+    const monthlyEnd = shown && monthFormat.format(new Date(Date.UTC(shown.firstYear, shown.monthlyValues.length - 1)));
+    note.textContent = view === "anomaly" && shown
+      ? `Compared with the average for the same calendar month over ${shown.firstYear}–${shown.lastYear}. Observations through ${monthlyEnd}.`
+      : view === "monthly" && shown ? `Observations through ${monthlyEnd}.` : "";
+    note.hidden = !note.textContent;
     drawChart();
   }
 
@@ -805,7 +819,7 @@
     const { trend } = series;
     const annual = view === "annual";
     const endpoints = annual ? [trend.startValue, trend.endValue] : view === "anomaly" ? [0] : [];
-    const { floor, ceiling, decimals, ticks } = axisScale(values, endpoints);
+    const { floor, ceiling, decimals, ticks } = axisScale(values.filter(Number.isFinite), endpoints);
     ctx.font = '13px "Atkinson Hyperlegible Next", system-ui, sans-serif';
     const left = Math.max(29, ...ticks.map((tick) => ctx.measureText(format(tick, decimals)).width + 12));
     const right = width - 18;
@@ -831,13 +845,14 @@
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    const { firstYear, lastYear } = series;
+    const { firstYear } = series;
+    const lastYear = annual ? series.lastYear : firstYear + Math.floor((values.length - 1) / 12);
     const years = [firstYear];
     const interval = width < 420 || lastYear - firstYear > 40 ? 20 : 10;
     for (let year = Math.ceil((firstYear + 4) / interval) * interval; year < lastYear - 3; year += interval) years.push(year);
     years.push(lastYear);
     for (const year of years) {
-      const index = year === lastYear ? values.length - 1 : (year - firstYear) * (annual ? 1 : 12);
+      const index = (year - firstYear) * (annual ? 1 : 12);
       ctx.fillText(String(year), x(index), bottom + 10);
     }
 
@@ -846,7 +861,8 @@
     ctx.lineJoin = "round";
     ctx.beginPath();
     values.forEach((value, index) => {
-      if (index === 0) ctx.moveTo(x(index), y(value));
+      if (!Number.isFinite(value)) return;
+      if (!Number.isFinite(values[index - 1])) ctx.moveTo(x(index), y(value));
       else ctx.lineTo(x(index), y(value));
     });
     ctx.stroke();
@@ -866,19 +882,22 @@
     if (activeIndex !== null) {
       const value = values[activeIndex];
       const xPos = x(activeIndex);
-      const yPos = y(value);
+      const yPos = Number.isFinite(value) ? y(value) : top;
       ctx.strokeStyle = "#9fb0c0";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(xPos, top);
       ctx.lineTo(xPos, bottom);
       ctx.stroke();
-      ctx.fillStyle = "#1f4e9c";
-      ctx.beginPath();
-      ctx.arc(xPos, yPos, 4.5, 0, 2 * Math.PI);
-      ctx.fill();
+      if (Number.isFinite(value)) {
+        ctx.fillStyle = "#1f4e9c";
+        ctx.beginPath();
+        ctx.arc(xPos, yPos, 4.5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
       const period = annual ? series.firstYear + activeIndex : monthFormat.format(new Date(Date.UTC(series.firstYear, activeIndex)));
-      const label = `${period} · ${format(value, variable.decimals, view === "anomaly")} ${variable.unit}`;
+      const measurement = Number.isFinite(value) ? `${format(value, variable.decimals, view === "anomaly")} ${variable.unit}` : "No observation";
+      const label = `${period} · ${measurement}`;
       tooltip.textContent = label;
       tooltip.style.left = `${Math.max(2, Math.min(xPos + 9, width - tooltip.offsetWidth - 2))}px`;
       tooltip.style.top = `${Math.max(0, yPos - 35)}px`;
@@ -886,21 +905,6 @@
     }
   }
 
-  for (const continent of Object.keys(mapFrames)) {
-    const button = create("button", continent);
-    button.setAttribute("aria-pressed", String(continent === mapContinent));
-    button.addEventListener("click", () => {
-      if (mapContinent === continent) return;
-      mapContinent = continent;
-      for (const [name, control] of continentButtons) {
-        control.setAttribute("aria-pressed", String(name === mapContinent));
-      }
-      renderSiteList();
-      renderMap();
-    });
-    continentButtons.set(continent, button);
-    byId("continent-controls").append(button);
-  }
   for (const variable of data.variables) {
     const button = create("button", variable.name);
     button.dataset.variable = variable.id;
@@ -971,86 +975,361 @@
   setSource("method-source", data.methodUrl);
   const observer = new ResizeObserver((entries) => {
     for (const { target } of entries) {
-      if (target === byId("map-stage")) drawMap();
-      else if (target === byId("chart-stage")) drawChart();
+      if (target === byId("chart-stage")) drawChart();
       else if (target === byId("forecast-stage")) drawForecast();
+      else if (target === byId("trend-map-stage")) drawTrendMap();
       else if (liveStripes.has(target)) drawStripes(target, ...liveStripes.get(target));
     }
   });
-  explorer.hidden = false;
-  renderSiteList();
-  renderMap();
-  setRegionStatus("Pick a study area, click the map, or try an example above to load a place.");
-  retryRegion.addEventListener("click", () => selectSite(site));
 
-  for (const example of examples.filter(({ site }) => site())) {
-    const item = create("li", "", "example");
-    const button = create("button", "Investigate", "button primary small");
-    button.addEventListener("click", () => {
-      const target = example.site();
-      if (!target) {
-        setRegionStatus("This example’s data isn’t in the database yet. Try another example.");
-        return;
+  // ---- Full-screen map: pan, zoom, hover, click ----
+  const app = byId("app");
+  const stage = byId("trend-map-stage");
+  const world = byId("trend-map");
+  const mapTip = byId("map-tip");
+  const pin = byId("map-pin");
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Phones start zoomed in a little so squares are big enough to tap.
+  const homeZoom = innerWidth < 760 ? 1.8 : 1;
+  const mapView = { lon: 15, lat: 12, zoom: homeZoom };
+  let revealLon = reduceMotion ? 180 : -180;
+  let flight = 0;
+
+  const mapSize = () => [world.clientWidth, world.clientHeight];
+  // Plate carrée sized so the whole world (360° by the 144° the land records span) fits at zoom 1.
+  const baseScale = (width, height) => Math.min(width / 360, height / 144);
+
+  function projector(width, height) {
+    const k = baseScale(width, height) * mapView.zoom;
+    const project = (lon, lat) => [width / 2 + (lon - mapView.lon) * k, height / 2 - (lat - mapView.lat) * k];
+    project.invert = (x, y) => [mapView.lon + (x - width / 2) / k, mapView.lat - (y - height / 2) / k];
+    project.k = k;
+    return project;
+  }
+
+  function clampView() {
+    const [width, height] = mapSize();
+    mapView.zoom = Math.min(16, Math.max(1, mapView.zoom));
+    const k = baseScale(width, height) * mapView.zoom;
+    const halfLon = width / 2 / k;
+    const halfLat = height / 2 / k;
+    mapView.lon = halfLon >= 180 ? 0 : Math.min(180 - halfLon, Math.max(-180 + halfLon, mapView.lon));
+    mapView.lat = halfLat >= 72 ? 12 : Math.min(84 - halfLat, Math.max(-60 + halfLat, mapView.lat));
+  }
+
+  function drawTrendMap() {
+    const drawing = prepareCanvas(world);
+    if (!drawing) return;
+    const { ctx, width, height } = drawing;
+    clampView();
+    const project = projector(width, height);
+    const variable = trendMapVariable();
+    const entry = trendMap[variable.id];
+    const scale = stripeScales[variable.id] || stripeScales.T2M;
+    ctx.fillStyle = "#d6e3ed";
+    ctx.fillRect(0, 0, width, height);
+    const countries = window.WORLD_MAP?.countries || [];
+    const trace = (polygon) => {
+      ctx.beginPath();
+      for (const ring of polygon) {
+        ring.forEach(([lon, lat], index) => ctx[index ? "lineTo" : "moveTo"](...project(lon, lat)));
+        ctx.closePath();
       }
-      story = { siteId: target.id };
-      byId("story-title").textContent = `What to look for: ${example.title}`;
-      byId("story-text").textContent = example.look;
-      compareMode = example.ids.length > 1;
-      selectedIds = new Set(example.ids);
-      byId("lag").value = 0;
-      byId("explore").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-      if (site?.id === target.id && analysis) renderDetails();
-      else selectSite(target);
-    });
-    const preview = create("canvas");
-    preview.setAttribute("aria-hidden", "true");
-    example.canvas = preview;
-    const body = create("div", "", "example-body");
-    body.append(create("h3", example.title), create("p", example.where, "where"), create("p", example.blurb), button);
-    item.append(preview, body);
-    byId("example-list").append(item);
-  }
-
-  function showStripes(canvas, values, id) {
-    liveStripes.set(canvas, [values, id]);
-    drawStripes(canvas, values, id);
-    observer.observe(canvas);
-  }
-
-  // Hero and example stripes are bundled (featured-stripes.js), so the page shows real data at once.
-  for (const example of examples) {
-    const values = featured[example.preview[0]];
-    if (example.canvas && values?.length) showStripes(example.canvas, values, example.preview[1]);
-  }
-  const values = featured["ontario-T2M"];
-  if (values?.length) {
-    liveStripes.set(byId("hero-stripes"), [values, "T2M"]);
-    // The page's one load moment: years appear left to right, easing out.
-    const start = performance.now();
-    const duration = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1400;
-    const step = (now) => {
-      const progress = duration ? Math.min(1, (now - start) / duration) : 1;
-      drawStripes(byId("hero-stripes"), values, "T2M", Math.ceil(values.length * (1 - (1 - progress) ** 3)));
-      if (progress < 1) requestAnimationFrame(step);
     };
-    requestAnimationFrame(step);
-  } else {
-    byId("hero-stripes").hidden = true;
+    ctx.fillStyle = "#f6f8fa";
+    for (const country of countries) {
+      for (const polygon of country.polygons) {
+        trace(polygon);
+        ctx.fill("evenodd");
+      }
+    }
+    if (entry) {
+      // Points sit on a 3° lattice, so each square covers its share of the map.
+      points.forEach(([lat, lon], k) => {
+        const slope = entry.slope[k];
+        if (slope === null || lon > revealLon) return;
+        const [left, top] = project(lon - 1.5, lat + 1.5);
+        const [right, bottom] = project(lon + 1.5, lat - 1.5);
+        if (right < 0 || left > width || bottom < 0 || top > height) return;
+        ctx.globalAlpha = entry.significant[k] ? 1 : 0.28;
+        ctx.fillStyle = `rgb(${stripeColour(scale, slope / entry.scale)})`;
+        ctx.fillRect(left, top, right - left + 0.6, bottom - top + 0.6);
+      });
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = "#8a9db0";
+    ctx.lineWidth = 0.7;
+    for (const country of countries) {
+      for (const polygon of country.polygons) {
+        trace(polygon);
+        ctx.stroke();
+      }
+    }
+    if (site) {
+      const [x, y] = project(site.longitude, site.latitude);
+      pin.hidden = false;
+      pin.style.left = `${x}px`;
+      pin.style.top = `${y}px`;
+    } else {
+      pin.hidden = true;
+    }
   }
-  byId("map-stage").addEventListener("click", (event) => {
-    if (event.target.closest("button")) return;
-    const rect = map.getBoundingClientRect();
-    const [longitude, latitude] = mapProjection(rect.width, rect.height).invert(event.clientX - rect.left, event.clientY - rect.top);
-    choosePoint(latitude, longitude);
+
+  // Animate the view to a place; on wide screens keep it clear of the results panel.
+  function flyTo(lat, lon, zoom, avoidPanel = true) {
+    const [width, height] = mapSize();
+    const open = avoidPanel && app.hasAttribute("data-drawer");
+    // Side panel on wide screens, bottom sheet on phones: centre the place in the map that stays visible.
+    const panelX = open && width > 760 ? byId("drawer").offsetWidth : 0;
+    const panelY = open && width <= 760 ? byId("drawer").offsetHeight : 0;
+    const k = baseScale(width, height) * zoom;
+    const target = { lat: lat - panelY / 2 / k, lon: lon + panelX / 2 / k, zoom };
+    const from = { ...mapView };
+    cancelAnimationFrame(flight);
+    if (reduceMotion) {
+      Object.assign(mapView, target);
+      drawTrendMap();
+      return;
+    }
+    const start = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / 750);
+      const e = 1 - (1 - t) ** 3;
+      mapView.lat = from.lat + (target.lat - from.lat) * e;
+      mapView.lon = from.lon + (target.lon - from.lon) * e;
+      mapView.zoom = from.zoom * (target.zoom / from.zoom) ** e;
+      drawTrendMap();
+      if (t < 1) flight = requestAnimationFrame(step);
+    };
+    flight = requestAnimationFrame(step);
+  }
+
+  function zoomAt(x, y, factor) {
+    const [width, height] = mapSize();
+    const [lon, lat] = projector(width, height).invert(x, y);
+    mapView.zoom *= factor;
+    clampView();
+    const k = baseScale(width, height) * mapView.zoom;
+    mapView.lon = lon - (x - width / 2) / k;
+    mapView.lat = lat + (y - height / 2) / k;
+    drawTrendMap();
+  }
+
+  function pointIndexAt(x, y) {
+    const [lon, lat] = projector(...mapSize()).invert(x, y);
+    let best = -1;
+    let bestDistance = 1.6;
+    points.forEach(([pLat, pLon], k) => {
+      const distance = Math.max(Math.abs(pLat - lat), Math.abs(pLon - lon));
+      if (distance < bestDistance) [best, bestDistance] = [k, distance];
+    });
+    return best;
+  }
+
+  function showTip(x, y) {
+    const variable = trendMapVariable();
+    const entry = trendMap[variable.id];
+    const k = pointIndexAt(x, y);
+    if (!entry || k < 0 || entry.slope[k] === null) {
+      mapTip.hidden = true;
+      return;
+    }
+    const [lat, lon] = points[k];
+    mapTip.replaceChildren(
+      create("strong", countryAt(lat, lon) || "Coastal area"),
+      create("span", `${format(entry.slope[k], variable.decimals + 1, true)} ${trendUnit(variable)} per decade`),
+      create("br"),
+      create("small", entry.significant[k] ? "A real trend. Click for details." : "Could be chance. Click for details."),
+    );
+    mapTip.hidden = false;
+    mapTip.style.left = `${Math.min(x, mapSize()[0] - mapTip.offsetWidth - 24)}px`;
+    mapTip.style.top = `${y}px`;
+  }
+
+  function openDrawer() {
+    if (!app.hasAttribute("data-drawer")) {
+      app.setAttribute("data-drawer", "");
+      byId("welcome").hidden = true;
+    }
+    byId("drawer-title").focus({ preventScroll: true });
+  }
+
+  function closeDrawer() {
+    app.removeAttribute("data-drawer");
+    world.focus({ preventScroll: true });
+  }
+
+  const pointers = new Map();
+  let drag = null;
+  stage.addEventListener("pointerdown", (event) => {
+    if (event.button > 0) return;
+    stage.setPointerCapture(event.pointerId);
+    pointers.set(event.pointerId, [event.offsetX, event.offsetY]);
+    cancelAnimationFrame(flight);
+    const [a, b] = [...pointers.values()];
+    drag = {
+      x: event.offsetX, y: event.offsetY, lon: mapView.lon, lat: mapView.lat, moved: b ? 99 : 0,
+      pinch: b ? { distance: Math.hypot(a[0] - b[0], a[1] - b[1]), zoom: mapView.zoom } : null,
+    };
+    mapTip.hidden = true;
+  });
+  stage.addEventListener("pointermove", (event) => {
+    if (!drag) {
+      if (event.pointerType === "mouse") showTip(event.offsetX, event.offsetY);
+      return;
+    }
+    pointers.set(event.pointerId, [event.offsetX, event.offsetY]);
+    const [a, b] = [...pointers.values()];
+    if (drag.pinch && b) {
+      const factor = drag.pinch.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / drag.pinch.distance / mapView.zoom;
+      zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, factor);
+      return;
+    }
+    const k = projector(...mapSize()).k;
+    drag.moved = Math.max(drag.moved, Math.hypot(event.offsetX - drag.x, event.offsetY - drag.y));
+    if (drag.moved > 4) stage.classList.add("dragging");
+    mapView.lon = drag.lon - (event.offsetX - drag.x) / k;
+    mapView.lat = drag.lat + (event.offsetY - drag.y) / k;
+    drawTrendMap();
+  });
+  const endPointer = (event) => {
+    pointers.delete(event.pointerId);
+    if (!drag || pointers.size) return;
+    const clicked = drag.moved < 5 && event.type === "pointerup";
+    drag = null;
+    stage.classList.remove("dragging");
+    if (clicked) {
+      const [lon, lat] = projector(...mapSize()).invert(event.offsetX, event.offsetY);
+      choosePoint(lat, lon);
+    }
+  };
+  stage.addEventListener("pointerup", endPointer);
+  stage.addEventListener("pointercancel", endPointer);
+  stage.addEventListener("pointerleave", () => { mapTip.hidden = true; });
+  stage.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    cancelAnimationFrame(flight);
+    zoomAt(event.offsetX, event.offsetY, Math.exp(-event.deltaY * 0.0015));
+  }, { passive: false });
+  world.addEventListener("keydown", (event) => {
+    const [width, height] = mapSize();
+    const k = projector(width, height).k;
+    const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
+    if (moves[event.key]) {
+      mapView.lon += moves[event.key][0] * width * 0.15 / k;
+      mapView.lat += moves[event.key][1] * height * 0.15 / k;
+      drawTrendMap();
+    } else if (event.key === "+" || event.key === "=") zoomAt(width / 2, height / 2, 1.5);
+    else if (event.key === "-") zoomAt(width / 2, height / 2, 1 / 1.5);
+    else if (event.key === "Enter") choosePoint(mapView.lat, mapView.lon);
+    else return;
+    event.preventDefault();
+  });
+  byId("zoom-in").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom * 2, false));
+  byId("zoom-out").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom / 2, false));
+  byId("zoom-reset").addEventListener("click", () => flyTo(12, 15, homeZoom, false));
+
+  // ---- Panels: results, welcome, how it works ----
+  const hideWelcome = () => {
+    byId("welcome").hidden = true;
+    world.focus({ preventScroll: true });
+  };
+  byId("close-drawer").addEventListener("click", closeDrawer);
+  byId("close-welcome").addEventListener("click", hideWelcome);
+  byId("explore-map").addEventListener("click", hideWelcome);
+  byId("show-welcome").addEventListener("click", () => {
+    app.removeAttribute("data-drawer");
+    byId("welcome").hidden = false;
+    byId("close-welcome").focus();
+  });
+  const how = byId("how");
+  const assistantDialog = byId("assistant-dialog");
+  for (const id of ["show-assistant", "ask-at-point"]) {
+    byId(id).addEventListener("click", () => assistantDialog.showModal());
+  }
+  byId("close-assistant").addEventListener("click", () => assistantDialog.close());
+  byId("show-how").addEventListener("click", () => how.showModal());
+  byId("close-how").addEventListener("click", () => how.close());
+  how.addEventListener("click", (event) => { if (event.target === how) how.close(); });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || how.open || assistantDialog.open) return;
+    if (app.hasAttribute("data-drawer")) closeDrawer();
+    else if (!byId("welcome").hidden) hideWelcome();
+  });
+  byId("locate").addEventListener("click", () => {
+    const button = byId("locate");
+    if (!navigator.geolocation) {
+      button.textContent = "Location unavailable";
+      return;
+    }
+    button.textContent = "Finding you…";
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        button.textContent = "Use my location";
+        choosePoint(coords.latitude, coords.longitude);
+      },
+      () => {
+        button.textContent = "Location unavailable";
+        setTimeout(() => { button.textContent = "Use my location"; }, 2500);
+      },
+      { timeout: 10000 },
+    );
   });
   byId("point-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const { latitude, longitude } = event.target.elements;
     choosePoint(latitude.valueAsNumber, longitude.valueAsNumber);
   });
+  retryRegion.addEventListener("click", () => selectSite(site));
+  refreshGiovanni.addEventListener("click", refreshPoint);
 
-  observer.observe(byId("hero-stripes"));
-  observer.observe(byId("map-stage"));
+  // ---- Examples in the welcome card ----
+  function showStripes(canvas, values, id) {
+    liveStripes.set(canvas, [values, id]);
+    drawStripes(canvas, values, id);
+    observer.observe(canvas);
+  }
+  for (const example of examples.filter(({ site }) => site())) {
+    const button = create("button");
+    const preview = create("canvas");
+    preview.setAttribute("aria-hidden", "true");
+    button.append(preview, create("span", example.title));
+    button.addEventListener("click", () => {
+      const target = example.site();
+      if (!target) return;
+      story = { siteId: target.id };
+      byId("story-title").textContent = `What to look for: ${example.title}`;
+      byId("story-text").textContent = example.look;
+      compareMode = example.ids.length > 1;
+      selectedIds = new Set(example.ids);
+      byId("lag").value = 0;
+      if (site?.id === target.id && analysis) {
+        openDrawer();
+        renderDetails();
+      } else {
+        selectSite(target);
+      }
+    });
+    const item = create("li");
+    item.append(button);
+    byId("example-list").append(item);
+    const values = featured[example.preview[0]];
+    if (values?.length) showStripes(preview, values, example.preview[1]);
+  }
+
   observer.observe(byId("chart-stage"));
   observer.observe(byId("forecast-stage"));
+  observer.observe(stage);
+  renderTrendMap();
+  // The page's one load moment: trend squares sweep in west to east, like a satellite pass.
+  if (!reduceMotion) {
+    const start = performance.now();
+    const sweep = (now) => {
+      const t = Math.min(1, Math.max(0, (now - start - 250) / 1600));
+      revealLon = -180 + 360 * (1 - (1 - t) ** 3);
+      drawTrendMap();
+      if (t < 1) requestAnimationFrame(sweep);
+    };
+    requestAnimationFrame(sweep);
+  }
 })();
