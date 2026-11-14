@@ -936,6 +936,10 @@
     const button = create("button", "Investigate", "button primary small");
     button.addEventListener("click", () => {
       const target = example.site();
+      if (!target) {
+        setRegionStatus("This example’s data isn’t in the database yet. Try another example.");
+        return;
+      }
       story = { siteId: target.id };
       byId("story-title").textContent = `What to look for: ${example.title}`;
       byId("story-text").textContent = example.look;
