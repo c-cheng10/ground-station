@@ -27,3 +27,18 @@ Each measurement uses the most consistent NASA record Giovanni offers for it:
 5. `python train_world_model.py` trains the forecast and writes `world-model.js`.
 
 The table `climate_points` holds one row per land point: every measurement is a monthly array starting January 1948, with nulls outside its record. Anyone can read it with the public anon key; only the service role writes.
+
+## Current build
+
+1,656 land points (58 coastal cells were skipped because the models treat them as ocean). The trend map flags a significant change at 73% of places for air temperature, 77% for specific humidity, but only 4% for precipitation.
+
+World model skill against the recent-average guess on 2020–2025, at 350 places it never trained on (lead 1 / 3 / 6 / 12 months):
+
+| Measurement | 1 | 3 | 6 | 12 |
+|---|---|---|---|---|
+| Relative humidity | +0.17 | +0.07 | +0.04 | +0.02 |
+| Air temperature | +0.10 | +0.08 | +0.06 | +0.04 |
+| Specific humidity | +0.11 | +0.02 | +0.00 | −0.02 |
+| Precipitation | +0.07 | +0.05 | +0.05 | +0.04 |
+
+The linear model (ridge, alpha 10,000) beat 32- and 64-unit neural networks on 2015–2019 forecasts, so it ships.
