@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Climate Trends in the Americas</title>
+  <script defer src="americas-map.js"></script>
+  <script defer src="trend-config.js"></script>
+  <script defer src="power-data.js"></script>
+  <script defer src="trend-statistics.js"></script>
+  <script defer src="trend-explorer.js"></script>
+  <style>
+    :root {
+      font-family: Inter, system-ui, sans-serif;
+      color: #1b2923;
+      background: #f4f4ee;
+      --ink: #1b2923;
+      --muted: #4b6258;
+      --rule: #d7dfd5;
+      --surface: #fffefa;
+      --trace: #187a63;
+      --trend: #aa4924;
+      --control: #174c3b;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; }
+    a { color: var(--control); text-underline-offset: 0.2em; }
+    a:focus-visible, button:focus-visible, select:focus-visible, summary:focus-visible, canvas:focus-visible {
+      outline: 3px solid #3c7e69;
+      outline-offset: 4px;
+    }
+    .shell { width: min(1120px, calc(100% - 64px)); margin-inline: auto; }
+    .masthead { background: #152f26; color: #f8f8ed; padding-block: 35px 42px; }
+    .masthead .shell { display: flex; gap: 25px; justify-content: space-between; align-items: end; }
+    .masthead h1 {
+      font: 400 clamp(2.4rem, 5vw, 4.25rem)/0.99 "Instrument Serif", Georgia, serif;
+      letter-spacing: -0.045em;
+      margin: 0 0 12px;
+    }
+    .masthead p { color: #cfddd0; margin: 0; font-size: 0.95rem; }
+    .download {
+      display: inline-flex; gap: 9px; align-items: center; min-height: 44px; padding: 10px 15px;
+      border: 1px solid #789a85; border-radius: 6px; color: #f8f8ed; text-decoration: none;
+      white-space: nowrap; font-size: 0.85rem; font-weight: 650;
+    }
+    .download:hover { background: #285142; }
+    button { font: inherit; cursor: pointer; }
+    .map-panel { margin-top: 24px; border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; background: var(--surface); }
+    .map-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--rule); }
+    .map-toolbar h2, .variables h2 { font-size: 1.05rem; margin: 0; letter-spacing: -0.025em; }
+    .continent-controls { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 8px; background: #edf2ea; }
+    .continent-controls button { border: 0; background: transparent; border-radius: 5px; padding: 7px 11px; color: var(--muted); font-size: 0.8rem; }
+    .continent-controls button[aria-pressed="true"] { background: var(--control); color: #fffefa; }
+    .map-content { display: grid; grid-template-columns: minmax(0, 1fr) 257px; }
+    .map-stage { min-width: 0; height: 475px; position: relative; background: #dbe9e7; overflow: hidden; }
+    .map-stage canvas { position: absolute; inset: 0; }
+    .map-marker {
+      position: absolute; z-index: 1; transform: translate(-50%, -50%); background: transparent; border: 0;
+      width: 43px; height: 43px; border-radius: 50%; display: grid; place-items: center;
+    }
+    .map-marker::before { content: ""; width: 11px; height: 11px; border-radius: 50%; background: #23654f; box-shadow: 0 0 0 2px #fffefa; }
+    .map-marker:hover::before, .map-marker[aria-pressed="true"]::before { background: #a74824; box-shadow: 0 0 0 2px #fffefa, 0 0 0 5px #a7482440; }
+    .map-marker-label {
+      z-index: 2; pointer-events: none; position: absolute; transform: translate(13px, -50%);
+      color: #244a3b; font-size: 0.77rem; font-weight: 720; white-space: nowrap;
+      text-shadow: 0 1px 3px #f4f4ee, 0 -1px 3px #f4f4ee;
+    }
+    .map-marker-label.align-left { transform: translate(calc(-100% - 13px), -50%); }
+    .site-list { padding: 15px; border-left: 1px solid var(--rule); }
+    .site-list button {
+      background: transparent; color: var(--ink); text-align: left; width: 100%; min-height: 52px; padding: 8px 10px;
+      margin: 0 0 6px; border: 1px solid transparent; border-radius: 6px;
+    }
+    .site-list button:hover, .site-list button[aria-pressed="true"] { border-color: #b0c6b5; background: #edf2ea; }
+    .site-list strong { display: block; font-size: 0.91rem; }
+    .site-list small { color: var(--muted); }
+    .variables { margin-block: 23px 19px; }
+    .variables p { color: var(--muted); margin: 6px 0 12px; font-size: 0.84rem; }
+    .variable-options { display: flex; flex-wrap: wrap; gap: 7px; }
+    .variable-options button {
+      background: var(--surface); color: var(--ink); border: 1px solid #b8c9bb; border-radius: 22px;
+      padding: 7px 12px; min-height: 37px; font-size: 0.81rem;
+    }
+    .variable-options button:hover { background: #e4ede3; }
+    .variable-options button[aria-pressed="true"] { background: var(--control); color: #fffefa; border-color: var(--control); }
+    .variable-actions { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 10px; margin: 6px 0 11px; }
+    .variables .variable-actions p { margin: 0; }
+    .compare-toggle { min-height: 30px; padding: 3px 8px; border: 1px solid #b8c9bb; border-radius: 5px; background: var(--surface); color: var(--control); font-size: 0.78rem; }
+    .compare-toggle[aria-pressed="true"] { background: var(--control); color: #fffefa; border-color: var(--control); }
+    .report {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(224px, 0.34fr); background: var(--surface);
+      border: 1px solid var(--rule); border-radius: 12px; overflow: hidden;
+    }
+    .figure { margin: 0; min-width: 0; padding: 23px 25px 17px; }
+    .figure h2 { margin: 0; font-size: clamp(1.25rem, 3vw, 1.63rem); letter-spacing: -0.035em; }
+    .description, .location { color: var(--muted); font-size: 0.86rem; line-height: 1.48; margin: 5px 0 0; }
+    .location { font-size: 0.8rem; }
+    .chart-options { margin-top: 13px; }
+    .chart-stage { margin-top: 18px; position: relative; height: 325px; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .chart-tooltip {
+      position: absolute; z-index: 1; pointer-events: none; white-space: nowrap;
+      border-radius: 5px; background: #193c30; color: #fffefa; padding: 7px 10px;
+      font-size: 0.79rem; font-variant-numeric: tabular-nums;
+    }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 0.78rem; margin-top: 8px; }
+    .legend-item { display: flex; align-items: center; gap: 7px; }
+    .swatch { width: 22px; border-top: 2px solid var(--trace); }
+    .swatch.trend { border-top: 2px dashed var(--trend); }
+    .stats { border-left: 1px solid var(--rule); padding: 23px; background: #edf2ea; }
+    .stats h2, .overview h2 { font-size: 1.05rem; margin: 0 0 14px; letter-spacing: -0.025em; }
+    .verdict { display: inline-block; font-size: 0.82rem; font-weight: 700; border-radius: 20px; padding: 5px 10px; }
+    .verdict[data-state="rising"] { background: #f6e7d9; color: #7a351d; }
+    .verdict[data-state="falling"] { background: #dce9ef; color: #244d60; }
+    .verdict[data-state="inconclusive"] { background: #e3e7df; color: #42554b; }
+    .stats dl { margin: 15px 0 0; }
+    .stats dl div { border-top: 1px solid #cbd9cb; padding-block: 11px; }
+    .stats dt { color: var(--muted); font-size: 0.78rem; }
+    .stats dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; font-weight: 660; font-size: 0.95rem; }
+    .stats dd.slope { font-size: clamp(1.25rem, 2vw, 1.65rem); letter-spacing: -0.035em; }
+    .stats p { color: var(--muted); font-size: 0.77rem; line-height: 1.45; margin: 8px 0 0; }
+    .overview { margin-top: 25px; }
+    .table-wrap { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; overflow: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { text-align: left; padding: 10px 13px; font-size: 0.83rem; border-bottom: 1px solid var(--rule); }
+    thead { background: #edf2ea; }
+    thead th { color: var(--muted); font-size: 0.75rem; }
+    tbody tr:last-child > * { border-bottom: 0; }
+    tbody tr[data-selected] { background: #f1f6ef; }
+    td { font-variant-numeric: tabular-nums; }
+    .pick-variable { padding: 2px 0; border: 0; color: var(--control); background: transparent; font: inherit; cursor: pointer; text-align: left; }
+    .pick-variable:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+    .correlations { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 23px 25px; }
+    .correlations h2 { margin: 0; font-size: 1.32rem; letter-spacing: -0.035em; }
+    .correlations .table-wrap { margin-top: 16px; }
+    .matrix td { text-align: center; font-weight: 650; min-width: 68px; }
+    .matrix tbody th { white-space: nowrap; }
+    #trend-meaning { border-top: 1px solid #cbd9cb; padding-top: 11px; font-weight: 630; color: var(--ink); }
+    .method { border-top: 1px solid var(--rule); margin-block: 24px; padding-block: 13px 0; color: var(--muted); font-size: 0.83rem; }
+    .method summary { width: fit-content; cursor: pointer; color: var(--ink); font-weight: 650; }
+    .method p { max-width: 80ch; line-height: 1.5; }
+    .error { background: var(--surface); padding: 18px; border: 1px solid var(--rule); margin-top: 20px; }
+    .region-status { margin-block: 20px; padding: 15px 18px; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; }
+    .region-status p { margin: 0; }
+    .region-status button { margin-top: 10px; }
+    .sr-only { position: absolute; overflow: hidden; clip-path: inset(50%); width: 1px; height: 1px; white-space: nowrap; }
+    @media (max-width: 680px) {
+      .shell { width: calc(100% - 32px); }
+      .masthead { padding-block: 25px; }
+      .masthead .shell { align-items: start; flex-direction: column; gap: 16px; }
+      .map-panel { margin-top: 15px; }
+      .map-content { grid-template-columns: 1fr; }
+      .map-toolbar { padding: 10px; }
+      .map-toolbar h2 { font-size: 0.93rem; }
+      .continent-controls button { font-size: 0.73rem; padding-inline: 7px; }
+      .map-stage { height: 350px; }
+      .site-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 7px; border-left: 0; border-top: 1px solid var(--rule); }
+      .site-list button { margin: 0; padding: 6px; }
+      .site-list strong { font-size: 0.74rem; }
+      .site-list small { font-size: 0.65rem; }
+      .map-marker-label { display: none; }
+      .report { grid-template-columns: 1fr; }
+      .figure { padding: 15px 13px; }
+      .stats { padding: 16px; border-left: 0; border-top: 1px solid var(--rule); }
+      .chart-stage { height: 260px; }
+      th, td { padding: 8px; font-size: 0.76rem; }
+    }
+  </style>
+</head>
+<body>
+  <header class="masthead">
+    <div class="shell">
+      <div>
+        <h1>Climate Trends in the Americas</h1>
+        <p id="coverage">Regional climate records</p>
+      </div>
+      <a class="download" href="americas-trends.csv" download>Download annual CSV snapshot <span aria-hidden="true">↓</span></a>
+    </div>
+  </header>
+  <main class="shell">
+    <noscript><p>Enable JavaScript to explore the records. The CSV download works without it.</p></noscript>
+    <p class="error" role="alert" id="data-error" hidden></p>
+    <div id="explorer" hidden>
+      <section class="map-panel" aria-labelledby="map-title">
+        <div class="map-toolbar">
+          <h2 id="map-title">Choose a study area</h2>
+          <div id="continent-controls" class="continent-controls" role="group" aria-label="Continent"></div>
+        </div>
+        <div class="map-content">
+          <div class="map-stage" id="map-stage">
+            <canvas id="map" aria-hidden="true"></canvas>
+            <div id="map-markers" role="group" aria-label="Study areas on map"></div>
+          </div>
+          <div id="site-list" class="site-list" role="group" aria-label="Study areas"></div>
+        </div>
+      </section>
+      <div id="region-status" class="region-status" hidden>
+        <p id="region-message" role="status"></p>
+        <button type="button" class="compare-toggle" id="retry-region" hidden>Retry</button>
+      </div>
+      <div id="region-results" hidden>
+      <section class="variables" aria-labelledby="variables-title">
+        <h2 id="variables-title"></h2>
+        <div class="variable-actions"><button type="button" class="compare-toggle" id="compare-toggle" aria-pressed="false">Compare variables</button><p id="variable-hint">Choose a variable to see its trend.</p></div>
+        <div id="variable-options" class="variable-options" role="group" aria-label="Variables"></div>
+      </section>
+      <div class="report" id="single-report">
+        <figure class="figure" aria-labelledby="chart-title">
+          <h2 id="chart-title"></h2>
+          <p class="description" id="variable-description"></p>
+          <p class="location" id="site-description"></p>
+          <div class="chart-options continent-controls" id="chart-options" role="group" aria-label="Chart view"></div>
+          <p class="description" id="chart-note" hidden></p>
+          <div class="chart-stage" id="chart-stage">
+            <canvas id="chart" tabindex="0" role="img" aria-labelledby="chart-title" aria-describedby="chart-instructions chart-selection"></canvas>
+            <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
+          </div>
+          <p class="sr-only" id="chart-instructions">Use the left and right arrow keys to read values.</p>
+          <p class="sr-only" id="chart-selection" aria-live="polite"></p>
+          <figcaption class="legend">
+            <span class="legend-item"><span class="swatch" aria-hidden="true"></span><span id="legend-value">Annual value</span></span>
+            <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Fitted trend</span>
+          </figcaption>
+        </figure>
+        <aside class="stats" aria-labelledby="stats-title" aria-live="polite">
+          <h2 id="stats-title">Annual trend result</h2>
+          <span class="verdict" id="trend-verdict"></span>
+          <dl>
+            <div><dt>Change per decade</dt><dd class="slope" id="trend-slope"></dd></div>
+            <div><dt>95% interval for change per decade</dt><dd id="trend-ci"></dd></div>
+            <div><dt>Adjusted p-value</dt><dd id="trend-p"></dd></div>
+          </dl>
+          <p id="trend-meaning"></p>
+          <p>The p-value is adjusted across the eight variables in this region. A trend is marked rising or falling when its adjusted p-value is at most 0.05.</p>
+        </aside>
+      </div>
+      <section class="correlations" id="correlations" aria-labelledby="correlations-title" hidden>
+        <h2 id="correlations-title">How the variables move together</h2>
+        <p class="description">Pearson correlation ranges from −1 (opposite movements) to +1 (same-direction movements). A value near 0 indicates little straight-line relationship.</p>
+        <p class="description">These compare the same months after removing each variable’s seasonal cycle and long-term trend. Correlation measures association. Establishing causes requires other evidence.</p>
+        <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
+      </section>
+      <section class="overview" aria-labelledby="overview-title">
+        <h2 id="overview-title"></h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Variable</th><th scope="col">Change per decade</th><th scope="col">Result</th></tr></thead>
+            <tbody id="overview-rows"></tbody>
+          </table>
+        </div>
+      </section>
+      </div>
+      <details class="method">
+        <summary>Data and methods</summary>
+        <p>The explorer requests data from NASA POWER when a study area is selected. Each annual point averages nine grid cells from NASA’s MERRA-2, which combines observations with a weather model. A straight line fitted across the historical years gives the change per decade. The 95% interval accounts for correlation between nearby years. The verdict uses the Holm-adjusted p-value across the eight tests for the selected region.</p>
+        <p><a id="data-source">NASA POWER documentation</a> · <a id="method-source">Trend uncertainty method</a> · <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth map data</a></p>
+      </details>
+    </div>
+  </main>
+</body>
+</html>
