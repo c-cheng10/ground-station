@@ -17,6 +17,11 @@
   const regionNames = new Map(config.sites.map(({ id, name }) => [id, name]));
   const variableNames = new Map(config.variables.map(({ id, name }) => [id.toLowerCase(), name]));
   const monthFormat = new Intl.DateTimeFormat("en-CA", { month: "short", year: "numeric", timeZone: "UTC" });
+  const variableByName = new Map(config.variables.map((variable) => [variable.name.toLowerCase(), variable]));
+  for (const [alias, id] of [["soil wetness", "GWETROOT"], ["soil moisture", "GWETROOT"], ["root-zone soil wetness", "GWETROOT"],
+    ["windspeed", "WS10M"], ["rainfall", "PRECTOTCORR"], ["rain", "PRECTOTCORR"]]) {
+    variableByName.set(alias, config.variables.find((variable) => variable.id === id));
+  }
 
   function validMonth(yyyymm) {
     const now = new Date();
@@ -56,6 +61,18 @@
     result.hidden = false;
   }
 
+  function countryQuestion(question) {
+    // Resolve an unambiguous same-month country question from the map's own names.
+    const match = question.toLowerCase().replace(/\s+/g, " ").match(
+      /^(?:(?:can you|could you) tell me about |what is |what's |show me )?(?:the )?(?:same-month )?(?:correlation|relationship|relation) between (.+?) and (.+?) in (?:the )?(.+?)[?.!]?$/,
+    );
+    if (!match || !window.countryCorrelation) return null;
+    const country = window.WORLD_MAP?.countries.find(({ name }) => name.toLowerCase() === match[3]);
+    const first = variableByName.get(match[1]);
+    const second = variableByName.get(match[2]);
+    return country && first && second && first !== second ? { country, first, second } : null;
+  }
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const question = input.value.trim();
@@ -76,6 +93,24 @@
     fieldset.disabled = true;
     reply.textContent = "Looking up your question…";
     try {
+      const area = countryQuestion(question);
+      if (area) {
+        const { country, first, second } = area;
+        const answer = await window.countryCorrelation(country, [first.id, second.id], AbortSignal.timeout(30_000));
+        if (!answer) {
+          reply.textContent = `The stored NASA grid points in ${country.name} don’t have enough complete years in common for this pair. Try a point or a smaller circle.`;
+          return;
+        }
+        const { r, points, start, end } = answer;
+        reply.textContent = r === null
+          ? "A correlation is unavailable because one measurement is constant after removing its seasonal cycle and trend."
+          : `This compares monthly averages across ${points} NASA grid ${points === 1 ? "point" : "points"} in ${country.name}, after removing the seasonal cycle and long-term trend.`;
+        resultTitle.textContent = `${country.name} · ${first.name} and ${second.name}`;
+        resultValue.textContent = `${r === null ? "Pearson r unavailable" : `Pearson r = ${r.toFixed(4)}`} · Same month`;
+        resultWindow.textContent = `${(end - start + 1) * 12} paired months · ${formatMonth(start * 100 + 1)}–${formatMonth(end * 100 + 12)} · ${[...new Set([first.source, second.source])].join(", ")}`;
+        result.hidden = false;
+        return;
+      }
       const response = await fetch(new URL("/functions/v1/climate-assistant-giovanni", config.supabaseUrl), {
         method: "POST",
         headers: {

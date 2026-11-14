@@ -239,7 +239,7 @@
     return row;
   }
 
-  async function loadArea(ids, signal) {
+  async function loadArea(ids, signal, onProgress = () => {}) {
     const columns = [...data.variables, data.compare].filter(Boolean).map(({ id }) => id.toLowerCase());
     const totals = columns.map(() => []);
     const counts = columns.map(() => []);
@@ -260,10 +260,16 @@
           });
         }
         loaded += batch.length;
-        if (!signal.aborted) regionMessage.textContent = `Loading NASA data from ${format(loaded, 0)} of ${format(ids.length, 0)} grid points…`;
+        if (!signal.aborted) onProgress(loaded);
       }
     };
-    await Promise.all(Array.from({ length: Math.min(3, Math.ceil(ids.length / 40)) }, readBatches));
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, Math.ceil(ids.length / 40)) }, readBatches));
+    } catch (error) {
+      offset = ids.length;
+      throw error;
+    }
+    signal.throwIfAborted();
     // A month has a mean only when the same set of grid points contributes to it.
     return Object.fromEntries(columns.map((column, index) => [column,
       Array.from(totals[index], (sum, month) => counts[index][month] === ids.length ? sum / ids.length : null),
@@ -342,7 +348,9 @@
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
-      const row = nextSite.areaIds ? await loadArea(nextSite.areaIds, request.signal) : await loadPoint(nextSite, request.signal);
+      const row = nextSite.areaIds ? await loadArea(nextSite.areaIds, request.signal, (loaded) => {
+        regionMessage.textContent = `Loading NASA data from ${format(loaded, 0)} of ${format(nextSite.areaIds.length, 0)} grid points…`;
+      }) : await loadPoint(nextSite, request.signal);
       if (regionRequest !== request) return;
       analysis = analyseRow(row);
       if (!Object.keys(analysis.series).length) {
@@ -450,20 +458,35 @@
     return end.map((channel) => Math.round(247 + (channel - 247) * Math.min(1, Math.abs(t))));
   }
 
-  function countryAt(latitude, longitude) {
-    for (const country of window.WORLD_MAP?.countries || []) {
-      for (const [ring] of country.polygons) {
-        let inside = false;
-        for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
-          const [x1, y1] = ring[i];
-          const [x2, y2] = ring[j];
-          if ((y1 > latitude) !== (y2 > latitude) && longitude < x1 + (latitude - y1) * (x2 - x1) / (y2 - y1)) inside = !inside;
-        }
-        if (inside) return country.name;
+  function inCountry(country, latitude, longitude) {
+    const containsPoint = (ring) => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+        const [x1, y1] = ring[i];
+        const [x2, y2] = ring[j];
+        if ((y1 > latitude) !== (y2 > latitude) && longitude < x1 + (latitude - y1) * (x2 - x1) / (y2 - y1)) inside = !inside;
       }
-    }
-    return null;
+      return inside;
+    };
+    return country.polygons.some(([outline, ...holes]) => containsPoint(outline) && !holes.some(containsPoint));
   }
+
+  function countryAt(latitude, longitude) {
+    return window.WORLD_MAP?.countries.find((country) => inCountry(country, latitude, longitude))?.name ?? null;
+  }
+
+  window.countryCorrelation = async (country, variables, signal) => {
+    const ids = points.filter(([lat, lon]) => inCountry(country, lat, lon)).map(([lat, lon]) => `${lat},${lon}`);
+    if (!ids.length) return null;
+    const { series, residuals, starts } = analyseRow(await loadArea(ids, signal));
+    const [first, second] = variables;
+    if (!series[first] || !series[second]) return null;
+    const start = Math.max(series[first].firstYear, series[second].firstYear);
+    const end = Math.min(series[first].lastYear, series[second].lastYear);
+    if (end - start < 1) return null;
+    return { r: TrendStatistics.monthlyCorrelations(residuals, variables, 0, starts)[first][second],
+      points: ids.length, start, end };
+  };
 
   function trendMapVariable() {
     return data.variables.find((item) => item.id === [...selectedIds][0]) || data.variables[0];
