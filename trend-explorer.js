@@ -2,7 +2,7 @@
   "use strict";
 
   const data = window.TREND_CONFIG;
-  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {} } = window;
+  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {}, TREND_MAP: trendMap = {} } = window;
   const byId = (id) => document.getElementById(id);
   const explorer = byId("explorer");
   if (!data || !data.sites.length || !data.variables.length || !points.length || !TrendStatistics) {
@@ -309,8 +309,7 @@
     updateSiteButtons();
   }
 
-  function mapProjection(width, height) {
-    const frame = mapFrames[mapContinent];
+  function mapProjection(width, height, frame = mapFrames[mapContinent]) {
     const side = Math.min(22, width * 0.045);
     const innerWidth = width - 2 * side;
     const innerHeight = height - 2 * side;
@@ -348,6 +347,102 @@
       region: "Nearest NASA grid point",
       bounds: { south: best[0] - 0.125, north: best[0] + 0.125, west: best[1] - 0.125, east: best[1] + 0.125 },
     };
+  }
+
+  function stripeColour(scale, t) {
+    const end = t < 0 ? scale.low : scale.high;
+    return end.map((channel) => Math.round(247 + (channel - 247) * Math.min(1, Math.abs(t))));
+  }
+
+  function countryAt(latitude, longitude) {
+    for (const country of window.WORLD_MAP?.countries || []) {
+      for (const [ring] of country.polygons) {
+        let inside = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+          const [x1, y1] = ring[i];
+          const [x2, y2] = ring[j];
+          if ((y1 > latitude) !== (y2 > latitude) && longitude < x1 + (latitude - y1) * (x2 - x1) / (y2 - y1)) inside = !inside;
+        }
+        if (inside) return country.name;
+      }
+    }
+    return "Coast";
+  }
+
+  function trendMapVariable() {
+    return data.variables.find((item) => item.id === [...selectedIds][0]) || data.variables[0];
+  }
+
+  function renderTrendMap() {
+    const variable = trendMapVariable();
+    const entry = trendMap[variable.id];
+    byId("trend-card").hidden = !entry;
+    if (!entry) return;
+    const unit = `${trendUnit(variable)} per decade`;
+    byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
+    const scale = stripeScales[variable.id] || stripeScales.T2M;
+    byId("trend-ramp").style.background = `linear-gradient(90deg, rgb(${scale.low}), rgb(247 247 247), rgb(${scale.high}))`;
+    byId("trend-low").textContent = `${format(-entry.scale, variable.decimals + 1, true)}`;
+    byId("trend-high").textContent = `${format(entry.scale, variable.decimals + 1, true)} ${unit}`;
+    const ranked = points.map(([lat, lon], k) => ({ lat, lon, slope: entry.slope[k], significant: entry.significant[k] }))
+      .filter((item) => item.significant && item.slope !== null);
+    const list = (id, items) => byId(id).replaceChildren(...(items.length ? items.map((item) => {
+      const button = create("button", "", "pick-variable");
+      button.textContent = `${countryAt(item.lat, item.lon)}: ${format(item.slope, variable.decimals + 1, true)} ${unit}`;
+      button.addEventListener("click", () => choosePoint(item.lat, item.lon));
+      const li = create("li");
+      li.append(button);
+      return li;
+    }) : [create("li", "No place passes the significance test.")]));
+    list("rising-list", ranked.filter((item) => item.slope > 0).sort((a, b) => b.slope - a.slope).slice(0, 5));
+    list("falling-list", ranked.filter((item) => item.slope < 0).sort((a, b) => a.slope - b.slope).slice(0, 5));
+    drawTrendMap();
+  }
+
+  function drawTrendMap() {
+    const variable = trendMapVariable();
+    const entry = trendMap[variable.id];
+    const drawing = entry && prepareCanvas(byId("trend-map"));
+    if (!drawing) return;
+    const { ctx, width, height } = drawing;
+    const project = mapProjection(width, height, mapFrames.World);
+    const scale = stripeScales[variable.id] || stripeScales.T2M;
+    ctx.fillStyle = "#dbe6ee";
+    ctx.fillRect(0, 0, width, height);
+    const outline = (fill, stroke) => {
+      for (const country of window.WORLD_MAP?.countries || []) {
+        for (const polygon of country.polygons) {
+          ctx.beginPath();
+          for (const ring of polygon) {
+            ring.forEach(([lon, lat], index) => ctx[index ? "lineTo" : "moveTo"](...project(lon, lat)));
+            ctx.closePath();
+          }
+          if (fill) { ctx.fillStyle = fill; ctx.fill("evenodd"); }
+          if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 0.6; ctx.stroke(); }
+        }
+      }
+    };
+    outline("#f4f7f9", null);
+    // Points sit on a 3° lattice, so each square covers its share of the map.
+    points.forEach(([lat, lon], k) => {
+      const slope = entry.slope[k];
+      if (slope === null) return;
+      const [left, top] = project(lon - 1.5, lat + 1.5);
+      const [right, bottom] = project(lon + 1.5, lat - 1.5);
+      ctx.globalAlpha = entry.significant[k] ? 1 : 0.3;
+      ctx.fillStyle = `rgb(${stripeColour(scale, slope / entry.scale)})`;
+      ctx.fillRect(left, top, right - left + 0.5, bottom - top + 0.5);
+    });
+    ctx.globalAlpha = 1;
+    outline(null, "#7f93a6");
+    if (site) {
+      const [x, y] = project(site.longitude, site.latitude);
+      ctx.strokeStyle = "#0f2338";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, 2 * Math.PI);
+      ctx.stroke();
+    }
   }
 
   function choosePoint(latitude, longitude) {
@@ -514,6 +609,7 @@
   }
 
   function renderDetails() {
+    renderTrendMap();
     if (!analysis) return;
     activeIndex = null;
     byId("chart-selection").textContent = "";
@@ -922,6 +1018,7 @@
       if (target === byId("map-stage")) drawMap();
       else if (target === byId("chart-stage")) drawChart();
       else if (target === byId("forecast-stage")) drawForecast();
+      else if (target === byId("trend-map-stage")) drawTrendMap();
       else if (liveStripes.has(target)) drawStripes(target, ...liveStripes.get(target));
     }
   });
@@ -1001,4 +1098,12 @@
   observer.observe(byId("map-stage"));
   observer.observe(byId("chart-stage"));
   observer.observe(byId("forecast-stage"));
+  observer.observe(byId("trend-map-stage"));
+  renderTrendMap();
+  byId("trend-map").addEventListener("click", (event) => {
+    const rect = byId("trend-map").getBoundingClientRect();
+    const [longitude, latitude] = mapProjection(rect.width, rect.height, mapFrames.World)
+      .invert(event.clientX - rect.left, event.clientY - rect.top);
+    choosePoint(latitude, longitude);
+  });
 })();

@@ -14,6 +14,7 @@
   <script defer src="trend-config.js"></script>
   <script defer src="points-index.js"></script>
   <script defer src="featured-stripes.js"></script>
+  <script defer src="trend-map.js"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
   <script defer src="trend-explorer.js"></script>
@@ -169,6 +170,14 @@
       border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .trend-map-stage { position: relative; aspect-ratio: 2.4 / 1; margin-top: 14px; border-radius: 12px; overflow: hidden; }
+    .trend-map-stage canvas { position: absolute; inset: 0; cursor: crosshair; }
+    .trend-key { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 0.86rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .trend-key .ramp { flex: 0 1 220px; height: 10px; border-radius: 999px; }
+    .extremes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-top: 14px; }
+    .extremes h4 { margin: 0 0 4px; font-size: 0.95rem; }
+    .extremes ol { margin: 0; padding-left: 20px; font-size: 0.9rem; }
+    .extremes li { padding: 2px 0; }
     .agree { margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: var(--sunken); }
     .agree h3 { font-size: 1rem; margin-bottom: 4px; }
     .agree p { margin: 0; color: var(--muted); font-size: 0.95rem; }
@@ -268,6 +277,7 @@
       .answer { padding: 22px 18px; }
       .card-pad { padding: 16px; }
       .about { grid-template-columns: 1fr; }
+      .extremes { grid-template-columns: 1fr; }
       .numbers { grid-template-columns: 1fr 1fr; }
       .numbers div, .numbers div:nth-child(n + 4) { grid-column: span 1; }
       .numbers div:first-child { grid-column: 1 / -1; }
@@ -355,6 +365,19 @@
         </aside>
 
         <div class="main">
+          <section class="card card-pad" id="trend-card" aria-labelledby="trend-map-title">
+            <h3 class="card-title" id="trend-map-title">Where is it changing?</h3>
+            <p class="description" id="trend-map-sub"></p>
+            <div class="trend-map-stage" id="trend-map-stage">
+              <canvas id="trend-map" role="img" aria-labelledby="trend-map-title" aria-describedby="trend-map-note"></canvas>
+            </div>
+            <div class="trend-key"><span id="trend-low"></span><span class="ramp" id="trend-ramp" aria-hidden="true"></span><span id="trend-high"></span></div>
+            <p class="description" id="trend-map-note">Each square is one NASA grid point, coloured by its trend. Faded squares could be chance: they fail the Mann-Kendall test after correcting for checking about 1,700 places at once. Click a square to open it.</p>
+            <div class="extremes">
+              <div><h4>Fastest rising</h4><ol id="rising-list"></ol></div>
+              <div><h4>Fastest falling</h4><ol id="falling-list"></ol></div>
+            </div>
+          </section>
           <div id="region-status" class="card region-status" hidden aria-live="polite">
             <p id="region-message"></p>
             <button type="button" class="button secondary small" id="retry-region" hidden>Try again</button>

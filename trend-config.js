@@ -125,13 +125,13 @@ window.TREND_CONFIG = {
       "id": "great-plains",
       "name": "Central Great Plains",
       "region": "United States",
-      "latitude": 44.125,
-      "longitude": -80.625,
+      "latitude": 38.625,
+      "longitude": -100.125,
       "bounds": {
-        "south": 44.0,
-        "north": 44.25,
-        "west": -80.75,
-        "east": -80.5
+        "south": 38.5,
+        "north": 38.75,
+        "west": -100.25,
+        "east": -100.0
       },
       "cellCount": 1
     },
@@ -139,13 +139,13 @@ window.TREND_CONFIG = {
       "id": "mexican-plateau",
       "name": "Mexican Plateau",
       "region": "Mexico",
-      "latitude": 44.125,
-      "longitude": -80.625,
+      "latitude": 23.125,
+      "longitude": -102.375,
       "bounds": {
-        "south": 44.0,
-        "north": 44.25,
-        "west": -80.75,
-        "east": -80.5
+        "south": 23.0,
+        "north": 23.25,
+        "west": -102.5,
+        "east": -102.25
       },
       "cellCount": 1
     },
@@ -153,13 +153,13 @@ window.TREND_CONFIG = {
       "id": "central-amazon",
       "name": "Central Amazon",
       "region": "Brazil",
-      "latitude": -3.375,
-      "longitude": -61.375,
+      "latitude": -3.125,
+      "longitude": -60.125,
       "bounds": {
-        "south": -3.5,
-        "north": -3.25,
-        "west": -61.5,
-        "east": -61.25
+        "south": -3.25,
+        "north": -3.0,
+        "west": -60.25,
+        "east": -60.0
       },
       "cellCount": 1
     },
