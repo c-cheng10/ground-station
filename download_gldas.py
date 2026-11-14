@@ -5,7 +5,7 @@ Giovanni (giovanni.gsfc.nasa.gov) serves GLDAS Noah 0.25° monthly: version 2.0 
 one point. Responses are cached in giovanni-cache/, so reruns skip finished requests.
 
     python download_gldas.py --pilot          # one land point and one ocean point
-    python download_gldas.py --spacing 3 --workers 8
+    python download_gldas.py --spacing 3 --ocean-spacing 5 --workers 8
 
 Needs EARTHDATA_TOKEN in .env (see .env.example).
 """
@@ -38,13 +38,11 @@ REQUESTS = GLDAS20 + [
     ("2_1_Tair_f_inst", "GLDAS_NOAH025_M_2_1_Tair_f_inst", 2000, 2025),
 ]
 ATMOSPHERE_REQUESTS = [
-    ("airs_TotO3", "AIRS3STM_7_0_TotO3_A", 2002, 2025),
     ("merra_TO3", "M2IMNXASM_5_12_4_TO3", 1980, 2025),
     ("airs_TotH2OVap", "AIRS3STM_7_0_TotH2OVap_A", 2002, 2025),
     ("airs_CloudFrc", "AIRS3STM_7_0_CloudFrc_A", 2002, 2025),
     ("airs_OLR", "AIRS3STM_7_0_OLR_A", 2002, 2025),
     ("merra_TROPT", "M2IMNXASM_5_12_4_TROPT", 1980, 2025),
-    ("airs_TropHeight", "AIRS3STM_7_0_TropHeight_A", 2002, 2025),
 ]
 LAND_REQUESTS = REQUESTS + ATMOSPHERE_REQUESTS
 OCEAN_REQUESTS = [request for request in REQUESTS if request[0] in {"merra_T2M", "gpm_precipitation"}] + [
@@ -147,17 +145,18 @@ def download_job(token, job):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pilot", action="store_true", help="download one land and one ocean point")
-    parser.add_argument("--spacing", type=float, default=3.0, help="lattice spacing in degrees")
+    parser.add_argument("--spacing", type=float, default=3.0, help="land lattice spacing in degrees")
+    parser.add_argument("--ocean-spacing", type=float, default=5.0, help="ocean lattice spacing in degrees")
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
-    if args.spacing <= 0 or args.workers <= 0:
-        parser.error("spacing and workers must be positive")
+    if args.spacing <= 0 or args.ocean_spacing <= 0 or args.workers <= 0:
+        parser.error("land spacing, ocean spacing, and workers must be positive")
     token = read_env().get("EARTHDATA_TOKEN", "").strip("\"'")
     if not token:
         raise SystemExit("Add EARTHDATA_TOKEN to .env first (see .env.example).")
 
     land = FIXED_POINTS[:1] if args.pilot else grid(args.spacing)
-    ocean = [PILOT_OCEAN_POINT] if args.pilot else ocean_grid(args.spacing)
+    ocean = [PILOT_OCEAN_POINT] if args.pilot else ocean_grid(args.ocean_spacing)
     ocean = sorted(set(ocean).difference(land))
     jobs = [(*request, lat, lon) for points, requests in ((land, LAND_REQUESTS), (ocean, OCEAN_REQUESTS))
             for lat, lon in points for request in requests]
