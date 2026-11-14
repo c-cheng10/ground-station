@@ -1,4 +1,4 @@
-"""Download monthly GLDAS land data from NASA Giovanni for a global grid of land points.
+"""Download monthly NASA data (GLDAS, MERRA-2, GPM) from Giovanni for a global grid of land points.
 
 Giovanni (giovanni.gsfc.nasa.gov) serves GLDAS Noah 0.25° monthly: version 2.0 covers
 1948-2014 and version 2.1 covers 2000 to today. Each request returns one variable at
@@ -24,11 +24,17 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / "giovanni-cache"
 API = "https://api.giovanni.earthdata.nasa.gov"
-# GLDAS variable names, the same for versions 2.0 and 2.1.
-VARIABLES = ["Tair_f_inst", "AvgSurfT_inst", "Rainf_f_tavg", "Qair_f_inst", "Psurf_f_inst",
-             "RootMoist_inst", "Evap_tavg", "Wind_f_inst", "SnowDepth_inst"]
-VERSIONS = {"2_0": ("1948-01-01T00:00:00", "2014-12-31T23:59:59"),
-            "2_1": ("2000-01-01T00:00:00", "2025-12-31T23:59:59")}
+# Each measurement comes from its most consistent record (see TRAINING_DATA.md):
+# (cache file name, Giovanni variable id, first year, last year).
+GLDAS20 = [(f"2_0_{v}", f"GLDAS_NOAH025_M_2_0_{v}", 1948, 2014) for v in
+           ("AvgSurfT_inst", "RootMoist_inst", "Evap_tavg", "Wind_f_inst", "SnowDepth_inst", "Psurf_f_inst")]
+REQUESTS = GLDAS20 + [
+    ("merra_T2M", "M2IMNXASM_5_12_4_T2M", 1980, 2025),
+    ("merra_QV2M", "M2IMNXASM_5_12_4_QV2M", 1980, 2025),
+    ("gpm_precipitation", "GPM_3IMERGM_07_precipitation", 1998, 2025),
+    # GLDAS 2.1 air temperature, only for the site's "Do the datasets agree?" check.
+    ("2_1_Tair_f_inst", "GLDAS_NOAH025_M_2_1_Tair_f_inst", 2000, 2025),
+]
 # Study areas and examples the site already uses, so they are always in the dataset.
 FIXED_POINTS = [(44.125, -80.625), (38.625, -100.125), (23.125, -102.375), (-3.125, -60.125),
                 (-15.625, -47.625), (-49.625, -70.625), (14.125, 1.875)]
@@ -72,13 +78,12 @@ def grid(spacing):
     return sorted(points | set(FIXED_POINTS))
 
 
-def fetch(token, version, variable, lat, lon):
-    path = CACHE / f"{lat}_{lon}" / f"{version}_{variable}.csv"
+def fetch(token, name, data, first, last, lat, lon):
+    path = CACHE / f"{lat}_{lon}" / f"{name}.csv"
     if path.exists():
         return "cached"
-    start, end = VERSIONS[version]
-    query = urlencode({"data": f"GLDAS_NOAH025_M_{version}_{variable}",
-                       "location": f"[{lat},{lon}]", "time": f"{start}/{end}"})
+    query = urlencode({"data": data, "location": f"[{lat},{lon}]",
+                       "time": f"{first}-01-01T00:00:00/{last}-12-31T23:59:59"})
     request = Request(f"{API}/timeseries?{query}", headers={"Authorization": f"Bearer {token}"})
     for attempt in range(4):
         try:
@@ -115,7 +120,7 @@ def main():
         raise SystemExit("Add EARTHDATA_TOKEN to .env first (see .env.example).")
 
     points = FIXED_POINTS[:1] if args.pilot else grid(args.spacing)
-    jobs = [(version, variable, lat, lon) for lat, lon in points for version in VERSIONS for variable in VARIABLES]
+    jobs = [(*request, lat, lon) for lat, lon in points for request in REQUESTS]
     before = quota(token)
     print(f"{len(points)} points, {len(jobs)} requests, quota used so far {before:.4f}")
     started = time.time()

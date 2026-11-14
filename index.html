@@ -5,14 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#0b1a2b">
-  <meta name="description" content="Pick any place on land and test 45 years of NASA data for a real climate trend.">
+  <meta name="description" content="Pick any place on land and test decades of NASA data for a real climate trend.">
   <title>Climate Trend Explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&display=swap">
   <script defer src="world-map.js"></script>
   <script defer src="trend-config.js"></script>
-  <script defer src="power-data.js"></script>
+  <script defer src="points-index.js"></script>
+  <script defer src="featured-stripes.js"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
   <script defer src="trend-explorer.js"></script>
@@ -168,8 +169,9 @@
       border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .results-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
-    .results-bar p { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    .agree { margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: var(--sunken); }
+    .agree h3 { font-size: 1rem; margin-bottom: 4px; }
+    .agree p { margin: 0; color: var(--muted); font-size: 0.95rem; }
     .story { padding: 18px 22px; background: #fff7e6; border-radius: 16px; box-shadow: var(--shadow-1); }
     .story h3 { font-size: 1rem; margin-bottom: 4px; }
     .story p { margin: 0; max-width: 78ch; }
@@ -287,12 +289,12 @@
         <a href="#examples">Examples</a>
         <a href="#explore">Explorer</a>
         <a href="#how">How it works</a>
-        <a class="keep" href="americas-trends.csv" download>Download the data</a>
+        <a class="keep" href="study-areas.csv" download>Download the data</a>
       </nav>
     </div>
     <div class="shell hero-body">
       <h1>Is the climate where you live really changing?</h1>
-      <p class="hero-lead">Pick any place on land, choose something to measure, and test 45 years of NASA satellite and weather-model data for a real trend. Every result comes with a plain-English answer, so no statistics background is needed.</p>
+      <p class="hero-lead">Pick any place on land, choose something to measure, and test decades of NASA satellite and model data for a real trend. Every result comes with a plain-English answer, so no statistics background is needed.</p>
       <div class="hero-actions">
         <a class="button primary" href="#examples">Try an example</a>
         <a class="button secondary" href="#explore">Pick my own place</a>
@@ -328,7 +330,7 @@
               <h3 class="step" id="map-title">1. Pick a place</h3>
               <div id="continent-controls" class="segmented" role="group" aria-label="Map region"></div>
             </div>
-            <p class="hint">Click anywhere on land. Each area covers about 150 km, so local quirks average out.</p>
+            <p class="hint">Click anywhere on land. The tool uses the nearest of about 1,700 NASA grid points.</p>
             <div class="map-stage" id="map-stage">
               <canvas id="map" aria-hidden="true"></canvas>
               <div id="map-markers" role="group" aria-label="Study areas on map"></div>
@@ -363,10 +365,6 @@
           </div>
 
           <div id="region-results" class="main" hidden>
-            <div class="results-bar">
-              <p>Saved in this browser, so it opens instantly next time.</p>
-              <button type="button" class="button secondary small" id="refresh-region">Refresh from NASA</button>
-            </div>
             <article class="card answer" id="single-report" aria-labelledby="result-headline">
               <span class="verdict" id="trend-verdict"></span>
               <h2 id="result-headline"></h2>
@@ -404,6 +402,10 @@
                 <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
               </dl>
               <p class="note" id="trend-agree"></p>
+              <div class="agree" id="datasets-agree" hidden>
+                <h3>Do the datasets agree?</h3>
+                <p id="datasets-agree-text"></p>
+              </div>
 
               <section class="forecast" id="forecast" aria-labelledby="forecast-title" hidden>
                 <div class="chart-head">
@@ -438,7 +440,7 @@
 
             <section class="card card-pad" id="correlations" aria-labelledby="correlations-title" hidden>
               <h3 class="card-title" id="correlations-title">How the measurements move together</h3>
-              <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, so you only see month-to-month surprises. A link is not proof that one causes the other.</p>
+              <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, so you only see month-to-month surprises. Records cover different years, so each pair is compared over the years both have. A link is not proof that one causes the other.</p>
               <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
               <p class="description" id="lag-note"></p>
               <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
@@ -467,8 +469,8 @@
       <div class="method-grid">
         <div class="card">
           <h3>The data</h3>
-          <p>Every number comes from NASA POWER, which serves MERRA-2: a weather model continuously corrected with satellite and ground observations, from 1981 to today.</p>
-          <p>The tool averages the 9 grid cells around your point, each about 50 km across. Results are saved in your browser, and Refresh adds newly finished months to the team’s shared Supabase dataset for the 6 study areas.</p>
+          <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (1980–2025), a weather model constantly corrected with observations. Precipitation comes from the GPM satellites (1998–2025). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
+          <p>About 1,700 grid points cover every continent, each a 25 km cell. They are stored in the team’s database, so results load in about a second.</p>
         </div>
         <div class="card">
           <h3>The trend test</h3>
@@ -477,14 +479,15 @@
         </div>
         <div class="card">
           <h3>The forecast</h3>
-          <p>A world model learned how the 8 measurements push each other from month to month: rain wets the soil, wet soil cools the surface, and so on. It reads the last 12 months plus the last 5 years’ average, predicts next month, then feeds that prediction back in to reach 12 months.</p>
-          <p>It trained on 6 regions from 1986 to 2019 and was tested on 2020–2025, which it never saw. A small neural network was tried too, but the simpler linear model forecast better, so the site uses that. Forecasts fade toward the recent average after a few months, because the weather’s memory runs out.</p>
+          <p>A world model learned how air temperature, humidity and rain push each other from month to month, and how El Niño in the Pacific nudges them. It reads the last 12 months plus the last 5 years’ average, predicts next month, then feeds that prediction back in to reach 12 months.</p>
+          <p>It trained on about 1,400 places from 2003 to 2019. It was tested on 2020–2025 at about 350 other places it never saw. A small neural network was tried too, but the simpler linear model forecast better, so the site uses that. Forecasts fade toward the recent average after a few months, because the weather’s memory runs out.</p>
         </div>
         <div class="card">
           <h3>Honest limits</h3>
-          <p>A trend can be real and still not reach significance yet; a longer record often settles it. Rainfall from weather models can shift when the satellites feeding them change.</p>
+          <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years.</p>
+          <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check.</p>
           <p>The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now. For that, use the trend line and its range.</p>
-          <p><a id="data-source">NASA POWER documentation</a> and the <a id="method-source">trend uncertainty method</a>.</p>
+          <p><a id="data-source">NASA Giovanni</a> and the <a id="method-source">trend uncertainty method</a>.</p>
         </div>
       </div>
     </section>
@@ -492,7 +495,7 @@
 
   <footer class="footer">
     <div class="shell">
-      <p>Built for the NASA Space Apps Challenge. Data from NASA POWER (MERRA-2). Map outlines from <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>.</p>
+      <p>Built for the NASA Space Apps Challenge. Data from NASA GES DISC Giovanni (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 index from NOAA ERSSTv5). Map outlines from <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>.</p>
     </div>
   </footer>
 </body>

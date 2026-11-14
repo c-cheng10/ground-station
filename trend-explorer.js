@@ -2,12 +2,12 @@
   "use strict";
 
   const data = window.TREND_CONFIG;
-  const { PowerData, TrendStatistics } = window;
+  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {} } = window;
   const byId = (id) => document.getElementById(id);
   const explorer = byId("explorer");
-  if (!data || !data.sites.length || !data.variables.length || !PowerData || !TrendStatistics) {
+  if (!data || !data.sites.length || !data.variables.length || !points.length || !TrendStatistics) {
     const error = byId("data-error");
-    error.textContent = "The explorer could not start. Keep the JavaScript files next to this page, or download the CSV snapshot above.";
+    error.textContent = "The explorer could not start. Keep the JavaScript files next to this page, or download the study-area data above.";
     error.hidden = false;
     return;
   }
@@ -59,6 +59,7 @@
     GWETROOT: "The water plant roots can reach. Falling values can warn of drought for farms and forests.",
     EVLAND: "Water leaving the land as vapour from soil and leaves. It links rain, heat and plant growth.",
     WS10M: "Average wind near the ground. It matters for wind energy, dust and how weather moves.",
+    SNOW: "Snow on the ground stores winter water for spring rivers and keeps soil insulated. Less snow can mean drier summers.",
   };
   // Low and high colours for climate stripes: temperature runs blue to red, water runs brown to blue-green.
   const heat = { low: [33, 102, 172], high: [178, 24, 43], note: "Blue years were colder than average, red years warmer." };
@@ -67,14 +68,14 @@
     T2M: heat, TS: heat,
     PRECTOTCORR: water, QV2M: water, RH2M: water, GWETROOT: water, EVLAND: water,
     WS10M: { low: [33, 102, 172], high: [84, 39, 143], note: "Blue years were calmer than average, purple years windier." },
+    SNOW: { low: [140, 81, 10], high: [33, 102, 172], note: "Brown years had less snow than average, blue years more." },
   };
   const examples = [
     {
       title: "Is Southern Ontario getting warmer?",
       where: "Southern Ontario, Canada. Air temperature.",
-      csvColumn: 5,
-      previewId: "T2M",
-      blurb: "The classic first investigation: one place, one measurement, 45 years.",
+      preview: ["ontario-T2M", "T2M"],
+      blurb: "The classic first investigation: one place, one measurement, more than 40 years.",
       look: "Watch the stripes drift from blue to red, then read the verdict. The trend line climbs, and both statistical tests agree it is not luck.",
       site: () => data.sites.find(({ id }) => id === "southern-ontario"),
       ids: ["T2M"],
@@ -82,9 +83,7 @@
     {
       title: "Is the Sahel in West Africa getting wetter?",
       where: "Near Niamey, Niger. Precipitation.",
-      previewId: "PRECTOTCORR",
-      // Annual NASA POWER means for the same 3×3 patch the explorer loads, 1981–2025.
-      values: [1.186, 1.159, 1.205, 0.915, 1.129, 1.22, 0.88, 1.337, 1.32, 1.061, 1.275, 1.189, 1.06, 1.401, 1.312, 1.205, 1.194, 1.603, 1.588, 1.087, 1.141, 1.048, 1.366, 0.951, 1.369, 1.078, 1.338, 1.234, 1.247, 1.397, 1.076, 1.567, 1.456, 1.219, 1.495, 1.359, 1.264, 1.261, 1.209, 1.878, 1.24, 1.473, 1.166, 1.96, 1.336],
+      preview: ["sahel-PRECTOTCORR", "PRECTOTCORR"],
       blurb: "After severe droughts in the 1970s and 80s, rain partly came back. Is that a real trend?",
       look: "Look at the precipitation stripes and the verdict. Then open the table below the chart: soil wetness and humidity tell the same story, which makes the finding stronger.",
       site: () => pointSite(14, 2),
@@ -93,8 +92,7 @@
     {
       title: "Does rain soak into the soil months later?",
       where: "Southern Ontario, Canada. Precipitation and soil wetness.",
-      csvColumn: 7,
-      previewId: "PRECTOTCORR",
+      preview: ["ontario-PRECTOTCORR", "PRECTOTCORR"],
       blurb: "Compare two measurements and look for a time delay between them.",
       look: "This compares precipitation with root-zone soil wetness. Drag the time delay to 2 months: the link gets stronger, because rain takes time to sink down to plant roots.",
       site: () => data.sites.find(({ id }) => id === "southern-ontario"),
@@ -105,13 +103,11 @@
   // Canvases that show static stripes, redrawn whenever they resize.
   const liveStripes = new Map();
 
-  const years = Array.from({ length: data.endYear - data.startYear + 1 }, (_, index) => data.startYear + index);
   const variableIds = data.variables.map(({ id }) => id);
   const regionResults = byId("region-results");
   const regionStatus = byId("region-status");
   const regionMessage = byId("region-message");
   const retryRegion = byId("retry-region");
-  const refreshRegion = byId("refresh-region");
   let mapContinent = "World";
   let site = null;
   let analysis = null;
@@ -224,106 +220,66 @@
 
   const pText = (p) => p < 0.001 ? "<0.001" : format(p, 3);
 
-  function analyseRecords(records) {
-    const result = TrendStatistics.analyseRegion(records, years, variableIds, data.baselineStart, data.baselineEnd);
-    adjustRegionTests(result.series);
-    return result;
-  }
-
-  function readCachedAnalysis(key) {
-    try {
-      const saved = localStorage.getItem(key);
-      return saved ? analyseRecords(JSON.parse(saved)) : null;
-    } catch {
-      // A corrupt entry or blocked browser storage falls back to NASA.
-      return null;
-    }
-  }
-
-  async function syncNewMonths(regionId, signal) {
-    const url = new URL("/functions/v1/refresh-climate", data.supabaseUrl);
+  // Every land point's record is stored in Supabase by build_gldas_dataset.py (NASA Giovanni data).
+  async function loadPoint(point, signal) {
+    const url = new URL("/rest/v1/climate_points", data.supabaseUrl);
+    url.search = new URLSearchParams({ id: `eq.${point.latitude},${point.longitude}`, select: "*" });
     const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${data.supabaseAnonKey}`,
-      },
-      body: JSON.stringify({ region_id: regionId }),
-      signal,
+      signal, headers: { apikey: data.supabaseAnonKey, Authorization: `Bearer ${data.supabaseAnonKey}` },
     });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "Supabase could not refresh the region.");
-    if (!Number.isInteger(result.new_rows) || result.new_rows < 0 ||
-        !Number.isInteger(result.latest_month) || result.latest_month % 100 < 1 ||
-        result.latest_month % 100 > 12 || result.latest_month < 198101) {
-      throw new Error("Supabase returned an invalid refresh result.");
-    }
-    const latest = monthFormat.format(new Date(Date.UTC(
-      Math.floor(result.latest_month / 100), result.latest_month % 100 - 1, 1
-    )));
-    return result.new_rows
-      ? `Saved ${result.new_rows} new grid-cell records to Supabase through ${latest}.`
-      : `No new complete months from NASA POWER. Supabase has records through ${latest}.`;
+    if (!response.ok) throw new Error(`Supabase returned HTTP ${response.status}.`);
+    const [row] = await response.json();
+    if (!row) throw new Error(`No stored record for ${point.latitude}, ${point.longitude}.`);
+    return row;
   }
 
-  async function selectSite(nextSite, refresh = false) {
+  // Measurements come from different NASA datasets, so each is analysed over its own complete years.
+  function analyseRow(row) {
+    const series = {};
+    const residuals = {};
+    const starts = {};
+    for (const variable of data.variables) {
+      const firstYear = Math.ceil(variable.firstMonth / 12);
+      const lastYear = Math.floor((variable.lastMonth + 1) / 12) - 1;
+      const monthly = (row[variable.id.toLowerCase()] || []).slice(firstYear * 12, (lastYear + 1) * 12);
+      if (monthly.length < 48 || monthly.some((value) => value === null)) continue;
+      const span = Array.from({ length: lastYear - firstYear + 1 }, (_, k) => data.startYear + firstYear + k);
+      const annual = span.map((_, k) => monthly.slice(k * 12, k * 12 + 12).reduce((a, b) => a + b, 0) / 12);
+      const result = TrendStatistics.analyseRegion({ annual: { [variable.id]: annual }, monthly: { [variable.id]: monthly } },
+        span, [variable.id], span[0], span.at(-1));
+      series[variable.id] = { ...result.series[variable.id], firstYear: span[0], lastYear: span.at(-1) };
+      residuals[variable.id] = result.residuals[variable.id];
+      starts[variable.id] = firstYear * 12;
+    }
+    adjustRegionTests(series);
+    return { series, residuals, starts, row };
+  }
+
+  async function selectSite(nextSite) {
     if (regionRequest && site.id === nextSite.id) return;
     regionRequest?.abort();
-    regionRequest = null;
-    const key = `nasa-power-v1:${nextSite.id}:${nextSite.latitude},${nextSite.longitude}:${data.startYear}-${data.endYear}:${variableIds.join(",")}`;
-    analysis = site?.id === nextSite.id && analysis ? analysis : readCachedAnalysis(key);
+    const request = new AbortController();
+    regionRequest = request;
     site = nextSite;
+    analysis = null;
     chartLayout = null;
     updateSiteButtons();
     drawMap();
-    regionResults.hidden = !analysis;
-    refreshRegion.disabled = refresh;
-    if (analysis) renderDetails();
-    if (analysis && !refresh) {
-      setRegionStatus("");
-      return;
-    }
-
-    const request = new AbortController();
-    regionRequest = request;
-    // Supabase stores the six study areas only; chosen points refresh in this browser.
-    const syncToSupabase = refresh && analysis && data.supabaseUrl && data.sites.includes(nextSite);
-    setRegionStatus(analysis ? `Refreshing ${nextSite.name} from NASA POWER…` : `Loading 45 years of NASA data for ${nextSite.name}… This usually takes 5 to 10 seconds.`, false, true);
+    regionResults.hidden = true;
+    setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
-      if (syncToSupabase) {
-        const message = await syncNewMonths(nextSite.id, request.signal);
-        if (regionRequest === request) setRegionStatus(message);
-        return;
-      }
-      const records = await PowerData.loadRegion(nextSite, data.startYear, data.endYear, variableIds, { signal: request.signal });
+      const row = await loadPoint(nextSite, request.signal);
       if (regionRequest !== request) return;
-      analysis = analyseRecords(records);
-      try {
-        localStorage.setItem(key, JSON.stringify(records));
-      } catch {
-        // The plot still works if the browser cannot save the result.
-      }
+      analysis = analyseRow(row);
       regionResults.hidden = false;
-      const supabaseNote = data.sites.includes(nextSite) && !data.supabaseUrl ? " Supabase isn’t connected yet, so nothing was saved to the shared dataset." : "";
-      setRegionStatus(refresh ? `Updated ${nextSite.name} in this browser.${supabaseNote}` : "");
+      setRegionStatus("");
       renderDetails();
     } catch (error) {
       if (regionRequest !== request) return;
-      console.warn("Region data load failed", error);
-      // POWER fills land-only variables (soil, evaporation) with -999 over water.
-      if (!data.sites.includes(nextSite) && /did not return/.test(error.message)) {
-        setRegionStatus(`NASA POWER has no complete land record around ${nextSite.name}. Soil and evaporation data stop at coasts and oceans, so choose a point farther inland.`);
-        return;
-      }
-      const detail = analysis ? "Showing the last successful result." : "Check your connection and try again.";
-      const problem = syncToSupabase && error instanceof Error
-        ? error.message : `Could not load ${nextSite.name} from NASA POWER.`;
-      setRegionStatus(`${problem} ${detail}`, true);
+      console.warn("Point data load failed", error);
+      setRegionStatus(`The stored data for ${nextSite.name} didn’t load. Check your internet connection, then try again.`, true);
     } finally {
-      if (regionRequest === request) {
-        regionRequest = null;
-        refreshRegion.disabled = false;
-      }
+      if (regionRequest === request) regionRequest = null;
     }
   }
 
@@ -374,19 +330,30 @@
     return project;
   }
 
-  // Snap to NASA POWER's 0.5° × 0.625° cell centres so the 3×3 patch matches its grid exactly.
+  // Snap to the nearest stored land point; null when the nearest is too far to stand for the click.
   function pointSite(latitude, longitude) {
-    const lat = Math.max(-88.5, Math.min(88.5, Math.round(latitude / 0.5) * 0.5));
-    const lon = Math.max(-179.375, Math.min(179.375, Math.round(longitude / 0.625) * 0.625));
-    const item = { latitude: lat, longitude: lon };
+    let best = null;
+    let bestKm = Infinity;
+    for (const [lat, lon] of points) {
+      const dLon = ((lon - longitude + 540) % 360) - 180;
+      const km = 111 * Math.hypot(lat - latitude, dLon * Math.cos(latitude * Math.PI / 180));
+      if (km < bestKm) [best, bestKm] = [[lat, lon], km];
+    }
+    if (bestKm > 350) return null;
+    const item = { latitude: best[0], longitude: best[1] };
     return {
       ...item,
-      id: `point:${lat},${lon}`,
+      id: `point:${best[0]},${best[1]}`,
       name: latLon(item),
-      region: "Chosen point",
-      bounds: { south: lat - 0.75, north: lat + 0.75, west: lon - 0.9375, east: lon + 0.9375 },
-      cellCount: 9,
+      region: "Nearest NASA grid point",
+      bounds: { south: best[0] - 0.125, north: best[0] + 0.125, west: best[1] - 0.125, east: best[1] + 0.125 },
     };
+  }
+
+  function choosePoint(latitude, longitude) {
+    const target = pointSite(latitude, longitude);
+    if (target) selectSite(target);
+    else setRegionStatus("There’s no land data near that spot. NASA’s land records cover land only, so pick a point on a continent.");
   }
 
   function drawMap() {
@@ -480,7 +447,7 @@
   }
 
   function coordinates(item) {
-    return `${item.region} at ${latLon(item)}, averaged over ${item.cellCount} grid cells.`;
+    return `${item.region} at ${latLon(item)}: one 25 km grid cell.`;
   }
 
   function trendUnit(variable) {
@@ -511,7 +478,7 @@
 
   function renderCorrelations(variables) {
     const lag = byId("lag").valueAsNumber;
-    const correlations = TrendStatistics.monthlyCorrelations(analysis.residuals, variables.map(({ id }) => id), lag);
+    const correlations = TrendStatistics.monthlyCorrelations(analysis.residuals, variables.map(({ id }) => id), lag, analysis.starts);
     byId("lag-value").textContent = lag === 1 ? "1 month" : `${lag} months`;
     byId("lag-note").textContent = lag === 0
       ? "Each cell compares the two variables in the same month."
@@ -571,7 +538,8 @@
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
       byId("variable-description").textContent = variable.description;
       const scale = stripeScales[variable.id] || stripeScales.T2M;
-      byId("stripes-note").textContent = `Each stripe is one year from ${data.startYear} to ${data.endYear}. ${scale.note}`;
+      const { firstYear, lastYear } = analysis.series[variable.id];
+      byId("stripes-note").textContent = `Each stripe is one year from ${firstYear} to ${lastYear}. ${scale.note}`;
       byId("site-description").textContent = coordinates(site);
       const verdict = byId("trend-verdict");
       verdict.dataset.state = trend.verdict;
@@ -588,13 +556,35 @@
       const meaning = trend.verdict === "rising" ? risingMeans[variable.id] : fallingMeans[variable.id];
       const total = `${format(trend.endValue - trend.startValue, variable.decimals, true)} ${unit}`;
       byId("trend-meaning").textContent = trend.verdict === "inconclusive"
-        ? `No clear trend yet. The trend line moves ${total} from ${data.startYear} to ${data.endYear}, but the ups and downs between years are big enough to hide a steady change.`
-        : `${meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`} From ${data.startYear} to ${data.endYear} the trend line moves ${total}.`;
+        ? `No clear trend yet. The trend line moves ${total} from ${firstYear} to ${lastYear}, but the ups and downs between years are big enough to hide a steady change.`
+        : `${meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`} From ${firstYear} to ${lastYear} the trend line moves ${total}.`;
       byId("trend-chance").textContent = `If nothing were really changing, a trend this strong would show up by chance ${chanceText(trend.adjustedPValue)}.`;
+      renderAgreement(variable);
       updateView();
       renderForecast(variable);
     }
     updateOverview();
+  }
+
+  // Air temperature only: compare MERRA-2 with GLDAS 2.1 over the years both cover.
+  function renderAgreement(variable) {
+    const box = byId("datasets-agree");
+    const compare = data.compare;
+    box.hidden = variable.id !== "T2M" || !compare || !analysis.row[compare.id.toLowerCase()];
+    if (box.hidden) return;
+    const first = Math.ceil(compare.firstMonth / 12);
+    const last = Math.min(Math.floor((compare.lastMonth + 1) / 12), Math.floor((variable.lastMonth + 1) / 12)) - 1;
+    const yearly = (values) => Array.from({ length: last - first + 1 }, (_, k) =>
+      values.slice((first + k) * 12, (first + k + 1) * 12).reduce((a, b) => a + b, 0) / 12);
+    const merra = TrendStatistics.mannKendall(yearly(analysis.row.t2m)).senSlope;
+    const gldas = TrendStatistics.mannKendall(yearly(analysis.row[compare.id.toLowerCase()])).senSlope;
+    const gap = Math.abs(merra - gldas);
+    const years = `${data.startYear + first}–${data.startYear + last}`;
+    byId("datasets-agree-text").textContent =
+      `Over ${years}, MERRA-2 says ${format(merra, 2, true)} °C per decade and the GLDAS 2.1 land model says ${format(gldas, 2, true)} °C. ` +
+      (gap < 0.15
+        ? "They agree closely, which makes the result more trustworthy."
+        : `They differ by ${format(gap, 2)} °C per decade. When two NASA datasets disagree, a scientist checks how each was made before trusting either. GLDAS 2.1’s inputs changed over the years, so MERRA-2 is the more consistent record.`);
   }
 
   const model = window.WORLD_MODEL;
@@ -606,11 +596,14 @@
 
   function forecastData() {
     if (forecastCache?.analysis === analysis) return forecastCache;
-    const anomalies = Object.fromEntries(variableIds.map((id) => [id, analysis.series[id].monthlyAnomalies]));
-    const months = anomalies[variableIds[0]].length;
-    const testStart = (model.testYears[0] - data.startYear) * 12;
+    const anomalies = TrendStatistics.modelAnomalies(model,
+      Object.fromEntries(model.variables.map((id) => [id, analysis.row[id.toLowerCase()]])));
+    // Forecasts start after the last month every forecast measurement has (GPM lags a few months).
+    let months = anomalies[model.variables[0]].length;
+    while (model.variables.some((id) => Number.isNaN(anomalies[id][months - 1]))) months -= 1;
+    const testStart = (model.testYears[0] - model.startYear) * 12;
     forecastCache = {
-      analysis, months, testStart,
+      analysis, anomalies, months, testStart,
       ahead: TrendStatistics.forecast(model, anomalies, site.latitude, months),
       backtest: TrendStatistics.backtest(model, anomalies, site.latitude, testStart, months),
     };
@@ -630,9 +623,9 @@
     badge.toggleAttribute("data-weak", good === 0);
     badge.textContent = good === 0
       ? `For ${variable.name.toLowerCase()}, the model can’t beat a simple guess yet, so treat this forecast as a rough sketch.`
-      : `Tested on 6 regions over ${model.testYears.join("–")}: it beats a simple guess by at least 5% for ${good === model.leads ? `all ${good} months` : monthsText(good)} ahead.`;
+      : `Tested on ${model.unseenPoints} places it never trained on, over ${model.testYears.join("–")}: it beats a simple guess by at least 5% for ${good === model.leads ? `all ${good} months` : monthsText(good)} ahead.`;
     byId("forecast-text").textContent = forecastView === "ahead"
-      ? `The dashed line is the forecast for each month of ${data.endYear + 1}, shown as the difference from the ${data.baselineStart}–${data.baselineEnd} normal for that month. The shaded band is where 9 in 10 real months landed during testing. The simple guess it has to beat says each month will match its average over the last 5 years.`
+      ? `The dashed line is the forecast for the 12 months after the record ends (${monthFormat.format(new Date(Date.UTC(model.startYear, forecastData().months)))} onward), shown as the difference from this point’s ${model.normal.join("–")} normal for that month. The shaded band is where 9 in 10 real months landed during testing. The simple guess it has to beat says each month will match its average over the last 5 years.`
       : `A fair test: the model never saw ${model.testYears.join(" to ")}. Each dashed point was predicted one month ahead using only the real months before it. The closer the dashed line follows the solid one, the better the model.`;
     const legend = [["", "Actual"], ["forecast", forecastView === "ahead" ? "Forecast" : "Predicted one month ahead"]];
     if (forecastView === "ahead") legend.push(["band", "Likely range (90%)"]);
@@ -654,7 +647,7 @@
     const variable = data.variables.find((item) => selectedIds.has(item.id));
     const index = model.variables.indexOf(variable.id);
     const result = forecastData();
-    const history = analysis.series[variable.id].monthlyAnomalies;
+    const history = result.anomalies[variable.id].slice(0, result.months);
     const ahead = forecastView === "ahead";
     const firstMonth = ahead ? result.months - 24 : result.testStart;
     const actual = history.slice(firstMonth);
@@ -687,7 +680,7 @@
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     for (let i = 0; i < total; i += 1) {
-      if ((firstMonth + i) % 12 === 0) ctx.fillText(String(data.startYear + Math.floor((firstMonth + i) / 12)), x(i), bottom + 10);
+      if ((firstMonth + i) % 12 === 0) ctx.fillText(String(model.startYear + Math.floor((firstMonth + i) / 12)), x(i), bottom + 10);
     }
 
     if (ahead) {
@@ -730,7 +723,8 @@
     byId("trend-legend").hidden = view !== "annual";
     const note = byId("chart-note");
     note.hidden = view !== "anomaly";
-    note.textContent = `Each value shows how far that month was from the average for the same calendar month in ${data.baselineStart}–${data.baselineEnd}.`;
+    const shown = analysis?.series[[...selectedIds][0]];
+    note.textContent = shown ? `Each value shows how far that month was from the average for the same calendar month over ${shown.firstYear}–${shown.lastYear}.` : "";
     drawChart();
   }
 
@@ -786,12 +780,13 @@
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    const years = [data.startYear];
-    const interval = width < 420 ? 20 : 10;
-    for (let year = Math.ceil((data.startYear + 4) / interval) * interval; year < data.endYear - 3; year += interval) years.push(year);
-    years.push(data.endYear);
+    const { firstYear, lastYear } = series;
+    const years = [firstYear];
+    const interval = width < 420 || lastYear - firstYear > 40 ? 20 : 10;
+    for (let year = Math.ceil((firstYear + 4) / interval) * interval; year < lastYear - 3; year += interval) years.push(year);
+    years.push(lastYear);
     for (const year of years) {
-      const index = year === data.endYear ? values.length - 1 : (year - data.startYear) * (annual ? 1 : 12);
+      const index = year === lastYear ? values.length - 1 : (year - firstYear) * (annual ? 1 : 12);
       ctx.fillText(String(year), x(index), bottom + 10);
     }
 
@@ -831,7 +826,7 @@
       ctx.beginPath();
       ctx.arc(xPos, yPos, 4.5, 0, 2 * Math.PI);
       ctx.fill();
-      const period = annual ? data.startYear + activeIndex : monthFormat.format(new Date(Date.UTC(data.startYear, activeIndex)));
+      const period = annual ? series.firstYear + activeIndex : monthFormat.format(new Date(Date.UTC(series.firstYear, activeIndex)));
       const label = `${period} · ${format(value, variable.decimals, view === "anomaly")} ${variable.unit}`;
       tooltip.textContent = label;
       tooltip.style.left = `${Math.max(2, Math.min(xPos + 9, width - tooltip.offsetWidth - 2))}px`;
@@ -934,8 +929,7 @@
   renderSiteList();
   renderMap();
   setRegionStatus("Pick a study area, click the map, or try an example above to load a place.");
-  retryRegion.addEventListener("click", () => selectSite(site, true));
-  refreshRegion.addEventListener("click", () => selectSite(site, true));
+  retryRegion.addEventListener("click", () => selectSite(site));
 
   for (const example of examples) {
     const item = create("li", "", "example");
@@ -967,15 +961,13 @@
     observer.observe(canvas);
   }
 
-  // The hero and example stripes come from the bundled CSV, so the page shows real data before any NASA request.
-  fetch("americas-trends.csv").then((response) => response.text()).then((text) => {
-    const rows = text.trim().split("\n").slice(1).map((line) => line.split(",")).filter(([name]) => name === "Southern Ontario");
-    for (const example of examples) {
-      const values = example.values || rows.map((row) => Number(row[example.csvColumn]));
-      if (values.length) showStripes(example.canvas, values, example.previewId);
-    }
-    const values = rows.map((row) => Number(row[5]));
-    if (!values.length) return;
+  // Hero and example stripes are bundled (featured-stripes.js), so the page shows real data at once.
+  for (const example of examples) {
+    const values = featured[example.preview[0]];
+    if (values?.length) showStripes(example.canvas, values, example.preview[1]);
+  }
+  const values = featured["ontario-T2M"];
+  if (values?.length) {
     liveStripes.set(byId("hero-stripes"), [values, "T2M"]);
     // The page's one load moment: years appear left to right, easing out.
     const start = performance.now();
@@ -986,17 +978,19 @@
       if (progress < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
-  }).catch(() => { byId("hero-stripes").hidden = true; });
+  } else {
+    byId("hero-stripes").hidden = true;
+  }
   byId("map-stage").addEventListener("click", (event) => {
     if (event.target.closest("button")) return;
     const rect = map.getBoundingClientRect();
     const [longitude, latitude] = mapProjection(rect.width, rect.height).invert(event.clientX - rect.left, event.clientY - rect.top);
-    selectSite(pointSite(latitude, longitude));
+    choosePoint(latitude, longitude);
   });
   byId("point-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const { latitude, longitude } = event.target.elements;
-    selectSite(pointSite(latitude.valueAsNumber, longitude.valueAsNumber));
+    choosePoint(latitude.valueAsNumber, longitude.valueAsNumber);
   });
 
   observer.observe(byId("hero-stripes"));

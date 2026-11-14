@@ -1,76 +1,109 @@
 window.TREND_CONFIG = {
-  "startYear": 1981,
+  "startYear": 1948,
   "endYear": 2025,
-  "baselineStart": 1991,
-  "baselineEnd": 2020,
+  "sourceUrl": "https://giovanni.gsfc.nasa.gov/giovanni/",
+  "methodUrl": "https://www.nber.org/papers/t0055",
   "supabaseUrl": "https://vbumlhsonrozcrzcuirm.supabase.co",
   "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZidW1saHNvbnJvemNyemN1aXJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ2NzYzNjgsImV4cCI6MjExMDI1MjM2OH0.Q2TSoe9HcDGc2zs599LCj5_sdGs4-JzCYEmDL9vbuKY",
-  "sourceUrl": "https://power.larc.nasa.gov/docs/services/api/temporal/monthly/",
-  "methodUrl": "https://www.nber.org/papers/t0055",
   "variables": [
     {
       "id": "T2M",
       "name": "Air temperature",
       "unit": "°C",
       "trendUnit": "°C",
-      "description": "Temperature of the air two metres above the surface.",
-      "decimals": 2
+      "decimals": 2,
+      "description": "Temperature of the air two metres above the ground.",
+      "source": "MERRA-2",
+      "firstMonth": 384,
+      "lastMonth": 935
     },
     {
       "id": "TS",
       "name": "Surface temperature",
       "unit": "°C",
       "trendUnit": "°C",
-      "description": "Temperature at the ground or water surface.",
-      "decimals": 2
+      "decimals": 2,
+      "description": "Temperature of the ground surface itself.",
+      "source": "GLDAS 2.0",
+      "firstMonth": 0,
+      "lastMonth": 803
     },
     {
       "id": "PRECTOTCORR",
       "name": "Precipitation",
       "unit": "mm/day",
       "trendUnit": "mm/day",
-      "description": "Average daily water from rain and snow, adjusted using observations.",
-      "decimals": 2
+      "decimals": 2,
+      "description": "Average daily rain and snow, measured from space by the GPM satellites and calibrated to rain gauges.",
+      "source": "GPM IMERG",
+      "firstMonth": 600,
+      "lastMonth": 932
     },
     {
       "id": "QV2M",
       "name": "Specific humidity",
       "unit": "g/kg",
       "trendUnit": "g/kg",
-      "description": "Grams of water vapour per kilogram of near-surface air.",
-      "decimals": 2
+      "decimals": 2,
+      "description": "Grams of water vapour in each kilogram of air near the ground.",
+      "source": "MERRA-2",
+      "firstMonth": 384,
+      "lastMonth": 935
     },
     {
       "id": "RH2M",
       "name": "Relative humidity",
       "unit": "%",
       "trendUnit": "pp",
-      "description": "Near-surface water vapour as a percentage of saturation at that temperature.",
-      "decimals": 2
+      "decimals": 1,
+      "description": "How close the air near the ground is to being saturated with water vapour.",
+      "source": "MERRA-2",
+      "firstMonth": 384,
+      "lastMonth": 935
     },
     {
       "id": "GWETROOT",
-      "name": "Root-zone soil wetness",
-      "unit": "%",
-      "trendUnit": "pp",
-      "description": "How close the top metre of soil is to saturation.",
-      "decimals": 2
+      "name": "Root-zone soil moisture",
+      "unit": "mm",
+      "trendUnit": "mm",
+      "decimals": 1,
+      "description": "Water held in the soil where plant roots reach, as a depth of water.",
+      "source": "GLDAS 2.0",
+      "firstMonth": 0,
+      "lastMonth": 803
     },
     {
       "id": "EVLAND",
-      "name": "Land evapotranspiration",
+      "name": "Evapotranspiration",
       "unit": "mm/day",
       "trendUnit": "mm/day",
-      "description": "Average daily water returned to the air from land, including evaporation and water released by plants.",
-      "decimals": 2
+      "decimals": 2,
+      "description": "Water returned to the air each day from soil, water surfaces and plant leaves.",
+      "source": "GLDAS 2.0",
+      "firstMonth": 0,
+      "lastMonth": 803
     },
     {
       "id": "WS10M",
       "name": "Wind speed",
       "unit": "m/s",
       "trendUnit": "m/s",
-      "description": "Wind speed ten metres above the surface.",
-      "decimals": 2
+      "decimals": 2,
+      "description": "Average wind speed near the ground.",
+      "source": "GLDAS 2.0",
+      "firstMonth": 0,
+      "lastMonth": 803
+    },
+    {
+      "id": "SNOW",
+      "name": "Snow depth",
+      "unit": "cm",
+      "trendUnit": "cm",
+      "decimals": 1,
+      "description": "Average depth of snow on the ground through the month.",
+      "source": "GLDAS 2.0",
+      "firstMonth": 0,
+      "lastMonth": 803
     }
   ],
   "sites": [
@@ -78,91 +111,91 @@ window.TREND_CONFIG = {
       "id": "southern-ontario",
       "name": "Southern Ontario",
       "region": "Canada",
-      "continent": "North America",
-      "latitude": 44,
+      "latitude": 44.125,
       "longitude": -80.625,
       "bounds": {
-        "south": 43.25,
-        "north": 44.75,
-        "west": -81.5625,
-        "east": -79.6875
+        "south": 44.0,
+        "north": 44.25,
+        "west": -80.75,
+        "east": -80.5
       },
-      "cellCount": 9
+      "cellCount": 1
     },
     {
       "id": "great-plains",
       "name": "Central Great Plains",
       "region": "United States",
-      "continent": "North America",
-      "latitude": 38.5,
-      "longitude": -100,
+      "latitude": 44.125,
+      "longitude": -80.625,
       "bounds": {
-        "south": 37.75,
-        "north": 39.25,
-        "west": -100.9375,
-        "east": -99.0625
+        "south": 44.0,
+        "north": 44.25,
+        "west": -80.75,
+        "east": -80.5
       },
-      "cellCount": 9
+      "cellCount": 1
     },
     {
       "id": "mexican-plateau",
       "name": "Mexican Plateau",
       "region": "Mexico",
-      "continent": "North America",
-      "latitude": 23,
-      "longitude": -102.5,
+      "latitude": 44.125,
+      "longitude": -80.625,
       "bounds": {
-        "south": 22.25,
-        "north": 23.75,
-        "west": -103.4375,
-        "east": -101.5625
+        "south": 44.0,
+        "north": 44.25,
+        "west": -80.75,
+        "east": -80.5
       },
-      "cellCount": 9
+      "cellCount": 1
     },
     {
       "id": "central-amazon",
       "name": "Central Amazon",
       "region": "Brazil",
-      "continent": "South America",
-      "latitude": -3,
-      "longitude": -60,
+      "latitude": -3.375,
+      "longitude": -61.375,
       "bounds": {
-        "south": -3.75,
-        "north": -2.25,
-        "west": -60.9375,
-        "east": -59.0625
+        "south": -3.5,
+        "north": -3.25,
+        "west": -61.5,
+        "east": -61.25
       },
-      "cellCount": 9
+      "cellCount": 1
     },
     {
       "id": "cerrado",
       "name": "Cerrado",
       "region": "Brazil",
-      "continent": "South America",
-      "latitude": -15.5,
-      "longitude": -47.5,
+      "latitude": -15.625,
+      "longitude": -47.625,
       "bounds": {
-        "south": -16.25,
-        "north": -14.75,
-        "west": -48.4375,
-        "east": -46.5625
+        "south": -15.75,
+        "north": -15.5,
+        "west": -47.75,
+        "east": -47.5
       },
-      "cellCount": 9
+      "cellCount": 1
     },
     {
       "id": "patagonian-steppe",
       "name": "Patagonian Steppe",
       "region": "Argentina",
-      "continent": "South America",
-      "latitude": -49.5,
+      "latitude": -49.625,
       "longitude": -70.625,
       "bounds": {
-        "south": -50.25,
-        "north": -48.75,
-        "west": -71.5625,
-        "east": -69.6875
+        "south": -49.75,
+        "north": -49.5,
+        "west": -70.75,
+        "east": -70.5
       },
-      "cellCount": 9
+      "cellCount": 1
     }
-  ]
+  ],
+  "compare": {
+    "id": "T2M_GLDAS21",
+    "source": "GLDAS 2.1",
+    "firstMonth": 624,
+    "lastMonth": 935
+  }
 };
