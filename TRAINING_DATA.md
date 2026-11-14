@@ -42,3 +42,16 @@ World model skill against the recent-average guess on 2020–2025, at 350 places
 | Precipitation | +0.07 | +0.05 | +0.05 | +0.04 |
 
 The linear model (ridge, alpha 10,000) beat 32- and 64-unit neural networks on 2015–2019 forecasts, so it ships.
+
+## Graph neural network world model (experimental)
+
+`train_gnn.py` is a small GraphCast-style model on the same data. Each of the 1,656 land points is a node, linked to its 8 nearest neighbours and to 4 points 1,500–2,500 km away. An encoder, 3 rounds of message passing and a decoder predict next month for every place at once, with a linear path alongside. It trains on 3-month unrolled forecasts so 12-month rollouts drift less, using the same splits and tests as the ridge model.
+
+Setup (once):
+
+```
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements-gnn.txt --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+```
+
+Run `.venv/Scripts/python train_gnn.py --quick` (2 epochs, about a minute) to check it works, or `.venv/Scripts/python train_gnn.py` for a full run (up to 40 epochs, about 25 s each). Options: `--hidden`, `--rounds`, `--rollout`, `--epochs`. It saves `gnn-world-model.pt` and prints its 2015–2019 forecast error next to the ridge model's (about 0.972; lower is better) and its skill at unseen places on 2020–2025. It is not wired into the site yet.

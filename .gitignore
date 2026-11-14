@@ -3,3 +3,5 @@
 __pycache__/
 giovanni-cache/
 gldas-dataset.npz
+.venv/
+gnn-world-model.pt
