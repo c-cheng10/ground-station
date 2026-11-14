@@ -5,3 +5,4 @@ giovanni-cache/
 gldas-dataset.npz
 .venv/
 gnn-world-model.pt
+gnn-train.log

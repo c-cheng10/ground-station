@@ -57,21 +57,28 @@ def build_graph(lat, lon, near=8, far=4, far_km=(1500, 2500)):
     return torch.tensor(np.stack([senders, receivers])), torch.tensor(features, dtype=torch.float32)
 
 
-def mlp(n_in, n_out, hidden):
-    return nn.Sequential(nn.Linear(n_in, hidden), nn.SiLU(), nn.Linear(hidden, n_out))
+def mlp(n_in, n_out, hidden, dropout=0.0):
+    return nn.Sequential(nn.Linear(n_in, hidden), nn.SiLU(), nn.Dropout(dropout), nn.Linear(hidden, n_out))
 
 
 class GraphWorldModel(nn.Module):
-    def __init__(self, n_in, n_out, edges, edge_features, hidden=64, rounds=3):
+    """Hybrid, in the spirit of NeuralGCM: a frozen linear core (the ridge model) plus a
+    graph network that learns corrections. The correction starts at exactly zero, so
+    training begins from the core's forecast and can only add what helps."""
+
+    def __init__(self, n_in, n_out, edges, edge_features, core, hidden=32, rounds=2, dropout=0.1):
         super().__init__()
         self.register_buffer("edges", edges)
         self.register_buffer("edge_features", edge_features)
-        self.encoder = mlp(n_in, hidden, hidden)
-        self.messages = nn.ModuleList(mlp(2 * hidden + edge_features.shape[1], hidden, hidden) for _ in range(rounds))
-        self.updates = nn.ModuleList(mlp(2 * hidden, hidden, hidden) for _ in range(rounds))
+        self.register_buffer("core_w", torch.tensor(core.w, dtype=torch.float32))
+        self.register_buffer("core_b", torch.tensor(core.b, dtype=torch.float32))
+        self.encoder = mlp(n_in, hidden, hidden, dropout)
+        self.messages = nn.ModuleList(mlp(2 * hidden + edge_features.shape[1], hidden, hidden, dropout) for _ in range(rounds))
+        self.updates = nn.ModuleList(mlp(2 * hidden, hidden, hidden, dropout) for _ in range(rounds))
         self.norms = nn.ModuleList(nn.LayerNorm(hidden) for _ in range(rounds))
         self.decoder = mlp(hidden, n_out, hidden)
-        self.linear = nn.Linear(n_in, n_out)  # the ridge-like path
+        nn.init.zeros_(self.decoder[-1].weight)
+        nn.init.zeros_(self.decoder[-1].bias)
 
     def forward(self, x):
         """x: [nodes, n_in] -> next month [nodes, n_out]."""
@@ -82,7 +89,8 @@ class GraphWorldModel(nn.Module):
             m = message(torch.cat([h[senders], h[receivers], self.edge_features], dim=1))
             incoming = torch.zeros_like(h).index_add_(0, receivers, m) / degree
             h = norm(h + update(torch.cat([h, incoming], dim=1)))
-        return self.decoder(h) + self.linear(x)
+        core = x[:, :len(self.core_w)] @ self.core_w + self.core_b
+        return core + self.decoder(h)
 
 
 class Inputs:
@@ -145,8 +153,11 @@ def evaluate(model, inputs, series, first, last, nodes):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=40)
-    parser.add_argument("--hidden", type=int, default=64)
-    parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--hidden", type=int, default=32)
+    parser.add_argument("--rounds", type=int, default=2)
+    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--lr", type=float, default=3e-4)
+    parser.add_argument("--alpha", type=float, default=10000, help="ridge strength of the frozen core")
     parser.add_argument("--rollout", type=int, default=3, help="months unrolled per training example")
     parser.add_argument("--patience", type=int, default=6)
     parser.add_argument("--quick", action="store_true", help="2 epochs, to check everything runs")
@@ -163,14 +174,19 @@ def main():
     edges, edge_features = build_graph(lat, lon)
     inputs = Inputs(lat, lon, enso)
     n_in = inputs(series[:, :base.RECENT], base.RECENT, base.RECENT - 1).shape[1]
-    model = GraphWorldModel(n_in, len(base.VARS), edges, edge_features, args.hidden, args.rounds)
+    # The frozen core: the same ridge model the site uses, fit on the same training years and places.
+    core = base.Ridge(args.alpha).fit(*base.samples(series[~unseen], enso, lat[~unseen], base.FIRST_TARGET, base.VAL_START))
+    model = GraphWorldModel(n_in, len(base.VARS), edges, edge_features, core, args.hidden, args.rounds, args.dropout)
     print(f"{len(lat)} nodes, {edges.shape[1]} edges, {sum(p.numel() for p in model.parameters()):,} parameters")
 
-    optimiser = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimiser = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-3)
     train_mask = torch.tensor(~unseen)
     train_nodes, unseen_nodes = np.flatnonzero(~unseen), np.flatnonzero(unseen)
     starts = np.arange(base.FIRST_TARGET, base.VAL_START - args.rollout + 1)
-    best, best_error, wait = None, np.inf, 0
+    model.eval()
+    best_error = evaluate(model, inputs, series, base.VAL_START, base.TEST_START, train_nodes)["model"].mean()
+    best, wait, core_error = {k: v.clone() for k, v in model.state_dict().items()}, 0, best_error
+    print(f"epoch  0: core only (ridge)       2015-2019 forecast error {core_error:.4f}", flush=True)
     for epoch in range(args.epochs):
         began = time.time()
         model.train()
@@ -194,10 +210,14 @@ def main():
 
     test = evaluate(model, inputs, series, base.TEST_START, end, unseen_nodes)
     skill = 1 - test["model"] / test["recent"]
-    print(f"\nbest 2015-2019 forecast error {best_error:.4f} (ridge scored about 0.972 on the same test)")
+    print(f"\nbest 2015-2019 forecast error {best_error:.4f} vs core alone {core_error:.4f}")
+    core_only = GraphWorldModel(n_in, len(base.VARS), edges, edge_features, core, args.hidden, args.rounds).eval()
+    ridge_test = evaluate(core_only, inputs, series, base.TEST_START, end, unseen_nodes)
     print("Skill vs recent average on 2020-2025, unseen places (leads 1, 3, 6, 12):")
     for i, name in enumerate(base.VARS):
-        print(f"  {name:<12}" + "  ".join(f"{skill[k, i]:+.2f}" for k in (0, 2, 5, 11)))
+        ridge_skill = 1 - ridge_test["model"][:, i] / ridge_test["recent"][:, i]
+        print(f"  {name:<12}" + "  ".join(f"{skill[k, i]:+.2f}" for k in (0, 2, 5, 11)) +
+              "   ridge alone " + "  ".join(f"{ridge_skill[k]:+.2f}" for k in (0, 2, 5, 11)))
     print("Saved gnn-world-model.pt")
 
 
