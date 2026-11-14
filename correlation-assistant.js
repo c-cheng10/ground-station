@@ -5,6 +5,8 @@
   const form = document.getElementById("assistant-form");
   if (!config || !form) return;
 
+  const dialog = document.getElementById("assistant-dialog");
+  const viewArea = document.getElementById("assistant-view-area");
   const fieldset = form.querySelector("fieldset");
   const input = document.getElementById("assistant-question");
   const reply = document.getElementById("assistant-reply");
@@ -15,13 +17,11 @@
   const researchNotice = document.getElementById("assistant-research-notice");
   const researchSources = document.getElementById("assistant-research-sources");
   const regionNames = new Map(config.sites.map(({ id, name }) => [id, name]));
-  const variableNames = new Map(config.variables.map(({ id, name }) => [id.toLowerCase(), name]));
+  const variables = new Map(config.variables.map((variable) => [variable.id, variable]));
   const monthFormat = new Intl.DateTimeFormat("en-CA", { month: "short", year: "numeric", timeZone: "UTC" });
-  const variableByName = new Map(config.variables.map((variable) => [variable.name.toLowerCase(), variable]));
-  for (const [alias, id] of [["soil wetness", "GWETROOT"], ["soil moisture", "GWETROOT"], ["root-zone soil wetness", "GWETROOT"],
-    ["windspeed", "WS10M"], ["rainfall", "PRECTOTCORR"], ["rain", "PRECTOTCORR"]]) {
-    variableByName.set(alias, config.variables.find((variable) => variable.id === id));
-  }
+  const findStudyArea = (place) => place && config.sites.find(({ name, id }) =>
+    [name, id].some((label) => label.toLowerCase() === place.toLowerCase()));
+  const quantity = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 3, signDisplay: "exceptZero" });
 
   function validMonth(yyyymm) {
     const now = new Date();
@@ -38,8 +38,8 @@
     const { region_id, lat, lon, variable_x, variable_y, paired_months, lag_months, pearson_r,
       first_month_x, last_month_x, first_month_y, last_month_y, source_x, source_y } = row;
     const region = regionNames.get(region_id) ?? `${lat}°, ${lon}°`;
-    const earlier = variableNames.get(variable_x);
-    const later = variableNames.get(variable_y);
+    const earlier = variables.get(variable_x?.toUpperCase?.())?.name;
+    const later = variables.get(variable_y?.toUpperCase?.())?.name;
     if (!Number.isFinite(lat) || !Number.isFinite(lon) || !earlier || !later ||
         !Number.isInteger(paired_months) || paired_months < 1 ||
         !Number.isInteger(lag_months) || lag_months < 0 || lag_months > 6 ||
@@ -61,23 +61,58 @@
     result.hidden = false;
   }
 
-  function countryQuestion(question) {
-    // Resolve an unambiguous same-month country question from the map's own names.
-    const match = question.toLowerCase().replace(/\s+/g, " ").match(
-      /^(?:(?:can you|could you) tell me about |what is |what's |show me )?(?:the )?(?:same-month )?(?:correlation|relationship|relation) between (.+?) and (.+?) in (?:the )?(.+?)[?.!]?$/,
-    );
-    if (!match || !window.countryCorrelation) return null;
-    const country = window.WORLD_MAP?.countries.find(({ name }) => name.toLowerCase() === match[3]);
-    const first = variableByName.get(match[1]);
-    const second = variableByName.get(match[2]);
-    return country && first && second && first !== second ? { country, first, second } : null;
+  function showAreaAnswer(answer, question) {
+    if (answer.status === "outside_coverage") {
+      reply.textContent = "No stored NASA grid point is close enough to that place. Try another place or draw a circle around map squares.";
+      return;
+    }
+    if (answer.status === "unavailable") {
+      reply.textContent = "The selected area could not be loaded. Try again or choose a different place.";
+      return;
+    }
+    viewArea.hidden = false;
+    if (answer.status === "no_data") {
+      reply.textContent = `The grid points in ${answer.name} don’t share enough complete months for this question. Try another measurement or draw a smaller circle.`;
+      return;
+    }
+    const { count, distance, name, outsideBorder } = answer;
+    const [first, second] = question.ids.map((id) => variables.get(id));
+    const coverage = distance ? `, within ${distance} km of the city` : outsideBorder ? ", within about 500 km of the border" : "";
+    const scope = `${count} NASA grid ${count === 1 ? "point" : "points"}${coverage}`;
+    if (answer.status === "trend") {
+      const { slope, ciLow, ciHigh, verdict } = answer.trend;
+      const unit = first.trendUnit === "pp" ? "percentage points" : first.trendUnit || first.unit;
+      const rate = (value) => `${quantity.format(value)} ${unit}`;
+      reply.textContent = `The trend uses annual averages from ${scope}. ${verdict === "inconclusive"
+        ? "The trend tests found no clear change." : `The measurement is ${verdict}.`}`;
+      resultTitle.textContent = `${name} · ${first.name}`;
+      resultValue.textContent = `${rate(slope)} per decade, with a 95% range of ${rate(ciLow)} to ${rate(ciHigh)}`;
+      resultWindow.textContent = `${answer.firstYear}–${answer.lastYear} · ${first.source}`;
+    } else {
+      const { lag } = question;
+      const month = (index) => formatMonth((config.startYear + Math.floor(index / 12)) * 100 + index % 12 + 1);
+      const dates = (offset) => `${month(answer.from + offset)}–${month(answer.to - 1 + offset)}`;
+      reply.textContent = answer.r === null
+        ? "One measurement is constant after removing the seasonal cycle and trend, so a correlation is unavailable."
+        : `This compares monthly averages across ${scope} after removing seasonal cycles and long-term trends.`;
+      resultTitle.textContent = `${name} · ${first.name} ${lag ? "→" : "and"} ${second.name}`;
+      resultValue.textContent = `${answer.r === null ? "Pearson r unavailable" : `Pearson r = ${answer.r.toFixed(4)}`} · ${lag ? `${lag} month${lag === 1 ? "" : "s"} later` : "Same month"}`;
+      resultWindow.textContent = `${answer.to - answer.from} paired months · ${first.name} (${first.source}): ${dates(0)} · ${second.name} (${second.source}): ${dates(lag)}`;
+    }
+    result.hidden = false;
   }
+
+  viewArea.addEventListener("click", () => {
+    dialog.close();
+    document.getElementById("drawer-title").focus({ preventScroll: true });
+  });
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const question = input.value.trim();
     if (!question || fieldset.disabled) return;
     result.hidden = true;
+    viewArea.hidden = true;
     researchNotice.hidden = true;
     researchSources.replaceChildren();
     researchSources.hidden = true;
@@ -93,23 +128,25 @@
     fieldset.disabled = true;
     reply.textContent = "Looking up your question…";
     try {
-      const area = countryQuestion(question);
-      if (area) {
-        const { country, first, second } = area;
-        const answer = await window.countryCorrelation(country, [first.id, second.id], AbortSignal.timeout(30_000));
-        if (!answer) {
-          reply.textContent = `The stored NASA grid points in ${country.name} don’t have enough complete years in common for this pair. Try a point or a smaller circle.`;
+      const area = window.parseClimateAreaQuestion(question, config.variables);
+      const namedSite = area && findStudyArea(area.place);
+      if (area && (!namedSite || area.kind === "trend")) {
+        reply.textContent = area.place ? `Finding ${area.place} on the map…` : "Loading the selected area…";
+        const place = namedSite ?? (area.place
+          ? await window.AssistantPlace.resolve(area.place, { signal: AbortSignal.timeout(8_000) }) : null);
+        if (place?.kind === "unresolved") {
+          reply.textContent = place.message;
           return;
         }
-        const { r, points, start, end } = answer;
-        reply.textContent = r === null
-          ? "A correlation is unavailable because one measurement is constant after removing its seasonal cycle and trend."
-          : `This compares monthly averages across ${points} NASA grid ${points === 1 ? "point" : "points"} in ${country.name}, after removing the seasonal cycle and long-term trend.`;
-        resultTitle.textContent = `${country.name} · ${first.name} and ${second.name}`;
-        resultValue.textContent = `${r === null ? "Pearson r unavailable" : `Pearson r = ${r.toFixed(4)}`} · Same month`;
-        resultWindow.textContent = `${(end - start + 1) * 12} paired months · ${formatMonth(start * 100 + 1)}–${formatMonth(end * 100 + 12)} · ${[...new Set([first.source, second.source])].join(", ")}`;
-        result.hidden = false;
-        return;
+        const answer = await window.answerClimateArea(area, place);
+        if (answer) {
+          showAreaAnswer(answer, area);
+          return;
+        }
+        if (!point_id || area.kind === "trend") {
+          reply.textContent = "Name a city or country, or draw a circle on the map before asking about an area.";
+          return;
+        }
       }
       const response = await fetch(new URL("/functions/v1/climate-assistant-giovanni", config.supabaseUrl), {
         method: "POST",
@@ -124,7 +161,12 @@
       if (response.status === 404) throw new Error("The Giovanni assistant is awaiting deployment.");
       if (!response.ok) throw new Error(answer?.error || "The assistant could not answer. Try again.");
       if (typeof answer?.reply !== "string") throw new Error("The assistant returned an invalid reply.");
-      if (answer.correlation) showCorrelation(answer.correlation);
+      if (answer.correlation) {
+        showCorrelation(answer.correlation);
+        if (!point_id || answer.correlation.point_id !== point_id) {
+          viewArea.hidden = !await window.selectAssistantPoint(answer.correlation);
+        }
+      }
       const research = window.ClimateResearch;
       if (research && Array.isArray(answer.sources)) research.renderSources(researchSources, answer.sources);
       if (research && answer.partial === true) {
