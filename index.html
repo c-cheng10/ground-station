@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <meta name="theme-color" content="#0f2338">
+  <meta name="theme-color" content="#0b1a2b">
   <meta name="description" content="Pick any place on land and test 45 years of NASA data for a real climate trend.">
   <title>Climate Trend Explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,17 +17,19 @@
   <script defer src="trend-explorer.js"></script>
   <style>
     :root {
-      --ground: #eef3f6;
+      --night: #0b1a2b;
+      --ground: #e7edf2;
       --surface: #ffffff;
+      --sunken: #f3f6f9;
       --ink: #0f2338;
-      --muted: #46596c;
-      --rule: #d3dde5;
+      --muted: #47596b;
+      --rule: #d8e0e8;
       --control: #1f4e9c;
       --control-hover: #183e7c;
-      --tint: #e3ebf5;
+      --tint: #e3ebf6;
       --warm: #a8402a;
-      --cool: #24609f;
-      --radius: 10px;
+      --shadow-1: 0 1px 2px rgb(15 35 56 / 0.06), 0 3px 10px rgb(15 35 56 / 0.05);
+      --shadow-2: 0 2px 4px rgb(15 35 56 / 0.05), 0 14px 36px rgb(15 35 56 / 0.11);
       font-family: "Atkinson Hyperlegible Next", system-ui, sans-serif;
       color: var(--ink);
       background: var(--ground);
@@ -38,207 +40,228 @@
     [hidden] { display: none !important; }
     body { margin: 0; }
     ::selection { background: #bcd0ec; color: var(--ink); }
-    h1, h2, h3 { text-wrap: balance; letter-spacing: -0.02em; line-height: 1.15; }
+    h1, h2, h3 { text-wrap: balance; line-height: 1.12; margin: 0; }
     p { text-wrap: pretty; }
     a { color: var(--control); text-underline-offset: 0.2em; }
     button, input { font: inherit; touch-action: manipulation; }
     button { cursor: pointer; }
     :focus-visible { outline: 3px solid #4d86d9; outline-offset: 3px; }
-    .shell { width: min(1160px, calc(100% - 64px)); margin-inline: auto; }
-    .skip { position: absolute; left: 16px; top: -60px; z-index: 10; padding: 10px 14px; background: var(--surface); border-radius: 6px; }
+    .shell { width: min(1240px, calc(100% - 64px)); margin-inline: auto; }
+    .skip { position: absolute; left: 16px; top: -60px; z-index: 20; padding: 10px 14px; background: var(--surface); border-radius: 8px; }
     .skip:focus { top: 12px; }
+    .sr-only { position: absolute; overflow: hidden; clip-path: inset(50%); width: 1px; height: 1px; white-space: nowrap; }
+    canvas { display: block; width: 100%; height: 100%; }
 
-    /* Buttons: one primary, one secondary, one quiet style */
     .button {
-      display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 18px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 10px 20px;
       border-radius: 999px; border: 1px solid transparent; font-weight: 700; text-decoration: none;
-      transition: background-color 160ms ease-out, transform 120ms ease-out, border-color 160ms ease-out;
+      transition: background-color 160ms ease-out, transform 120ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
     }
     .button:active { transform: translateY(1px); }
-    .button.primary { background: var(--control); color: #fff; }
+    .button.primary { background: var(--control); color: #fff; box-shadow: 0 1px 2px rgb(15 35 56 / 0.2); }
     .button.primary:hover { background: var(--control-hover); }
-    .button.secondary { background: transparent; color: var(--control); border-color: #9fb6d8; }
+    .button.secondary { background: var(--surface); color: var(--control); border-color: #b4c6e0; }
     .button.secondary:hover { background: var(--tint); border-color: var(--control); }
-    .button.small { min-height: 36px; padding: 6px 14px; font-size: 0.88rem; }
+    .button.small { min-height: 38px; padding: 6px 15px; font-size: 0.9rem; }
 
-    /* Hero */
-    .hero { background: var(--ink); color: #f2f6fa; padding-block: 18px 0; }
-    .topbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 16px; }
-    .brand { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.01em; white-space: nowrap; }
-    .topbar a { white-space: nowrap; }
-    .topbar a { color: #c9d8ea; font-size: 0.92rem; }
-    .topbar a:hover { color: #fff; }
-    .hero-copy { padding-block: clamp(40px, 7vw, 76px) 32px; max-width: 760px; }
-    .hero h1 { font-size: clamp(2.3rem, 5.4vw, 4rem); font-weight: 800; letter-spacing: -0.035em; margin: 0 0 18px; }
-    .hero-lead { font-size: clamp(1.05rem, 1.6vw, 1.2rem); color: #c9d8ea; margin: 0 0 28px; max-width: 62ch; }
+    /* Hero: the stripes are the backdrop */
+    .hero { position: relative; isolation: isolate; color: #f2f6fa; background: var(--night); min-height: min(90vh, 780px); display: flex; flex-direction: column; }
+    .hero-stripes { position: absolute; inset: 0; z-index: -2; }
+    .hero::before {
+      content: ""; position: absolute; inset: 0; z-index: -1;
+      background:
+        linear-gradient(90deg, rgb(11 26 43 / 0.96) 0%, rgb(11 26 43 / 0.86) 42%, rgb(11 26 43 / 0.35) 78%, rgb(11 26 43 / 0.15) 100%),
+        linear-gradient(0deg, rgb(11 26 43 / 0.9) 0%, rgb(11 26 43 / 0) 32%);
+    }
+    .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding-block: 22px; }
+    .brand { font-weight: 800; font-size: 1.1rem; white-space: nowrap; color: #fff; text-decoration: none; }
+    .nav { display: flex; flex-wrap: wrap; gap: 4px 22px; }
+    .nav a { color: #c8d6e6; text-decoration: none; font-size: 0.95rem; white-space: nowrap; }
+    .nav a:hover { color: #fff; text-decoration: underline; }
+    .hero-body { flex: 1; display: flex; flex-direction: column; justify-content: center; padding-block: 40px 56px; }
+    .hero h1 { font-size: clamp(2.6rem, 6.4vw, 5.2rem); font-weight: 800; letter-spacing: -0.04em; max-width: 13ch; }
+    .hero-lead { font-size: clamp(1.08rem, 1.6vw, 1.25rem); color: #cddaea; margin: 24px 0 32px; max-width: 54ch; }
     .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-    .hero .button.secondary { color: #fff; border-color: #5d7896; }
-    .hero .button.secondary:hover { background: #1c3653; border-color: #a9c0dc; }
-    .hero .button.primary { background: #f2f6fa; color: var(--ink); }
-    .hero .button.primary:hover { background: #fff; }
-    .stripes { display: block; width: 100%; height: clamp(90px, 14vw, 150px); }
-    .hero-stripes-note { color: #a9bdd3; font-size: 0.86rem; padding-block: 10px 22px; margin: 0; }
+    .hero .button.primary { background: #fff; color: var(--ink); }
+    .hero .button.primary:hover { background: #dfe9f6; }
+    .hero .button.secondary { background: rgb(255 255 255 / 0.06); color: #fff; border-color: rgb(255 255 255 / 0.35); }
+    .hero .button.secondary:hover { background: rgb(255 255 255 / 0.14); border-color: #fff; }
+    .hero-key { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-bottom: 26px; color: #b9c9db; font-size: 0.9rem; }
+    .scale { display: inline-flex; align-items: center; gap: 8px; }
+    .scale span[aria-hidden] { width: 120px; height: 10px; border-radius: 999px; background: linear-gradient(90deg, #2166ac, #f7f7f7, #b2182b); }
 
-    /* Examples */
-    .section { padding-block: 44px 0; scroll-margin-top: 16px; }
-    .section > h2, .section-head h2 { font-size: clamp(1.45rem, 2.6vw, 1.9rem); margin: 0 0 8px; }
-    .section-intro { color: var(--muted); margin: 0 0 22px; max-width: 68ch; }
-    .examples { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-    .example { display: flex; flex-direction: column; gap: 10px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); padding: 20px; }
-    .example h3 { font-size: 1.12rem; margin: 0; }
-    .example p { margin: 0; color: var(--muted); font-size: 0.95rem; flex: 1; }
-    .example .button { align-self: start; }
-    .story { margin-top: 18px; padding: 16px 20px; background: #fff8e8; border: 1px solid #ecd9ad; border-radius: var(--radius); }
-    .story h3 { margin: 0 0 4px; font-size: 1rem; }
-    .story p { margin: 0; max-width: 75ch; }
+    /* Sections */
+    .section { padding-block: 72px 0; scroll-margin-top: 12px; }
+    .section-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px 40px; margin-bottom: 28px; }
+    .section-head h2 { font-size: clamp(1.7rem, 3.2vw, 2.5rem); letter-spacing: -0.03em; }
+    .section-head p { margin: 0; color: var(--muted); max-width: 52ch; font-size: 1.02rem; }
 
-    /* Step 1: map */
-    .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
-    .map-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--rule); }
-    .map-toolbar p { margin: 0; color: var(--muted); font-size: 0.92rem; }
-    .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 999px; background: var(--tint); }
-    .segmented button { border: 0; background: transparent; border-radius: 999px; padding: 6px 13px; color: var(--muted); font-size: 0.86rem; min-height: 34px; transition: background-color 160ms ease-out, color 160ms ease-out; }
+    /* Example cases */
+    .examples { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+    .example {
+      display: flex; flex-direction: column; background: var(--surface); border-radius: 16px; overflow: hidden;
+      box-shadow: var(--shadow-1); transition: transform 180ms ease-out, box-shadow 180ms ease-out;
+    }
+    .example:hover { transform: translateY(-3px); box-shadow: var(--shadow-2); }
+    .example canvas { height: 92px; }
+    .example-body { display: flex; flex-direction: column; gap: 10px; padding: 22px 22px 24px; flex: 1; }
+    .example h3 { font-size: 1.2rem; letter-spacing: -0.015em; }
+    .example .where { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    .example p { margin: 0; flex: 1; }
+    .example .button { align-self: start; margin-top: 6px; }
+
+    /* Workspace: sticky controls on the left, the answer on the right */
+    .workspace { display: grid; grid-template-columns: 370px minmax(0, 1fr); gap: 24px; align-items: start; }
+    .sidebar { position: sticky; top: 16px; display: grid; gap: 16px; max-height: calc(100vh - 32px); overflow: auto; overscroll-behavior: contain; border-radius: 16px; }
+    .card { background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-1); }
+    .card-pad { padding: 20px; }
+    .card h3.step { font-size: 1.1rem; letter-spacing: -0.01em; }
+    .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .hint { margin: 0 0 12px; color: var(--muted); font-size: 0.9rem; }
+    .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 999px; background: var(--sunken); border: 1px solid var(--rule); }
+    .segmented button { border: 0; background: transparent; border-radius: 999px; padding: 5px 12px; color: var(--muted); font-size: 0.85rem; min-height: 32px; transition: background-color 160ms ease-out, color 160ms ease-out; }
     .segmented button:hover { color: var(--ink); }
     .segmented button[aria-pressed="true"] { background: var(--control); color: #fff; }
-    .map-content { display: grid; grid-template-columns: minmax(0, 1fr) 260px; }
-    .map-stage { min-width: 0; height: 470px; position: relative; background: #d9e6ef; overflow: hidden; }
+    .map-stage { position: relative; height: 250px; border-radius: 12px; overflow: hidden; background: #d6e3ee; box-shadow: inset 0 0 0 1px var(--rule); }
     .map-stage canvas { position: absolute; inset: 0; cursor: crosshair; }
     .map-marker {
       position: absolute; z-index: 1; transform: translate(-50%, -50%); background: transparent; border: 0;
-      width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+      width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
     }
     .map-marker::before { content: ""; width: 12px; height: 12px; border-radius: 50%; background: var(--control); box-shadow: 0 0 0 2px #fff; transition: transform 160ms ease-out; }
-    .map-marker:hover::before { transform: scale(1.25); }
+    .map-marker:hover::before { transform: scale(1.3); }
     .map-marker[aria-pressed="true"]::before { background: var(--warm); box-shadow: 0 0 0 2px #fff, 0 0 0 6px #a8402a40; }
-    .map-marker-label {
-      z-index: 2; pointer-events: none; position: absolute; transform: translate(14px, -50%);
-      color: var(--ink); font-size: 0.8rem; font-weight: 700; white-space: nowrap;
-      text-shadow: 0 1px 3px #fff, 0 -1px 3px #fff, 1px 0 3px #fff;
-    }
-    .map-marker-label.align-left { transform: translate(calc(-100% - 14px), -50%); }
-    .site-list { padding: 14px; border-left: 1px solid var(--rule); }
-    .site-list-title { margin: 2px 6px 8px; font-size: 0.86rem; color: var(--muted); font-weight: 500; }
+    .map-marker-label { display: none; }
+    .site-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 12px; }
+    .site-list-title { grid-column: 1 / -1; margin: 4px 0 0; font-size: 0.86rem; color: var(--muted); }
     .site-list button {
-      display: block; background: transparent; color: var(--ink); text-align: left; width: 100%; min-height: 52px; padding: 8px 10px;
-      margin: 0 0 4px; border: 1px solid transparent; border-radius: 8px; transition: background-color 160ms ease-out;
+      text-align: left; background: var(--sunken); color: var(--ink); border: 1px solid transparent; border-radius: 10px;
+      padding: 8px 10px; min-height: 50px; transition: background-color 160ms ease-out, border-color 160ms ease-out;
     }
-    .site-list button:hover { background: var(--ground); }
-    .site-list button[aria-pressed="true"] { border-color: #9fb6d8; background: var(--tint); }
-    .site-list strong { display: block; font-size: 0.95rem; }
-    .site-list small { color: var(--muted); font-size: 0.82rem; }
-    .point-form { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; padding: 14px 18px; border-top: 1px solid var(--rule); }
-    .point-form p { margin: 0; flex-basis: 100%; color: var(--muted); font-size: 0.92rem; }
-    .point-form label { display: grid; gap: 4px; font-size: 0.86rem; font-weight: 700; }
-    .point-form input { width: 9em; min-height: 40px; padding: 6px 10px; border: 1px solid #a9b9c7; border-radius: 8px; background: #fff; font-variant-numeric: tabular-nums; }
+    .site-list button:hover { border-color: #b4c6e0; }
+    .site-list button[aria-pressed="true"] { background: var(--tint); border-color: var(--control); }
+    .site-list strong { display: block; font-size: 0.9rem; line-height: 1.25; }
+    .site-list small { color: var(--muted); font-size: 0.8rem; }
+    .point-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rule); }
+    .point-form p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 0.86rem; }
+    .point-form label { display: grid; gap: 4px; font-size: 0.85rem; font-weight: 700; }
+    .point-form input { width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid #b0c0ce; border-radius: 10px; background: #fff; font-variant-numeric: tabular-nums; }
     .point-form input:hover { border-color: var(--control); }
+    .point-form button { grid-column: 1 / -1; }
+    .variable-options { display: grid; gap: 6px; }
+    .variable-options button {
+      text-align: left; background: var(--sunken); color: var(--ink); border: 1px solid transparent; border-radius: 10px;
+      padding: 9px 12px; min-height: 42px; font-weight: 500; transition: background-color 160ms ease-out, border-color 160ms ease-out;
+    }
+    .variable-options button:hover { border-color: #b4c6e0; }
+    .variable-options button[aria-pressed="true"] { background: var(--control); color: #fff; font-weight: 700; }
+    .compare-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+    .compare-row p { margin: 0; color: var(--muted); font-size: 0.86rem; flex: 1 1 160px; }
 
-    .region-status { margin-top: 18px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-    .region-status p { margin: 0; }
+    .main { display: grid; gap: 20px; min-width: 0; }
+    .region-status { padding: 48px 32px; text-align: center; }
+    .region-status p { margin: 0 auto; max-width: 46ch; font-size: 1.1rem; color: var(--muted); }
+    .region-status button { margin-top: 16px; }
     .region-status[data-loading] p::before {
-      content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 10px; vertical-align: -1px;
-      border-radius: 50%; border: 2px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
+      content: ""; display: block; width: 28px; height: 28px; margin: 0 auto 14px;
+      border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .story { padding: 18px 22px; background: #fff7e6; border-radius: 16px; box-shadow: var(--shadow-1); }
+    .story h3 { font-size: 1rem; margin-bottom: 4px; }
+    .story p { margin: 0; max-width: 78ch; }
 
-    /* Step 2: variables */
-    .variable-options { display: flex; flex-wrap: wrap; gap: 8px; }
-    .variable-options button {
-      background: var(--surface); color: var(--ink); border: 1px solid #b6c5d3; border-radius: 999px;
-      padding: 7px 14px; min-height: 40px; font-size: 0.92rem; transition: background-color 160ms ease-out, border-color 160ms ease-out;
-    }
-    .variable-options button:hover { border-color: var(--control); background: var(--tint); }
-    .variable-options button[aria-pressed="true"] { background: var(--control); color: #fff; border-color: var(--control); }
-    .variable-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 14px; }
-    .variable-actions p { margin: 0; color: var(--muted); font-size: 0.92rem; }
-
-    /* Step 3: result */
-    .report { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 0.4fr); margin-top: 20px; }
-    .figure { margin: 0; min-width: 0; padding: 24px 26px 18px; }
-    .figure h3 { margin: 0; font-size: clamp(1.3rem, 2.6vw, 1.7rem); }
-    .why { margin: 8px 0 0; max-width: 70ch; }
-    .description, .location { color: var(--muted); font-size: 0.9rem; margin: 6px 0 0; max-width: 72ch; }
-    .result-stripes { margin-top: 18px; border-radius: 6px; overflow: hidden; height: 46px; }
-    .result-stripes .stripes { height: 100%; }
-    .stripes-note { color: var(--muted); font-size: 0.86rem; margin: 6px 0 0; }
-    .chart-options { margin-top: 18px; }
-    .chart-stage { margin-top: 14px; position: relative; height: 320px; }
-    canvas { display: block; width: 100%; height: 100%; }
+    /* The answer */
+    .answer { padding: 30px 32px 28px; }
+    .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 0.95rem; font-weight: 800; border-radius: 999px; padding: 6px 14px 6px 10px; }
+    .verdict::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+    .verdict[data-state="rising"] { background: #f8e3dc; color: #7d2a18; }
+    .verdict[data-state="falling"] { background: #dbe8f6; color: #173f6b; }
+    .verdict[data-state="inconclusive"] { background: #e4e9ee; color: #39495a; }
+    .answer h2 { font-size: clamp(1.7rem, 3.4vw, 2.6rem); letter-spacing: -0.03em; margin-top: 14px; max-width: 24ch; }
+    .why { margin: 12px 0 0; font-size: 1.08rem; color: var(--muted); max-width: 64ch; }
+    .plain { margin: 18px 0 0; font-size: 1.05rem; max-width: 68ch; }
+    .plain + .plain { margin-top: 6px; }
+    .answer-stripes { margin-top: 24px; height: 56px; border-radius: 10px; overflow: hidden; }
+    .stripes-note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
+    .chart { margin: 0; }
+    .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 30px; }
+    .chart-head h3 { font-size: 1.05rem; }
+    .chart-stage { position: relative; height: 330px; margin-top: 14px; }
     .chart-tooltip {
-      position: absolute; z-index: 1; pointer-events: none; white-space: nowrap;
-      border-radius: 6px; background: var(--ink); color: #fff; padding: 7px 10px;
-      font-size: 0.84rem; font-variant-numeric: tabular-nums; box-shadow: 0 4px 14px #0f233833;
+      position: absolute; z-index: 1; pointer-events: none; white-space: nowrap; border-radius: 8px; background: var(--ink);
+      color: #fff; padding: 7px 10px; font-size: 0.85rem; font-variant-numeric: tabular-nums; box-shadow: 0 6px 18px rgb(15 35 56 / 0.25);
     }
-    .legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.86rem; margin-top: 8px; }
+    .chart-note { color: var(--muted); font-size: 0.88rem; margin: 8px 0 0; }
+    .legend { display: flex; flex-wrap: wrap; gap: 18px; color: var(--muted); font-size: 0.86rem; margin-top: 10px; }
     .legend-item { display: flex; align-items: center; gap: 8px; }
     .swatch { width: 24px; border-top: 2.5px solid var(--control); }
     .swatch.trend { border-top: 2.5px dashed var(--warm); }
-    .stats { border-left: 1px solid var(--rule); padding: 24px; background: #f5f8fb; }
-    .stats h3 { font-size: 1.15rem; margin: 0 0 12px; }
-    .verdict { display: inline-block; font-size: 1rem; font-weight: 800; border-radius: 999px; padding: 6px 14px; }
-    .verdict[data-state="rising"] { background: #f7e1da; color: #7d2a18; }
-    .verdict[data-state="falling"] { background: #dae7f5; color: #173f6b; }
-    .verdict[data-state="inconclusive"] { background: #e3e8ed; color: #39495a; }
-    .plain { font-size: 1.02rem; margin: 14px 0 0; }
-    .plain strong { font-weight: 800; }
-    .stats dl { margin: 16px 0 0; }
-    .stats dl div { border-top: 1px solid var(--rule); padding-block: 10px; display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-    .stats dt { color: var(--muted); font-size: 0.86rem; }
-    .stats dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 700; text-align: right; }
-    .stats .note { color: var(--muted); font-size: 0.86rem; margin: 10px 0 0; }
-    .glossary { margin-top: 14px; border-top: 1px solid var(--rule); padding-top: 10px; }
-    .glossary summary { cursor: pointer; font-weight: 700; color: var(--control); min-height: 32px; }
+    /* Row 1: the main trend test. Row 2: the Mann-Kendall second opinion. */
+    .numbers { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 26px 0 0; }
+    .numbers div { grid-column: span 2; }
+    .numbers div:nth-child(n + 4) { grid-column: span 3; }
+    .numbers div { background: var(--sunken); border-radius: 12px; padding: 12px 14px; }
+    .numbers dt { color: var(--muted); font-size: 0.84rem; }
+    .numbers dd { margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .note { color: var(--muted); font-size: 0.9rem; margin: 12px 0 0; }
+    .about { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr; gap: 18px 32px; }
+    .about p { margin: 0; color: var(--muted); font-size: 0.92rem; }
+    .glossary summary { cursor: pointer; font-weight: 700; color: var(--control); }
     .glossary summary:hover { text-decoration: underline; text-underline-offset: 0.2em; }
-    .glossary dl div { display: block; }
-    .glossary dt { color: var(--ink); font-weight: 700; font-size: 0.92rem; }
-    .glossary dd { font-weight: 400; text-align: left; color: var(--muted); font-size: 0.9rem; margin-top: 2px; }
+    .glossary dl { margin: 10px 0 0; }
+    .glossary dt { font-weight: 700; font-size: 0.92rem; margin-top: 10px; }
+    .glossary dd { margin: 2px 0 0; color: var(--muted); font-size: 0.9rem; }
 
-    .overview { margin-top: 28px; }
-    .overview h3, .correlations h3 { font-size: 1.2rem; margin: 0 0 6px; }
-    .table-wrap { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius); overflow: auto; }
+    .card h3.card-title { font-size: 1.2rem; letter-spacing: -0.015em; }
+    .description { color: var(--muted); font-size: 0.92rem; margin: 8px 0 0; max-width: 75ch; }
+    .table-wrap { margin-top: 14px; border-radius: 12px; overflow: auto; box-shadow: inset 0 0 0 1px var(--rule); }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 11px 14px; font-size: 0.92rem; border-bottom: 1px solid var(--rule); }
-    thead { background: #f5f8fb; }
+    thead { background: var(--sunken); }
     thead th { color: var(--muted); font-size: 0.84rem; font-weight: 700; }
     tbody tr:last-child > * { border-bottom: 0; }
     tbody tr[data-selected] { background: var(--tint); }
     td { font-variant-numeric: tabular-nums; }
-    .pick-variable { padding: 2px 0; border: 0; color: var(--control); background: transparent; font: inherit; font-weight: 700; text-align: left; }
+    .pick-variable { padding: 2px 0; border: 0; color: var(--control); background: transparent; font-weight: 700; text-align: left; }
     .pick-variable:hover { text-decoration: underline; text-underline-offset: 0.2em; }
-    .correlations { margin-top: 20px; padding: 24px 26px; }
-    .correlations .description { margin-bottom: 4px; }
-    .lag-control { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 700; margin-top: 16px; }
-    .lag-control input { accent-color: var(--control); width: min(260px, 60vw); }
+    .lag-control { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 700; margin-top: 18px; }
+    .lag-control input { accent-color: var(--control); width: min(280px, 60vw); }
     .lag-control output { font-variant-numeric: tabular-nums; min-width: 6em; }
-    .correlations .table-wrap { margin-top: 14px; }
     .matrix td { text-align: center; font-weight: 700; min-width: 72px; }
     .matrix tbody th { white-space: nowrap; }
 
-    .method { margin-block: 44px 56px; color: var(--muted); }
-    .method details { border-top: 1px solid var(--rule); padding-block: 14px; }
-    .method summary { width: fit-content; cursor: pointer; color: var(--ink); font-weight: 700; }
-    .method p { max-width: 75ch; }
-    .error { background: var(--surface); padding: 18px; border: 1px solid var(--rule); border-radius: var(--radius); margin-top: 20px; }
-    .sr-only { position: absolute; overflow: hidden; clip-path: inset(50%); width: 1px; height: 1px; white-space: nowrap; }
+    /* How it works */
+    .method-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+    .method-grid .card { padding: 24px; }
+    .method-grid h3 { font-size: 1.15rem; margin-bottom: 10px; }
+    .method-grid p { margin: 0 0 10px; color: var(--muted); }
+    .footer { margin-top: 80px; background: var(--night); color: #b9c9db; padding-block: 36px; font-size: 0.92rem; }
+    .footer p { margin: 0; max-width: 80ch; }
+    .footer a { color: #e2ebf5; }
+    .error { background: var(--surface); padding: 18px; border-radius: 16px; margin-top: 20px; box-shadow: var(--shadow-1); }
 
-    @media (max-width: 860px) {
-      .examples { grid-template-columns: 1fr; }
-      .report { grid-template-columns: 1fr; }
-      .stats { border-left: 0; border-top: 1px solid var(--rule); }
+    @media (max-width: 1000px) {
+      .workspace { grid-template-columns: 1fr; }
+      .sidebar { position: static; max-height: none; overflow: visible; grid-template-columns: 1fr 1fr; align-items: start; }
+      .examples, .method-grid { grid-template-columns: 1fr; }
     }
-    @media (max-width: 680px) {
+    @media (max-width: 700px) {
       .shell { width: calc(100% - 32px); }
-      .map-content { grid-template-columns: 1fr; }
-      .map-stage { height: 340px; }
-      .site-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 8px; border-left: 0; border-top: 1px solid var(--rule); }
-      .site-list-title { grid-column: 1 / -1; }
-      .site-list button { margin: 0; padding: 6px 8px; }
-      .map-marker-label { display: none; }
-      .figure { padding: 18px 16px; }
-      .stats { padding: 18px 16px; }
-      .chart-stage { height: 250px; }
-      .correlations { padding: 18px 16px; }
-      th, td { padding: 9px 10px; font-size: 0.86rem; }
+      .nav a:not(.keep) { display: none; }
+      .hero { min-height: auto; }
+      .hero::before { background: linear-gradient(0deg, rgb(11 26 43 / 0.96) 0%, rgb(11 26 43 / 0.88) 100%); }
       .hero-actions .button { flex: 1 1 100%; }
+      .section { padding-top: 52px; }
+      .sidebar { grid-template-columns: 1fr; }
+      .answer { padding: 22px 18px; }
+      .card-pad { padding: 16px; }
+      .about { grid-template-columns: 1fr; }
+      .numbers { grid-template-columns: 1fr 1fr; }
+      .numbers div, .numbers div:nth-child(n + 4) { grid-column: span 1; }
+      .numbers div:first-child { grid-column: 1 / -1; }
+      .chart-stage { height: 250px; }
+      th, td { padding: 9px 10px; font-size: 0.86rem; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before { animation: none !important; transition: none !important; }
@@ -248,163 +271,197 @@
 <body>
   <a class="skip" href="#explore">Skip to the explorer</a>
   <header class="hero">
-    <div class="shell">
-      <div class="topbar">
-        <span class="brand">Climate Trend Explorer</span>
-        <a href="americas-trends.csv" download>Download the data (CSV)</a>
-      </div>
-      <div class="hero-copy">
-        <h1>Is the climate where you live really changing?</h1>
-        <p class="hero-lead">Pick any place on land, choose something to measure, and test 45 years of NASA satellite and weather-model data for a real trend. No maths background needed: every result comes with a plain-English answer.</p>
-        <div class="hero-actions">
-          <a class="button primary" href="#examples">Try an example</a>
-          <a class="button secondary" href="#explore">Pick my own place</a>
-        </div>
+    <canvas class="hero-stripes" id="hero-stripes" role="img" aria-label="Climate stripes for Southern Ontario air temperature, 1981 to 2025, shifting from mostly blue years to mostly red years."></canvas>
+    <div class="shell topbar">
+      <a class="brand" href="#">Climate Trend Explorer</a>
+      <nav class="nav" aria-label="Sections">
+        <a href="#examples">Examples</a>
+        <a href="#explore">Explorer</a>
+        <a href="#how">How it works</a>
+        <a class="keep" href="americas-trends.csv" download>Download the data</a>
+      </nav>
+    </div>
+    <div class="shell hero-body">
+      <h1>Is the climate where you live really changing?</h1>
+      <p class="hero-lead">Pick any place on land, choose something to measure, and test 45 years of NASA satellite and weather-model data for a real trend. Every result comes with a plain-English answer, so no statistics background is needed.</p>
+      <div class="hero-actions">
+        <a class="button primary" href="#examples">Try an example</a>
+        <a class="button secondary" href="#explore">Pick my own place</a>
       </div>
     </div>
-    <div class="shell">
-      <canvas class="stripes" id="hero-stripes" role="img" aria-label="Climate stripes for Southern Ontario air temperature, 1981 to 2025, shifting from mostly blue years to mostly red years."></canvas>
-      <p class="hero-stripes-note">Southern Ontario air temperature, 1981 to 2025. Each stripe is one year: blue years were colder than average, red years warmer.</p>
+    <div class="shell hero-key">
+      <span class="scale"><span>Colder</span><span aria-hidden="true"></span><span>Warmer</span></span>
+      <span>Behind this page: air temperature in Southern Ontario, one stripe per year from 1981 to 2025.</span>
     </div>
   </header>
 
   <main>
-    <noscript><p class="shell error">Turn on JavaScript to explore the records. The CSV download works without it.</p></noscript>
+    <noscript><p class="shell error">Turn on JavaScript to explore the records. The data download works without it.</p></noscript>
     <p class="shell error" role="alert" id="data-error" hidden></p>
 
     <section class="shell section" id="examples" aria-labelledby="examples-title">
-      <h2 id="examples-title">Start with an example investigation</h2>
-      <p class="section-intro">Each example loads a real question, then tells you what to look for. Use them to learn how to read a result, then try your own place.</p>
+      <div class="section-head">
+        <h2 id="examples-title">Start with a real investigation</h2>
+        <p>Each one loads a question and tells you what to look for. Learn to read a result here, then test your own place.</p>
+      </div>
       <ul class="examples" id="example-list"></ul>
     </section>
 
-    <div id="explorer" hidden>
-      <section class="shell section" id="explore" aria-labelledby="map-title">
-        <h2 id="map-title">1. Pick a place</h2>
-        <p class="section-intro">Choose a study area, click anywhere on the map, or type a location. Each area covers about 150 km across, so local weather quirks average out.</p>
-        <div class="panel">
-          <div class="map-toolbar">
-            <p>Click the map to test that spot.</p>
-            <div id="continent-controls" class="segmented" role="group" aria-label="Map region"></div>
-          </div>
-          <div class="map-content">
+    <section class="shell section" id="explore" aria-labelledby="explore-title">
+      <div class="section-head">
+        <h2 id="explore-title">Explore any place</h2>
+        <p>Choose a place and a measurement. The answer updates as soon as the data arrives.</p>
+      </div>
+      <div class="workspace" id="explorer" hidden>
+        <aside class="sidebar" aria-label="Choose a place and a measurement">
+          <div class="card card-pad">
+            <div class="card-head">
+              <h3 class="step" id="map-title">1. Pick a place</h3>
+              <div id="continent-controls" class="segmented" role="group" aria-label="Map region"></div>
+            </div>
+            <p class="hint">Click anywhere on land. Each area covers about 150 km, so local quirks average out.</p>
             <div class="map-stage" id="map-stage">
               <canvas id="map" aria-hidden="true"></canvas>
               <div id="map-markers" role="group" aria-label="Study areas on map"></div>
             </div>
             <div id="site-list" class="site-list" role="group" aria-labelledby="site-list-title"></div>
+            <form class="point-form" id="point-form">
+              <p>Or type any point on Earth. South and west are negative.</p>
+              <label>Latitude <input name="latitude" type="number" inputmode="decimal" autocomplete="off" min="-90" max="90" step="any" placeholder="43.7" required></label>
+              <label>Longitude <input name="longitude" type="number" inputmode="decimal" autocomplete="off" min="-180" max="180" step="any" placeholder="-79.4" required></label>
+              <button type="submit" class="button secondary small">Test this point</button>
+            </form>
           </div>
-          <form class="point-form" id="point-form">
-            <p>Or type any point on Earth. Use negative numbers for south and west.</p>
-            <label>Latitude <input name="latitude" type="number" inputmode="decimal" autocomplete="off" min="-90" max="90" step="any" placeholder="43.7" required></label>
-            <label>Longitude <input name="longitude" type="number" inputmode="decimal" autocomplete="off" min="-180" max="180" step="any" placeholder="-79.4" required></label>
-            <button type="submit" class="button secondary small">Test this point</button>
-          </form>
-        </div>
-        <div id="region-status" class="region-status" hidden aria-live="polite">
-          <p id="region-message"></p>
-          <button type="button" class="button secondary small" id="retry-region" hidden>Try again</button>
-        </div>
-        <div class="story" id="story" hidden aria-live="polite">
-          <h3 id="story-title"></h3>
-          <p id="story-text"></p>
-        </div>
-      </section>
-
-      <div id="region-results" hidden>
-        <section class="shell section" aria-labelledby="variables-title">
-          <h2 id="variables-title">2. Choose what to measure</h2>
-          <div class="variable-actions">
-            <p id="variable-hint">Choose a measurement to see its trend.</p>
-            <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false">Compare measurements</button>
+          <div class="card card-pad">
+            <h3 class="step" id="variables-title">2. Choose a measurement</h3>
+            <p class="hint" id="variable-hint">Choose one measurement to see its trend.</p>
+            <div id="variable-options" class="variable-options" role="group" aria-label="Measurements"></div>
+            <div class="compare-row">
+              <p>Want to see how two measurements move together?</p>
+              <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false">Compare</button>
+            </div>
           </div>
-          <div id="variable-options" class="variable-options" role="group" aria-label="Measurements"></div>
-        </section>
+        </aside>
 
-        <section class="shell section" aria-labelledby="result-title">
-          <h2 id="result-title">3. Read the result</h2>
-          <div class="panel report" id="single-report">
-            <figure class="figure" aria-labelledby="chart-title">
-              <h3 id="chart-title"></h3>
-              <p class="why" id="variable-why"></p>
-              <p class="description" id="variable-description"></p>
-              <p class="location" id="site-description"></p>
-              <div class="result-stripes"><canvas class="stripes" id="result-stripes" aria-hidden="true"></canvas></div>
-              <p class="stripes-note" id="stripes-note"></p>
-              <div class="chart-options segmented" id="chart-options" role="group" aria-label="Chart view"></div>
-              <p class="description" id="chart-note" hidden></p>
-              <div class="chart-stage" id="chart-stage">
-                <canvas id="chart" tabindex="0" role="img" aria-labelledby="chart-title" aria-describedby="chart-instructions chart-selection"></canvas>
-                <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
-              </div>
-              <p class="sr-only" id="chart-instructions">Use the left and right arrow keys to read values.</p>
-              <p class="sr-only" id="chart-selection" aria-live="polite"></p>
-              <figcaption class="legend">
-                <span class="legend-item"><span class="swatch" aria-hidden="true"></span><span id="legend-value">Annual value</span></span>
-                <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
-              </figcaption>
-            </figure>
-            <aside class="stats" aria-labelledby="stats-title" aria-live="polite">
-              <h3 id="stats-title">Is it really changing?</h3>
+        <div class="main">
+          <div id="region-status" class="card region-status" hidden aria-live="polite">
+            <p id="region-message"></p>
+            <button type="button" class="button secondary small" id="retry-region" hidden>Try again</button>
+          </div>
+          <div class="story" id="story" hidden aria-live="polite">
+            <h3 id="story-title"></h3>
+            <p id="story-text"></p>
+          </div>
+
+          <div id="region-results" class="main" hidden>
+            <article class="card answer" id="single-report" aria-labelledby="result-headline">
               <span class="verdict" id="trend-verdict"></span>
-              <p class="plain" id="trend-meaning"></p>
-              <p class="plain" id="trend-chance"></p>
-              <dl>
+              <h2 id="result-headline"></h2>
+              <p class="why" id="variable-why"></p>
+              <div aria-live="polite">
+                <p class="plain" id="trend-meaning"></p>
+                <p class="plain" id="trend-chance"></p>
+              </div>
+              <div class="answer-stripes"><canvas id="result-stripes" aria-hidden="true"></canvas></div>
+              <p class="stripes-note" id="stripes-note"></p>
+
+              <figure class="chart" aria-labelledby="chart-title">
+                <div class="chart-head">
+                  <h3 id="chart-title"></h3>
+                  <div class="segmented" id="chart-options" role="group" aria-label="Chart view"></div>
+                </div>
+                <p class="chart-note" id="chart-note" hidden></p>
+                <div class="chart-stage" id="chart-stage">
+                  <canvas id="chart" tabindex="0" role="img" aria-labelledby="chart-title" aria-describedby="chart-instructions chart-selection"></canvas>
+                  <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
+                </div>
+                <p class="sr-only" id="chart-instructions">Use the left and right arrow keys to read values.</p>
+                <p class="sr-only" id="chart-selection" aria-live="polite"></p>
+                <figcaption class="legend">
+                  <span class="legend-item"><span class="swatch" aria-hidden="true"></span><span id="legend-value">Annual value</span></span>
+                  <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
+                </figcaption>
+              </figure>
+
+              <dl class="numbers">
                 <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
                 <div><dt>Likely range (95%)</dt><dd id="trend-ci"></dd></div>
                 <div><dt>p-value</dt><dd id="trend-p"></dd></div>
-                <div><dt>Theil-Sen change per decade</dt><dd id="trend-sen"></dd></div>
+                <div><dt>Theil-Sen per decade</dt><dd id="trend-sen"></dd></div>
                 <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
               </dl>
               <p class="note" id="trend-agree"></p>
-              <details class="glossary">
-                <summary>What do these numbers mean?</summary>
-                <dl>
-                  <div><dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd></div>
-                  <div><dt>Likely range (95%)</dt><dd>The real rate of change probably sits somewhere in this range. If the range crosses zero, the data can’t tell rising from falling.</dd></div>
-                  <div><dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. Scientists usually call a trend significant when it is 0.05 (1 in 20) or smaller.</dd></div>
-                  <div><dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it. When both tests agree, you can trust the result more.</dd></div>
-                  <div><dt>Why the p-values are adjusted</dt><dd>Testing 8 measurements at once raises the odds that one looks significant by luck. The tool raises the bar to make up for that (the Holm method).</dd></div>
-                </dl>
-              </details>
-            </aside>
-          </div>
 
-          <div class="panel correlations" id="correlations" hidden>
-            <h3 id="correlations-title">How the measurements move together</h3>
-            <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. The tool removes the seasons and the long-term trend first, so you only see month-to-month surprises.</p>
-            <p class="description">A link is not proof that one causes the other.</p>
-            <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
-            <p class="description" id="lag-note"></p>
-            <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
-          </div>
+              <div class="about">
+                <div>
+                  <p id="variable-description"></p>
+                  <p class="description" id="site-description"></p>
+                </div>
+                <details class="glossary">
+                  <summary>What do these numbers mean?</summary>
+                  <dl>
+                    <dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd>
+                    <dt>Likely range (95%)</dt><dd>The real rate of change probably sits in this range. If it crosses zero, the data can’t tell rising from falling.</dd>
+                    <dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. Scientists usually call 0.05 (1 in 20) or smaller significant.</dd>
+                    <dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it.</dd>
+                    <dt>Why p-values are adjusted</dt><dd>Testing 8 measurements at once raises the odds that one looks significant by luck, so the tool raises the bar (the Holm method).</dd>
+                  </dl>
+                </details>
+              </div>
+            </article>
 
-          <div class="overview">
-            <h3 id="overview-title"></h3>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th scope="col">Measurement</th><th scope="col">Change per decade</th><th scope="col">Result</th></tr></thead>
-                <tbody id="overview-rows"></tbody>
-              </table>
-            </div>
+            <section class="card card-pad" id="correlations" aria-labelledby="correlations-title" hidden>
+              <h3 class="card-title" id="correlations-title">How the measurements move together</h3>
+              <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, so you only see month-to-month surprises. A link is not proof that one causes the other.</p>
+              <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
+              <p class="description" id="lag-note"></p>
+              <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
+            </section>
+
+            <section class="card card-pad" aria-labelledby="overview-title">
+              <h3 class="card-title" id="overview-title"></h3>
+              <p class="description">Choose a name to open its result.</p>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th scope="col">Measurement</th><th scope="col">Change per decade</th><th scope="col">Result</th></tr></thead>
+                  <tbody id="overview-rows"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
-        </section>
+        </div>
       </div>
+    </section>
 
-      <section class="shell method" aria-label="Data and methods">
-        <details>
-          <summary>Where the data comes from</summary>
-          <p>Every number comes from NASA POWER, which serves MERRA-2: NASA’s reanalysis, a weather model that is continuously corrected with satellite and ground observations. The tool asks for the 9 grid cells around your chosen point (each about 50 km across) and averages them, giving more weight to cells that cover more area.</p>
-          <p>Reanalysis rainfall can shift when the satellites feeding the model change, so treat rainfall trends with extra care.</p>
-        </details>
-        <details>
-          <summary>How the math works</summary>
-          <p>The tool fits a straight line through the yearly averages from 1981 to 2025. Its 95% range and p-value allow for the way one year’s weather leans on the next (Newey–West errors). The Mann-Kendall test and Theil-Sen slope give a second opinion built on ranks and medians. Because 8 measurements are tested at once, both sets of p-values are adjusted with the Holm method, and a trend is called rising or falling only when its adjusted p-value is 0.05 or below.</p>
-          <p>Monthly anomalies show how far each month was from the 1991–2020 average for the same calendar month, which removes the seasons.</p>
-          <p><a id="data-source">NASA POWER documentation</a>, <a id="method-source">trend uncertainty method</a>, <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth map data</a></p>
-        </details>
-      </section>
-    </div>
+    <section class="shell section" id="how" aria-labelledby="how-title">
+      <div class="section-head">
+        <h2 id="how-title">How it works</h2>
+        <p>The same steps a climate scientist takes, done for you in a few seconds.</p>
+      </div>
+      <div class="method-grid">
+        <div class="card">
+          <h3>The data</h3>
+          <p>Every number comes from NASA POWER, which serves MERRA-2: a weather model continuously corrected with satellite and ground observations, from 1981 to today.</p>
+          <p>The tool averages the 9 grid cells around your point, each about 50 km across.</p>
+        </div>
+        <div class="card">
+          <h3>The trend test</h3>
+          <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next.</p>
+          <p>The Mann-Kendall test checks the answer a second way. With 8 measurements tested at once, both are adjusted with the Holm method.</p>
+        </div>
+        <div class="card">
+          <h3>Honest limits</h3>
+          <p>A trend can be real and still not reach significance yet; a longer record often settles it. Rainfall from weather models can shift when the satellites feeding them change.</p>
+          <p><a id="data-source">NASA POWER documentation</a> and the <a id="method-source">trend uncertainty method</a>.</p>
+        </div>
+      </div>
+    </section>
   </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <p>Built for the NASA Space Apps Challenge. Data from NASA POWER (MERRA-2). Map outlines from <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>.</p>
+    </div>
+  </footer>
 </body>
 </html>

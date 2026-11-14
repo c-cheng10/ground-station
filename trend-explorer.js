@@ -69,6 +69,9 @@
   const examples = [
     {
       title: "Is Southern Ontario getting warmer?",
+      where: "Southern Ontario, Canada. Air temperature.",
+      csvColumn: 5,
+      previewId: "T2M",
       blurb: "The classic first investigation: one place, one measurement, 45 years.",
       look: "Watch the stripes drift from blue to red, then read the verdict. The trend line climbs, and both statistical tests agree it is not luck.",
       site: () => data.sites.find(({ id }) => id === "southern-ontario"),
@@ -76,6 +79,10 @@
     },
     {
       title: "Is the Sahel in West Africa getting wetter?",
+      where: "Near Niamey, Niger. Precipitation.",
+      previewId: "PRECTOTCORR",
+      // Annual NASA POWER means for the same 3×3 patch the explorer loads, 1981–2025.
+      values: [1.186, 1.159, 1.205, 0.915, 1.129, 1.22, 0.88, 1.337, 1.32, 1.061, 1.275, 1.189, 1.06, 1.401, 1.312, 1.205, 1.194, 1.603, 1.588, 1.087, 1.141, 1.048, 1.366, 0.951, 1.369, 1.078, 1.338, 1.234, 1.247, 1.397, 1.076, 1.567, 1.456, 1.219, 1.495, 1.359, 1.264, 1.261, 1.209, 1.878, 1.24, 1.473, 1.166, 1.96, 1.336],
       blurb: "After severe droughts in the 1970s and 80s, rain partly came back. Is that a real trend?",
       look: "Look at the precipitation stripes and the verdict. Then open the table below the chart: soil wetness and humidity tell the same story, which makes the finding stronger.",
       site: () => pointSite(14, 2),
@@ -83,6 +90,9 @@
     },
     {
       title: "Does rain soak into the soil months later?",
+      where: "Southern Ontario, Canada. Precipitation and soil wetness.",
+      csvColumn: 7,
+      previewId: "PRECTOTCORR",
       blurb: "Compare two measurements and look for a time delay between them.",
       look: "This compares precipitation with root-zone soil wetness. Drag the time delay to 2 months: the link gets stronger, because rain takes time to sink down to plant roots.",
       site: () => data.sites.find(({ id }) => id === "southern-ontario"),
@@ -90,7 +100,8 @@
     },
   ];
   let story = null;
-  let heroValues = null;
+  // Canvases that show static stripes, redrawn whenever they resize.
+  const liveStripes = new Map();
 
   const years = Array.from({ length: data.endYear - data.startYear + 1 }, (_, index) => data.startYear + index);
   const variableIds = data.variables.map(({ id }) => id);
@@ -463,7 +474,6 @@
     if (!analysis) return;
     activeIndex = null;
     byId("chart-selection").textContent = "";
-    byId("variables-title").textContent = `2. Choose what to measure in ${site.name}`;
     byId("story").hidden = story?.siteId !== site.id;
     const variables = data.variables.filter((variable) => selectedIds.has(variable.id));
     for (const [id, button] of optionButtons) button.setAttribute("aria-pressed", String(selectedIds.has(id)));
@@ -478,7 +488,10 @@
       const variable = variables[0];
       const trend = analysis.series[variable.id].trend;
       const unit = trendUnit(variable);
-      byId("chart-title").textContent = `${variable.name} (${variable.unit})`;
+      byId("chart-title").textContent = `${variable.name} over time (${variable.unit})`;
+      byId("result-headline").textContent = `${variable.name} ${data.sites.includes(site) ? "in" : "at"} ${site.name} ${{
+        rising: "is rising", falling: "is falling", inconclusive: "shows no clear trend yet",
+      }[trend.verdict]}`;
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
       byId("variable-description").textContent = variable.description;
       const scale = stripeScales[variable.id] || stripeScales.T2M;
@@ -697,6 +710,13 @@
   });
   setSource("data-source", data.sourceUrl);
   setSource("method-source", data.methodUrl);
+  const observer = new ResizeObserver((entries) => {
+    for (const { target } of entries) {
+      if (target === byId("map-stage")) drawMap();
+      else if (target === byId("chart-stage")) drawChart();
+      else if (liveStripes.has(target)) drawStripes(target, ...liveStripes.get(target));
+    }
+  });
   explorer.hidden = false;
   renderSiteList();
   renderMap();
@@ -717,16 +737,31 @@
       if (site?.id === target.id && analysis) renderDetails();
       else selectSite(target);
     });
-    item.append(create("h3", example.title), create("p", example.blurb), button);
+    const preview = create("canvas");
+    preview.setAttribute("aria-hidden", "true");
+    example.canvas = preview;
+    const body = create("div", "", "example-body");
+    body.append(create("h3", example.title), create("p", example.where, "where"), create("p", example.blurb), button);
+    item.append(preview, body);
     byId("example-list").append(item);
   }
 
-  // The hero stripes come from the bundled CSV so the page shows real data before any NASA request.
+  function showStripes(canvas, values, id) {
+    liveStripes.set(canvas, [values, id]);
+    drawStripes(canvas, values, id);
+    observer.observe(canvas);
+  }
+
+  // The hero and example stripes come from the bundled CSV, so the page shows real data before any NASA request.
   fetch("americas-trends.csv").then((response) => response.text()).then((text) => {
-    const rows = text.trim().split("\n").slice(1).map((line) => line.split(","));
-    const values = rows.filter(([name]) => name === "Southern Ontario").map((row) => Number(row[5]));
+    const rows = text.trim().split("\n").slice(1).map((line) => line.split(",")).filter(([name]) => name === "Southern Ontario");
+    for (const example of examples) {
+      const values = example.values || rows.map((row) => Number(row[example.csvColumn]));
+      if (values.length) showStripes(example.canvas, values, example.previewId);
+    }
+    const values = rows.map((row) => Number(row[5]));
     if (!values.length) return;
-    heroValues = values;
+    liveStripes.set(byId("hero-stripes"), [values, "T2M"]);
     // The page's one load moment: years appear left to right, easing out.
     const start = performance.now();
     const duration = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1400;
@@ -750,11 +785,6 @@
     selectSite(pointSite(latitude.valueAsNumber, longitude.valueAsNumber));
   });
 
-  const observer = new ResizeObserver((entries) => {
-    if (entries.some(({ target }) => target === byId("map-stage"))) drawMap();
-    if (entries.some(({ target }) => target === byId("chart-stage"))) drawChart();
-    if (heroValues && entries.some(({ target }) => target === byId("hero-stripes"))) drawStripes(byId("hero-stripes"), heroValues, "T2M");
-  });
   observer.observe(byId("hero-stripes"));
   observer.observe(byId("map-stage"));
   observer.observe(byId("chart-stage"));
