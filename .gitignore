@@ -1,3 +1,4 @@
 # Secrets: Earthdata token and Supabase service key stay on your machine.
 .env
 __pycache__/
+giovanni-cache/
