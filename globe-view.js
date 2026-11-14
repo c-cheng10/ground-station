@@ -7,6 +7,9 @@
   const radiusScale = 0.398;
   const columns = 288;
   const rows = 144;
+  const ocean = [55, 86, 105];
+  const ground = [44, 52, 61];
+  const rimColour = [8, 15, 20];
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const point = (lon, lat) => [Math.cos(lat) * Math.cos(lon), Math.sin(lat), Math.cos(lat) * Math.sin(lon)];
 
@@ -60,7 +63,7 @@
     }
   `;
 
-  const fragmentShader = `
+  const fragmentShader = (palette) => `
     precision highp float;
     uniform vec3 uRight, uNorth, uFront;
     uniform float uDistance, uRelief;
@@ -69,6 +72,12 @@
     uniform sampler2D uSurface, uHeat, uSelection, uHeight;
     varying vec2 vUv;
     varying vec3 vPoint;
+    vec3 bandColour(float value) {
+      ${palette.slice(0, -1).map((colour, index) =>
+        `if (value < ${((index + 1) / palette.length).toFixed(8)}) return vec3(${colour}) / 255.0;`
+      ).join("\n      ")}
+      return vec3(${palette.at(-1)}) / 255.0;
+    }
     float peak(vec2 uv) {
       return texture2D(uHeight, uv).r * texture2D(uSelection, uv).r;
     }
@@ -83,18 +92,18 @@
       float land = smoothstep(0.48, 0.62, surface.r);
       float selected = uFocused ? texture2D(uSelection, vUv).r : 1.0;
       if (uBorders) {
-        float heat = uHeatVisible ? texture2D(uHeat, vUv).a : 0.0;
+        float heat = uHeatVisible ? texture2D(uHeat, vUv).g : 0.0;
         vec3 ink = mix(vec3(0.61, 0.77, 0.80), vec3(0.04, 0.08, 0.11), smoothstep(0.20, 0.66, heat));
         float contrast = mix(0.14, 0.54, smoothstep(0.02, 0.94, selected));
         gl_FragColor = vec4(ink, contrast * smoothstep(0.0, 0.09, facing));
         return;
       }
-      vec3 color = mix(vec3(0.035, 0.046, 0.064), vec3(0.085, 0.102, 0.121), land);
+      vec3 color = mix(vec3(${ocean}), vec3(${ground}), land) / 255.0;
       color *= 0.70 + 0.49 * lambert;
       if (uHeatVisible && land > 0.0) {
-        vec4 heat = texture2D(uHeat, vUv);
+        vec2 heat = texture2D(uHeat, vUv).rg;
         float grade = 0.86 + 0.14 * lambert;
-        if (uRelief > 0.0 && selected > 0.01 && heat.a > 0.005) {
+        if (uRelief > 0.0 && selected > 0.01 && heat.g > 0.005) {
           vec2 dx = vec2(uTexel.x, 0.0);
           vec2 dy = vec2(0.0, uTexel.y);
           float longitude = (vUv.x - 0.5) * 6.2831853;
@@ -107,21 +116,22 @@
           vec3 worldLight = uRight * light.x + uNorth * light.y + uFront * light.z;
           grade = 0.61 + 0.49 * max(0.0, dot(normal, worldLight));
         }
-        color = mix(color, heat.rgb * grade, heat.a * land);
+        float value = heat.r / max(heat.g, 1.0 / 255.0);
+        color = mix(color, bandColour(value) * grade, heat.g * land);
       }
       color *= mix(0.34, 1.0, smoothstep(0.02, 0.94, selected));
       float edge = pow(1.0 - facing, 5.0);
-      color += vec3(0.047, 0.084, 0.111) * edge * mix(0.40, 1.0, selected);
+      color += (vec3(${rimColour}) / 255.0) * edge * mix(0.40, 1.0, selected);
       gl_FragColor = vec4(color, 1.0);
     }
   `;
 
-  function shaderProgram(gl) {
+  function shaderProgram(gl, palette) {
     const heightSupported = gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) >= 3;
     const precision = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT).precision ? "highp" : "mediump";
     const program = gl.createProgram();
     const vertex = heightSupported ? vertexShader : vertexShader.replace("uRelief > 0.0", "false");
-    for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragmentShader]]) {
+    for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragmentShader(palette)]]) {
       const shader = gl.createShader(type);
       gl.shaderSource(shader, source.replace("precision highp float", `precision ${precision} float`));
       gl.compileShader(shader);
@@ -203,10 +213,10 @@
     return { buffer: vertexBuffer(gl, vertices), count: indices.length };
   }
 
-  function webglRenderer(canvas, gl, borders) {
+  function webglRenderer(canvas, gl, borders, palette) {
     let program;
     try {
-      program = shaderProgram(gl);
+      program = shaderProgram(gl, palette);
     } catch (error) {
       console.warn("Globe shader unavailable:", error);
       return null;
@@ -299,14 +309,12 @@
 
 
   // shortcut: the Canvas fallback keeps the optical framing and data palette; vertex relief needs WebGL.
-  function softwareRenderer(canvas, borders) {
+  function softwareRenderer(canvas, borders, palette) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     const raster = document.createElement("canvas");
     const rasterContext = raster.getContext("2d");
     const textures = new WeakMap();
-    const ocean = [9, 12, 16];
-    const ground = [22, 26, 31];
     function pixels(source) {
       if (!source) return null;
       if (source.data) return source;
@@ -357,13 +365,17 @@
           const weight = selectionTexture ? 0.34 + 0.66 * selectionTexture.data[textureIndex(selectionTexture, u, v)] / 255 : 1;
           const light = 0.70 + 0.49 * Math.max(0, -0.48 * localX + 0.48 * localY + 0.73 * z);
           const heatI = heatTexture && land > 0.5 ? textureIndex(heatTexture, u, v) : 0;
-          const blend = heatTexture && land > 0.5 ? land * heatTexture.data[heatI + 3] / 255 : 0;
+          const coverage = heatTexture && land > 0.5 ? heatTexture.data[heatI + 1] : 0;
+          const value = coverage ? heatTexture.data[heatI] / coverage : 0;
+          const band = Math.min(palette.length - 1, Math.floor(value * palette.length));
+          const heatColour = palette[band];
+          const blend = land * coverage / 255;
           const facing = Math.max(0, (distance * z - 1) / (Math.sqrt(1 + px * px + py * py) * t));
           const rim = Math.max(0, 1 - facing) ** 5;
           for (let channel = 0; channel < 3; channel += 1) {
             const base = (ocean[channel] + (ground[channel] - ocean[channel]) * land) * light;
-            image.data[at + channel] = (base * (1 - blend) + (heatTexture?.data[heatI + channel] ?? 0) * blend) * weight +
-              (12 + 8 * channel) * rim * weight;
+            image.data[at + channel] = (base * (1 - blend) + heatColour[channel] * blend) * weight +
+              rimColour[channel] * rim * weight;
           }
           image.data[at + 3] = 255;
         }
@@ -387,7 +399,7 @@
         if (a[2] < horizon && b[2] < horizon) continue;
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
-        const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 3] > 120;
+        const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
         const dim = selectionTexture && selectionTexture.data[textureIndex(selectionTexture, u, v)] < 128;
         const path = paths[(dim ? 2 : 0) + (dark ? 1 : 0)];
         path.moveTo(...project(visible(a, b)));
@@ -409,10 +421,10 @@
     return discriminant < 0 ? null : (distance - Math.sqrt(discriminant)) / a;
   }
 
-  window.createGlobeView = (canvas, countries = []) => {
+  window.createGlobeView = (canvas, countries, palette) => {
     const borders = borderSegments(countries);
     const gl = canvas.getContext("webgl", { alpha: true, antialias: true, depth: true, preserveDrawingBuffer: true });
-    const draw = gl ? webglRenderer(canvas, gl, borders) : softwareRenderer(canvas, borders);
+    const draw = gl ? webglRenderer(canvas, gl, borders, palette) : softwareRenderer(canvas, borders, palette);
     if (!draw) return null;
     let frame;
 

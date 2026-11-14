@@ -602,8 +602,6 @@
     if (!entry) return;
     const unit = `${trendUnit(variable)} per decade`;
     byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
-    const { low, mid, high } = heatPalette;
-    byId("trend-ramp").style.background = `linear-gradient(90deg, rgb(${low}), rgb(${mid}), rgb(${high}))`;
     byId("trend-ramp").parentElement.hidden = !heatVisible;
     const note = byId("heatmap-note");
     if (note) note.textContent = heatVisible ? "Fainter colour marks weaker evidence or the edge of coverage." : "Heatmap off. You can still select grid points.";
@@ -1203,14 +1201,20 @@
   const cameraCoordinates = byId("camera-coordinates");
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const countries = window.WORLD_MAP.countries;
+  const heatPalette = [
+    [45, 112, 174], [48, 144, 184], [60, 171, 179], [91, 182, 151], [131, 185, 111],
+    [176, 194, 98], [215, 190, 85], [230, 157, 76], [213, 101, 66],
+  ];
+  const bandStops = heatPalette.map((colour, i) =>
+    `rgb(${colour}) ${100 * i / heatPalette.length}% ${100 * (i + 1) / heatPalette.length}%`);
+  byId("trend-ramp").style.background = `linear-gradient(90deg, ${bandStops.join(", ")})`;
   const fields = window.createGlobeFields({ countries, points });
-  const globe = window.createGlobeView(world, countries);
+  const globe = window.createGlobeView(world, countries, heatPalette);
   if (!globe) {
     byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
     byId("data-error").hidden = false;
     return;
   }
-  const heatPalette = { low: [72, 196, 194], mid: [48, 81, 185], high: [173, 145, 232] };
   const home = { lat: 17, lon: -18, zoom: 1 };
   const mapView = { ...home, offsetX: 0, offsetY: 0 };
   let heatVisible = true;
@@ -1322,7 +1326,7 @@
     const variableId = lensProgress < 0.42 && displayedVariable ? displayedVariable : trendMapVariable().id;
     if (lensProgress >= 0.42) displayedVariable = variableId;
     const texture = heatVisible && trendMap[variableId]
-      ? fields.measurement(trendMap[variableId], heatPalette) : {};
+      ? fields.measurement(trendMap[variableId]) : {};
     globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, selection: fields.select(drawingArea ? null : site),

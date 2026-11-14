@@ -57,7 +57,7 @@
     }
   }
 
-  function makeMeasurement(entry, palette, points, land) {
+  function makeMeasurement(entry, points, land) {
     const range = 3.6;
     const falloff = range ** 2 / (2 * 1.65 ** 2);
     const weights = new Float32Array(size);
@@ -82,25 +82,25 @@
 
     const heat = texture();
     const heights = texture();
-    const colour = heat.createImageData(width, height);
+    const values = heat.createImageData(width, height);
     const relief = heights.createImageData(width, height);
     const scale = entry.scale > 0 ? entry.scale : 1;
     for (let pixel = 0; pixel < size; pixel += 1) {
       const i = pixel * 4;
+      values.data[i + 3] = 255;
       relief.data[i + 3] = 255;
       if (!weights[pixel]) continue;
       const trend = slopes[pixel] / weights[pixel] / scale;
       const magnitude = clamp01(Math.abs(trend));
       const coverage = 1 - smooth(clamp01((distances[pixel] - 0.34) / 0.66));
       const edge = land[i + 3] / 255;
-      const end = trend < 0 ? palette.low : palette.high;
-      for (let channel = 0; channel < 3; channel += 1) {
-        colour.data[i + channel] = palette.mid[channel] + (end[channel] - palette.mid[channel]) * magnitude;
-      }
-      colour.data[i + 3] = 255 * coverage * edge * (0.68 + 0.32 * confidences[pixel] / weights[pixel]);
+      const opacity = coverage * edge * (0.68 + 0.32 * confidences[pixel] / weights[pixel]);
+      // Weight the trend by opacity so texture filtering beside a gap preserves the rate of change.
+      values.data[i] = 255 * opacity * clamp01((trend + 1) / 2);
+      values.data[i + 1] = 255 * opacity;
       relief.data[i] = 255 * coverage * edge * magnitude;
     }
-    heat.putImageData(colour, 0, 0);
+    heat.putImageData(values, 0, 0);
     heights.putImageData(relief, 0, 0);
     return { heat: heat.canvas, heightMap: heights.canvas };
   }
@@ -185,17 +185,16 @@
     let selection;
     return {
       surface,
-      measurement(entry, palette) {
+      measurement(entry) {
         if (!entry) return { heat: null, heightMap: null };
-        const key = [palette.low, palette.mid, palette.high].join();
         const cached = measurements.get(entry);
-        if (cached?.key === key) {
+        if (cached) {
           measurements.delete(entry);
           measurements.set(entry, cached);
-          return cached.field;
+          return cached;
         }
-        const field = makeMeasurement(entry, palette, points, land);
-        measurements.set(entry, { key, field });
+        const field = makeMeasurement(entry, points, land);
+        measurements.set(entry, field);
         if (measurements.size > 3) measurements.delete(measurements.keys().next().value);
         return field;
       },

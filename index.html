@@ -90,7 +90,7 @@
     .stage {
       position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab;
       background:
-        radial-gradient(ellipse at 50% 45%, rgb(24 41 51 / 0.58), transparent 69%),
+        radial-gradient(ellipse at 50% 47%, rgb(71 116 150 / 0.36), rgb(41 66 85 / 0.32) 43%, transparent 74%),
         radial-gradient(circle at 73% 73%, #748694 0.5px, transparent 1.4px),
         radial-gradient(circle at 83% 31%, #52606b 0.5px, transparent 1.4px),
         radial-gradient(circle at 20% 21%, #697983 0.5px, transparent 1.4px),
@@ -694,7 +694,7 @@
       <div>
         <h3>The trend test</h3>
         <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next. The Mann-Kendall test checks the answer a second way, and both are adjusted for testing 9 measurements at once (the Holm method).</p>
-        <p>The heatmap blends trends between nearby sampled points on land. The globe uses the Mann-Kendall test with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method). When you select an area, taller peaks show larger changes in either direction, and colour shows whether the measurement rose or fell.</p>
+        <p>The heatmap estimates trends between nearby sampled points on land and groups them into nine bands of equal width. The globe uses the Mann-Kendall test with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method). When you select an area, taller peaks show larger changes in either direction, and colour shows whether the measurement rose or fell.</p>
       </div>
       <div>
         <h3>The forecast</h3>
