@@ -48,6 +48,50 @@
     WS10M: "Annual near-surface winds were weaker toward the end of the record.",
   };
 
+  const whyItMatters = {
+    T2M: "The temperature you feel outdoors. It’s the most direct sign of warming or cooling.",
+    TS: "How warm the ground or water surface gets. It shapes heat waves, frost and snowmelt.",
+    PRECTOTCORR: "Rain plus melted snow. A shift here can mean more floods or more droughts.",
+    QV2M: "The actual amount of water vapour in the air. Warmer air can hold more, so it often rises as places warm.",
+    RH2M: "How close the air is to being full of water vapour. It affects comfort, fog and plant stress.",
+    GWETROOT: "The water plant roots can reach. Falling values can warn of drought for farms and forests.",
+    EVLAND: "Water leaving the land as vapour from soil and leaves. It links rain, heat and plant growth.",
+    WS10M: "Average wind near the ground. It matters for wind energy, dust and how weather moves.",
+  };
+  // Low and high colours for climate stripes: temperature runs blue to red, water runs brown to blue-green.
+  const heat = { low: [33, 102, 172], high: [178, 24, 43], note: "Blue years were colder than average, red years warmer." };
+  const water = { low: [140, 81, 10], high: [1, 102, 94], note: "Brown years were drier than average, teal years wetter." };
+  const stripeScales = {
+    T2M: heat, TS: heat,
+    PRECTOTCORR: water, QV2M: water, RH2M: water, GWETROOT: water, EVLAND: water,
+    WS10M: { low: [33, 102, 172], high: [84, 39, 143], note: "Blue years were calmer than average, purple years windier." },
+  };
+  const examples = [
+    {
+      title: "Is Southern Ontario getting warmer?",
+      blurb: "The classic first investigation: one place, one measurement, 45 years.",
+      look: "Watch the stripes drift from blue to red, then read the verdict. The trend line climbs, and both statistical tests agree it is not luck.",
+      site: () => data.sites.find(({ id }) => id === "southern-ontario"),
+      ids: ["T2M"],
+    },
+    {
+      title: "Is the Sahel in West Africa getting wetter?",
+      blurb: "After severe droughts in the 1970s and 80s, rain partly came back. Is that a real trend?",
+      look: "Look at the precipitation stripes and the verdict. Then open the table below the chart: soil wetness and humidity tell the same story, which makes the finding stronger.",
+      site: () => pointSite(14, 2),
+      ids: ["PRECTOTCORR"],
+    },
+    {
+      title: "Does rain soak into the soil months later?",
+      blurb: "Compare two measurements and look for a time delay between them.",
+      look: "This compares precipitation with root-zone soil wetness. Drag the time delay to 2 months: the link gets stronger, because rain takes time to sink down to plant roots.",
+      site: () => data.sites.find(({ id }) => id === "southern-ontario"),
+      ids: ["PRECTOTCORR", "GWETROOT"],
+    },
+  ];
+  let story = null;
+  let heroValues = null;
+
   const years = Array.from({ length: data.endYear - data.startYear + 1 }, (_, index) => data.startYear + index);
   const variableIds = data.variables.map(({ id }) => id);
   const regionResults = byId("region-results");
@@ -115,10 +159,36 @@
     return { ctx, width, height };
   }
 
-  function setRegionStatus(message, canRetry = false) {
+  function setRegionStatus(message, canRetry = false, loading = false) {
     regionMessage.textContent = message;
     regionStatus.hidden = !message;
+    regionStatus.toggleAttribute("data-loading", loading);
     retryRegion.hidden = !canRetry;
+  }
+
+  function drawStripes(canvas, values, variableId, shown = values.length) {
+    const drawing = prepareCanvas(canvas);
+    if (!drawing) return;
+    const { ctx, width, height } = drawing;
+    const scale = stripeScales[variableId] || stripeScales.T2M;
+    const mean = values.reduce((total, value) => total + value, 0) / values.length;
+    // Saturate at 2.2 standard deviations, close to the published warming-stripes scale.
+    const spread = 2.2 * Math.sqrt(values.reduce((total, value) => total + (value - mean) ** 2, 0) / values.length) || 1;
+    values.slice(0, shown).forEach((value, index) => {
+      const t = Math.max(-1, Math.min(1, (value - mean) / spread));
+      const end = t < 0 ? scale.low : scale.high;
+      const rgb = end.map((channel) => Math.round(247 + (channel - 247) * Math.abs(t)));
+      ctx.fillStyle = `rgb(${rgb})`;
+      // Overlap by a pixel so no hairline gaps show between stripes.
+      ctx.fillRect(Math.floor(index * width / values.length), 0, Math.ceil(width / values.length) + 1, height);
+    });
+  }
+
+  // "1 in N" phrasing reads more easily than a raw p-value.
+  function chanceText(p) {
+    if (p < 0.001) return "less than 1 in 1,000 times";
+    if (p >= 0.5) return "at least half the time";
+    return `about 1 in ${Number((1 / p).toPrecision(2)).toLocaleString("en-CA")} times`;
   }
 
   function holmAdjust(trends, key, adjustedKey) {
@@ -151,7 +221,7 @@
     updateSiteButtons();
     drawMap();
     regionResults.hidden = true;
-    setRegionStatus(`Loading ${nextSite.name} from NASA POWER…`);
+    setRegionStatus(`Loading 45 years of NASA data for ${nextSite.name}… This usually takes 5 to 10 seconds.`, false, true);
     try {
       const records = await PowerData.loadRegion(nextSite, data.startYear, data.endYear, variableIds, { signal: request.signal });
       if (regionRequest !== request) return;
@@ -169,7 +239,7 @@
       if (!data.sites.includes(nextSite) && /did not return/.test(error.message)) {
         setRegionStatus(`NASA POWER has no complete land record around ${nextSite.name}. Soil and evaporation data stop at coasts and oceans, so choose a point farther inland.`);
       } else {
-        setRegionStatus(`Could not load ${nextSite.name} from NASA POWER. Check your connection and try again.`, true);
+        setRegionStatus(`NASA POWER didn’t send the data for ${nextSite.name}. Check your internet connection, then try again.`, true);
       }
     } finally {
       if (regionRequest === request) regionRequest = null;
@@ -190,7 +260,9 @@
       button.addEventListener("click", () => selectSite(item));
       return button;
     });
-    byId("site-list").replaceChildren(...buttons);
+    const title = create("p", "Study areas", "site-list-title");
+    title.id = "site-list-title";
+    byId("site-list").replaceChildren(title, ...buttons);
     updateSiteButtons();
   }
 
@@ -236,7 +308,7 @@
     const { ctx, width, height } = drawing;
     const project = mapProjection(width, height);
     const frame = mapFrames[mapContinent];
-    ctx.strokeStyle = "#bdcfcc";
+    ctx.strokeStyle = "#bccbd8";
     ctx.lineWidth = 0.75;
     ctx.setLineDash([2, 4]);
     ctx.beginPath();
@@ -251,8 +323,8 @@
     ctx.stroke();
     ctx.setLineDash([]);
 
-    ctx.fillStyle = "#eef1e4";
-    ctx.strokeStyle = "#8fa793";
+    ctx.fillStyle = "#f8fafb";
+    ctx.strokeStyle = "#9fb0c0";
     ctx.lineWidth = 0.9;
     for (const country of window.AMERICAS_MAP?.countries || []) {
       for (const polygon of country.polygons) {
@@ -277,8 +349,8 @@
       const [left, top] = project(west, north);
       const [right, bottom] = project(east, south);
       const selected = item.id === site?.id;
-      ctx.strokeStyle = selected ? "#a74824" : "#23654f";
-      ctx.fillStyle = selected ? "#bc61365e" : "#23654f42";
+      ctx.strokeStyle = selected ? "#a8402a" : "#1f4e9c";
+      ctx.fillStyle = selected ? "#a8402a40" : "#1f4e9c2e";
       ctx.lineWidth = selected ? 2 : 1.4;
       ctx.fillRect(left, top, right - left, bottom - top);
       ctx.strokeRect(left, top, right - left, bottom - top);
@@ -321,7 +393,7 @@
   }
 
   function coordinates(item) {
-    return `${item.region} · ${latLon(item)} · ${item.cellCount} grid cells`;
+    return `${item.region} at ${latLon(item)}, averaged over ${item.cellCount} grid cells.`;
   }
 
   function trendUnit(variable) {
@@ -329,7 +401,7 @@
   }
 
   function updateOverview() {
-    byId("overview-title").textContent = `All trends in ${site.name}`;
+    byId("overview-title").textContent = `Every measurement in ${site.name}`;
     const rows = data.variables.map((variable) => {
       const trend = analysis.series[variable.id].trend;
       const row = create("tr");
@@ -391,12 +463,13 @@
     if (!analysis) return;
     activeIndex = null;
     byId("chart-selection").textContent = "";
-    byId("variables-title").textContent = site.name;
+    byId("variables-title").textContent = `2. Choose what to measure in ${site.name}`;
+    byId("story").hidden = story?.siteId !== site.id;
     const variables = data.variables.filter((variable) => selectedIds.has(variable.id));
     for (const [id, button] of optionButtons) button.setAttribute("aria-pressed", String(selectedIds.has(id)));
     const comparing = variables.length > 1;
     byId("compare-toggle").setAttribute("aria-pressed", String(compareMode));
-    byId("variable-hint").textContent = compareMode ? "Choose two or more variables to see how they move together." : "Choose a variable to see its trend.";
+    byId("variable-hint").textContent = compareMode ? "Choose two or more measurements to see how they move together." : "Choose one measurement to see its trend.";
     byId("single-report").hidden = comparing;
     byId("correlations").hidden = !comparing;
     if (comparing) {
@@ -406,7 +479,10 @@
       const trend = analysis.series[variable.id].trend;
       const unit = trendUnit(variable);
       byId("chart-title").textContent = `${variable.name} (${variable.unit})`;
+      byId("variable-why").textContent = whyItMatters[variable.id] || "";
       byId("variable-description").textContent = variable.description;
+      const scale = stripeScales[variable.id] || stripeScales.T2M;
+      byId("stripes-note").textContent = `Each stripe is one year from ${data.startYear} to ${data.endYear}. ${scale.note}`;
       byId("site-description").textContent = coordinates(site);
       const verdict = byId("trend-verdict");
       verdict.dataset.state = trend.verdict;
@@ -418,12 +494,14 @@
       byId("trend-mk").textContent = pText(trend.mkAdjustedPValue);
       const mkSignificant = trend.mkAdjustedPValue <= 0.05;
       byId("trend-agree").textContent = mkSignificant === (trend.verdict !== "inconclusive")
-        ? "The Mann-Kendall test agrees with this result."
-        : `The Mann-Kendall test disagrees: it finds this trend ${mkSignificant ? "significant" : "not significant"}, so treat the result with caution.`;
+        ? "The second test (Mann-Kendall) agrees with this result."
+        : `The second test (Mann-Kendall) disagrees: it finds this trend ${mkSignificant ? "significant" : "not significant"}, so treat the result with caution.`;
       const meaning = trend.verdict === "rising" ? risingMeans[variable.id] : fallingMeans[variable.id];
+      const total = `${format(trend.endValue - trend.startValue, variable.decimals, true)} ${unit}`;
       byId("trend-meaning").textContent = trend.verdict === "inconclusive"
-        ? "The record leaves the direction of change uncertain."
-        : meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`;
+        ? `No clear trend yet. The trend line moves ${total} from ${data.startYear} to ${data.endYear}, but the ups and downs between years are big enough to hide a steady change.`
+        : `${meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`} From ${data.startYear} to ${data.endYear} the trend line moves ${total}.`;
+      byId("trend-chance").textContent = `If nothing were really changing, a trend this strong would show up by chance ${chanceText(trend.adjustedPValue)}.`;
       updateView();
     }
     updateOverview();
@@ -461,12 +539,13 @@
     const { ctx, width, height } = drawing;
     const variable = data.variables.find((item) => selectedIds.has(item.id));
     const series = analysis.series[variable.id];
+    drawStripes(byId("result-stripes"), series.values, variable.id);
     const values = series[chartViews[view].field];
     const { trend } = series;
     const annual = view === "annual";
     const endpoints = annual ? [trend.startValue, trend.endValue] : view === "anomaly" ? [0] : [];
     const { floor, ceiling, decimals, ticks } = axisScale(values, endpoints);
-    ctx.font = "12px Inter, system-ui, sans-serif";
+    ctx.font = '13px "Atkinson Hyperlegible Next", system-ui, sans-serif';
     const left = Math.max(29, ...ticks.map((tick) => ctx.measureText(format(tick, decimals)).width + 12));
     const right = width - 18;
     const top = 12;
@@ -476,13 +555,13 @@
     chartLayout = { left, right, length: values.length };
 
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "#d7dfd5";
-    ctx.fillStyle = "#4b6258";
+    ctx.strokeStyle = "#dfe6ec";
+    ctx.fillStyle = "#46596c";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     for (const tick of ticks) {
       const yPos = y(tick);
-      ctx.strokeStyle = view === "anomaly" && Math.abs(tick) < 1e-9 ? "#82978a" : "#d7dfd5";
+      ctx.strokeStyle = view === "anomaly" && Math.abs(tick) < 1e-9 ? "#8a9bab" : "#dfe6ec";
       ctx.beginPath();
       ctx.moveTo(left, yPos);
       ctx.lineTo(right, yPos);
@@ -500,7 +579,7 @@
       ctx.fillText(String(year), x(index), bottom + 10);
     }
 
-    ctx.strokeStyle = "#187a63";
+    ctx.strokeStyle = "#1f4e9c";
     ctx.lineWidth = 2.1;
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -511,7 +590,7 @@
     ctx.stroke();
 
     if (annual) {
-      ctx.strokeStyle = "#aa4924";
+      ctx.strokeStyle = "#a8402a";
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
@@ -526,13 +605,13 @@
       const value = values[activeIndex];
       const xPos = x(activeIndex);
       const yPos = y(value);
-      ctx.strokeStyle = "#8fa793";
+      ctx.strokeStyle = "#9fb0c0";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(xPos, top);
       ctx.lineTo(xPos, bottom);
       ctx.stroke();
-      ctx.fillStyle = "#187a63";
+      ctx.fillStyle = "#1f4e9c";
       ctx.beginPath();
       ctx.arc(xPos, yPos, 4.5, 0, 2 * Math.PI);
       ctx.fill();
@@ -616,13 +695,48 @@
     else activeIndex = Math.max(0, Math.min(length - 1, activeIndex + (event.key === "ArrowLeft" ? -1 : 1)));
     drawChart();
   });
-  byId("coverage").textContent = `${data.startYear}–${data.endYear} · ${data.sites.length} study areas · ${data.variables.length} variables`;
   setSource("data-source", data.sourceUrl);
   setSource("method-source", data.methodUrl);
   explorer.hidden = false;
   renderSiteList();
   renderMap();
-  setRegionStatus("Choose a study area, or click anywhere on the map, to load its NASA POWER records.");
+  setRegionStatus("Pick a study area, click the map, or try an example above to load a place.");
+
+  for (const example of examples) {
+    const item = create("li", "", "example");
+    const button = create("button", "Investigate", "button primary small");
+    button.addEventListener("click", () => {
+      const target = example.site();
+      story = { siteId: target.id };
+      byId("story-title").textContent = `What to look for: ${example.title}`;
+      byId("story-text").textContent = example.look;
+      compareMode = example.ids.length > 1;
+      selectedIds = new Set(example.ids);
+      byId("lag").value = 0;
+      byId("explore").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      if (site?.id === target.id && analysis) renderDetails();
+      else selectSite(target);
+    });
+    item.append(create("h3", example.title), create("p", example.blurb), button);
+    byId("example-list").append(item);
+  }
+
+  // The hero stripes come from the bundled CSV so the page shows real data before any NASA request.
+  fetch("americas-trends.csv").then((response) => response.text()).then((text) => {
+    const rows = text.trim().split("\n").slice(1).map((line) => line.split(","));
+    const values = rows.filter(([name]) => name === "Southern Ontario").map((row) => Number(row[5]));
+    if (!values.length) return;
+    heroValues = values;
+    // The page's one load moment: years appear left to right, easing out.
+    const start = performance.now();
+    const duration = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1400;
+    const step = (now) => {
+      const progress = duration ? Math.min(1, (now - start) / duration) : 1;
+      drawStripes(byId("hero-stripes"), values, "T2M", Math.ceil(values.length * (1 - (1 - progress) ** 3)));
+      if (progress < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }).catch(() => { byId("hero-stripes").hidden = true; });
   retryRegion.addEventListener("click", () => selectSite(site));
   byId("map-stage").addEventListener("click", (event) => {
     if (event.target.closest("button")) return;
@@ -639,7 +753,9 @@
   const observer = new ResizeObserver((entries) => {
     if (entries.some(({ target }) => target === byId("map-stage"))) drawMap();
     if (entries.some(({ target }) => target === byId("chart-stage"))) drawChart();
+    if (heroValues && entries.some(({ target }) => target === byId("hero-stripes"))) drawStripes(byId("hero-stripes"), heroValues, "T2M");
   });
+  observer.observe(byId("hero-stripes"));
   observer.observe(byId("map-stage"));
   observer.observe(byId("chart-stage"));
 })();
