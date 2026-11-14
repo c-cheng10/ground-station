@@ -209,5 +209,40 @@
     return { series, residuals };
   }
 
-  window.TrendStatistics = { analyseRegion, mannKendall, monthlyCorrelations };
+  // World model (trained by train_world_model.py): next month's 8 anomalies from the last
+  // 12 months, each variable's 5-year mean, the target calendar month and latitude.
+  function worldModelStep(model, window, targetMonth, lat) {
+    const x = window.slice(-model.lags).flat();
+    for (let v = 0; v < model.variables.length; v += 1) x.push(sum(window.map((row) => row[v])) / window.length);
+    const angle = 2 * Math.PI * (targetMonth % 12) / 12;
+    x.push(Math.sin(angle), Math.cos(angle), lat / 90);
+    return model.layers.reduce((input, layer) => {
+      const output = layer.b.map((bias, j) => input.reduce((total, value, i) => total + value * layer.w[i][j], bias));
+      return layer.activation === "tanh" ? output.map(Math.tanh) : output;
+    }, x);
+  }
+
+  function scaledWindow(model, anomalies, end) {
+    return Array.from({ length: model.recent }, (_, k) =>
+      model.variables.map((id, v) => anomalies[id][end - model.recent + k] / model.scale[v]));
+  }
+
+  // Monthly anomalies for the months after `end`, feeding each prediction back in.
+  function forecast(model, anomalies, lat, end) {
+    let window = scaledWindow(model, anomalies, end);
+    return Array.from({ length: model.leads }, (_, k) => {
+      const step = worldModelStep(model, window, end + k, lat);
+      window = [...window.slice(1), step];
+      return step.map((value, v) => value * model.scale[v]);
+    });
+  }
+
+  // One-month-ahead predictions for months first..last-1, each from the real months before it.
+  function backtest(model, anomalies, lat, first, last) {
+    return Array.from({ length: last - first }, (_, k) =>
+      worldModelStep(model, scaledWindow(model, anomalies, first + k), first + k, lat)
+        .map((value, v) => value * model.scale[v]));
+  }
+
+  window.TrendStatistics = { analyseRegion, mannKendall, monthlyCorrelations, forecast, backtest };
 })();

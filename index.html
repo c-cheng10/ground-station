@@ -14,6 +14,7 @@
   <script defer src="trend-config.js"></script>
   <script defer src="power-data.js"></script>
   <script defer src="trend-statistics.js"></script>
+  <script defer src="world-model.js"></script>
   <script defer src="trend-explorer.js"></script>
   <style>
     :root {
@@ -207,6 +208,12 @@
     .numbers dt { color: var(--muted); font-size: 0.84rem; }
     .numbers dd { margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
     .note { color: var(--muted); font-size: 0.9rem; margin: 12px 0 0; }
+    .forecast { margin-top: 30px; padding-top: 6px; border-top: 1px solid var(--rule); }
+    .skill { display: inline-block; margin: 14px 0 0; padding: 8px 14px; border-radius: 12px; background: #e6f2ec; color: #12503a; font-weight: 700; }
+    .skill[data-weak] { background: #f4efe2; color: #6a4b12; }
+    .forecast-stage { height: 280px; }
+    .swatch.forecast { border-top: 2.5px dashed var(--warm); }
+    .swatch.band { height: 12px; border: 0; border-radius: 3px; background: #a8402a33; }
     .about { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr; gap: 18px 32px; }
     .about p { margin: 0; color: var(--muted); font-size: 0.92rem; }
     .glossary summary { cursor: pointer; font-weight: 700; color: var(--control); }
@@ -234,7 +241,7 @@
     .matrix tbody th { white-space: nowrap; }
 
     /* How it works */
-    .method-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+    .method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
     .method-grid .card { padding: 24px; }
     .method-grid h3 { font-size: 1.15rem; margin-bottom: 10px; }
     .method-grid p { margin: 0 0 10px; color: var(--muted); }
@@ -398,6 +405,19 @@
               </dl>
               <p class="note" id="trend-agree"></p>
 
+              <section class="forecast" id="forecast" aria-labelledby="forecast-title" hidden>
+                <div class="chart-head">
+                  <h3 id="forecast-title">What happens next?</h3>
+                  <div class="segmented" id="forecast-options" role="group" aria-label="Forecast view"></div>
+                </div>
+                <p class="skill" id="forecast-skill"></p>
+                <p class="description" id="forecast-text"></p>
+                <div class="chart-stage forecast-stage" id="forecast-stage">
+                  <canvas id="forecast-chart" role="img" aria-labelledby="forecast-title" aria-describedby="forecast-text"></canvas>
+                </div>
+                <div class="legend" id="forecast-legend"></div>
+              </section>
+
               <div class="about">
                 <div>
                   <p id="variable-description"></p>
@@ -456,8 +476,14 @@
           <p>The Mann-Kendall test checks the answer a second way. With 8 measurements tested at once, both are adjusted with the Holm method.</p>
         </div>
         <div class="card">
+          <h3>The forecast</h3>
+          <p>A world model learned how the 8 measurements push each other from month to month: rain wets the soil, wet soil cools the surface, and so on. It reads the last 12 months plus the last 5 years’ average, predicts next month, then feeds that prediction back in to reach 12 months.</p>
+          <p>It trained on 6 regions from 1986 to 2019 and was tested on 2020–2025, which it never saw. A small neural network was tried too, but the simpler linear model forecast better, so the site uses that. Forecasts fade toward the recent average after a few months, because the weather’s memory runs out.</p>
+        </div>
+        <div class="card">
           <h3>Honest limits</h3>
           <p>A trend can be real and still not reach significance yet; a longer record often settles it. Rainfall from weather models can shift when the satellites feeding them change.</p>
+          <p>The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now. For that, use the trend line and its range.</p>
           <p><a id="data-source">NASA POWER documentation</a> and the <a id="method-source">trend uncertainty method</a>.</p>
         </div>
       </div>

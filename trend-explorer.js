@@ -588,8 +588,135 @@
         : `${meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`} From ${data.startYear} to ${data.endYear} the trend line moves ${total}.`;
       byId("trend-chance").textContent = `If nothing were really changing, a trend this strong would show up by chance ${chanceText(trend.adjustedPValue)}.`;
       updateView();
+      renderForecast(variable);
     }
     updateOverview();
+  }
+
+  const model = window.WORLD_MODEL;
+  const forecastViews = { ahead: "Next 12 months", backtest: `Test on ${model?.testYears.join("–")}` };
+  const forecastButtons = new Map();
+  let forecastView = "ahead";
+  let forecastCache = null;
+  const monthsText = (count) => count === 1 ? "1 month" : `${count} months`;
+
+  function forecastData() {
+    if (forecastCache?.analysis === analysis) return forecastCache;
+    const anomalies = Object.fromEntries(variableIds.map((id) => [id, analysis.series[id].monthlyAnomalies]));
+    const months = anomalies[variableIds[0]].length;
+    const testStart = (model.testYears[0] - data.startYear) * 12;
+    forecastCache = {
+      analysis, months, testStart,
+      ahead: TrendStatistics.forecast(model, anomalies, site.latitude, months),
+      backtest: TrendStatistics.backtest(model, anomalies, site.latitude, testStart, months),
+    };
+    return forecastCache;
+  }
+
+  function renderForecast(variable) {
+    const index = model ? model.variables.indexOf(variable.id) : -1;
+    byId("forecast").hidden = index < 0;
+    if (index < 0) return;
+    for (const [id, button] of forecastButtons) button.setAttribute("aria-pressed", String(id === forecastView));
+    const skill = model.skillVsRecent.map((row) => row[index]);
+    let good = 0;
+    // Count a month only when the error drops at least 5% below the simple guess.
+    while (good < skill.length && skill[good] >= 0.05) good += 1;
+    const badge = byId("forecast-skill");
+    badge.toggleAttribute("data-weak", good === 0);
+    badge.textContent = good === 0
+      ? `For ${variable.name.toLowerCase()}, the model can’t beat a simple guess yet, so treat this forecast as a rough sketch.`
+      : `Tested on 6 regions over ${model.testYears.join("–")}: it beats a simple guess by at least 5% for ${good === model.leads ? `all ${good} months` : monthsText(good)} ahead.`;
+    byId("forecast-text").textContent = forecastView === "ahead"
+      ? `The dashed line is the forecast for each month of ${data.endYear + 1}, shown as the difference from the ${data.baselineStart}–${data.baselineEnd} normal for that month. The shaded band is where 9 in 10 real months landed during testing. The simple guess it has to beat says each month will match its average over the last 5 years.`
+      : `A fair test: the model never saw ${model.testYears.join(" to ")}. Each dashed point was predicted one month ahead using only the real months before it. The closer the dashed line follows the solid one, the better the model.`;
+    const legend = [["", "Actual"], ["forecast", forecastView === "ahead" ? "Forecast" : "Predicted one month ahead"]];
+    if (forecastView === "ahead") legend.push(["band", "Likely range (90%)"]);
+    byId("forecast-legend").replaceChildren(...legend.map(([kind, label]) => {
+      const item = create("span", "", "legend-item");
+      const swatch = create("span", "", `swatch ${kind}`);
+      swatch.setAttribute("aria-hidden", "true");
+      item.append(swatch, create("span", label));
+      return item;
+    }));
+    drawForecast();
+  }
+
+  function drawForecast() {
+    if (!analysis || !model || selectedIds.size !== 1 || byId("forecast").hidden) return;
+    const drawing = prepareCanvas(byId("forecast-chart"));
+    if (!drawing) return;
+    const { ctx, width, height } = drawing;
+    const variable = data.variables.find((item) => selectedIds.has(item.id));
+    const index = model.variables.indexOf(variable.id);
+    const result = forecastData();
+    const history = analysis.series[variable.id].monthlyAnomalies;
+    const ahead = forecastView === "ahead";
+    const firstMonth = ahead ? result.months - 24 : result.testStart;
+    const actual = history.slice(firstMonth);
+    const predicted = (ahead ? result.ahead : result.backtest).map((row) => row[index]);
+    const offset = ahead ? actual.length : 0;
+    const total = offset + predicted.length;
+    const band = ahead ? model.rmse.map((row) => 1.645 * row[index]) : [];
+    const bandValues = band.flatMap((spread, k) => [predicted[k] + spread, predicted[k] - spread]);
+    const { floor, ceiling, decimals, ticks } = axisScale([...actual, ...predicted, ...bandValues], [0]);
+    ctx.font = '13px "Atkinson Hyperlegible Next", system-ui, sans-serif';
+    const left = Math.max(29, ...ticks.map((tick) => ctx.measureText(format(tick, decimals)).width + 12));
+    const right = width - 18;
+    const top = 16;
+    const bottom = height - 30;
+    const x = (i) => left + (right - left) * i / (total - 1);
+    const y = (value) => bottom - (bottom - top) * (value - floor) / (ceiling - floor);
+
+    ctx.lineWidth = 1;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    for (const tick of ticks) {
+      ctx.strokeStyle = Math.abs(tick) < 1e-9 ? "#8a9bab" : "#dfe6ec";
+      ctx.beginPath();
+      ctx.moveTo(left, y(tick));
+      ctx.lineTo(right, y(tick));
+      ctx.stroke();
+      ctx.fillStyle = "#46596c";
+      ctx.fillText(format(tick, decimals), left - 9, y(tick));
+    }
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    for (let i = 0; i < total; i += 1) {
+      if ((firstMonth + i) % 12 === 0) ctx.fillText(String(data.startYear + Math.floor((firstMonth + i) / 12)), x(i), bottom + 10);
+    }
+
+    if (ahead) {
+      ctx.fillStyle = "#a8402a2e";
+      ctx.beginPath();
+      predicted.forEach((value, k) => ctx[k ? "lineTo" : "moveTo"](x(offset + k), y(value + band[k])));
+      for (let k = predicted.length - 1; k >= 0; k -= 1) ctx.lineTo(x(offset + k), y(predicted[k] - band[k]));
+      ctx.fill();
+      ctx.strokeStyle = "#9fb0c0";
+      ctx.setLineDash([2, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x(offset - 0.5), top);
+      ctx.lineTo(x(offset - 0.5), bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#7d2a18";
+      ctx.fillText("Forecast", x(offset - 0.5) + 6, top);
+    }
+
+    const line = (values, start, color, dashed) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.2;
+      ctx.lineJoin = "round";
+      ctx.setLineDash(dashed ? [6, 4] : []);
+      ctx.beginPath();
+      values.forEach((value, k) => ctx[k ? "lineTo" : "moveTo"](x(start + k), y(value)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    line(actual, 0, "#1f4e9c", false);
+    // In forecast view the dashed line starts from the last real month so the two join up.
+    line(ahead ? [actual.at(-1), ...predicted] : predicted, ahead ? offset - 1 : 0, "#a8402a", true);
   }
 
   function updateView() {
@@ -738,6 +865,15 @@
     optionButtons.set(variable.id, button);
     byId("variable-options").append(button);
   }
+  for (const [id, label] of Object.entries(forecastViews)) {
+    const button = create("button", label);
+    button.addEventListener("click", () => {
+      forecastView = id;
+      renderDetails();
+    });
+    forecastButtons.set(id, button);
+    byId("forecast-options").append(button);
+  }
   for (const [id, display] of Object.entries(chartViews)) {
     const button = create("button", display.label);
     button.addEventListener("click", () => {
@@ -786,6 +922,7 @@
     for (const { target } of entries) {
       if (target === byId("map-stage")) drawMap();
       else if (target === byId("chart-stage")) drawChart();
+      else if (target === byId("forecast-stage")) drawForecast();
       else if (liveStripes.has(target)) drawStripes(target, ...liveStripes.get(target));
     }
   });
@@ -861,4 +998,5 @@
   observer.observe(byId("hero-stripes"));
   observer.observe(byId("map-stage"));
   observer.observe(byId("chart-stage"));
+  observer.observe(byId("forecast-stage"));
 })();
