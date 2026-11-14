@@ -652,7 +652,7 @@
       const meaning = trend.verdict === "rising" ? risingMeans[variable.id] : fallingMeans[variable.id];
       const total = `${format(trend.endValue - trend.startValue, variable.decimals, true)} ${unit}`;
       byId("trend-meaning").textContent = trend.verdict === "inconclusive"
-        ? `No clear trend yet. The trend line moves ${total} from ${firstYear} to ${lastYear}, but the ups and downs between years are big enough to hide a steady change.`
+        ? `No clear trend yet. The trend line moves ${total} from ${firstYear} to ${lastYear}, but the ups and downs between years are big enough to hide a steady change. ${yearsToSignificance(trend, lastYear - firstYear + 1)}`
         : `${meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`} From ${firstYear} to ${lastYear} the trend line moves ${total}.`;
       byId("trend-chance").textContent = `If nothing were really changing, a trend this strong would show up by chance ${chanceText(trend.adjustedPValue)}.`;
       renderAgreement(variable);
@@ -660,6 +660,17 @@
       renderForecast(variable);
     }
     updateOverview();
+  }
+
+  // A trend's t-statistic grows with record length n as n^1.5 when the rate and the year-to-year
+  // scatter stay the same, so we can estimate the years needed to reach |t| = 2 (about p = 0.05).
+  // shortcut: ignores the stricter bar from adjusting for several measurements; say so in the text.
+  function yearsToSignificance(trend, years) {
+    const t = Math.abs(trend.slope) / ((trend.ciHigh - trend.ciLow) / (2 * 2));
+    if (!Number.isFinite(t) || t < 0.3) return "There’s barely any change to detect, so a longer record probably wouldn’t show a trend either.";
+    const more = Math.ceil(years * (2 / t) ** (2 / 3) - years);
+    if (more > 100) return "At this slow rate, it would take more than a century of extra data to tell it apart from chance.";
+    return `If it kept changing at this rate, about ${Math.max(1, more)} more ${more === 1 ? "year" : "years"} of data would likely make it significant on a standard test.`;
   }
 
   // Air temperature only: compare MERRA-2 with GLDAS 2.1 over the years both cover.
