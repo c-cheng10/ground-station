@@ -344,7 +344,7 @@
     byId("story").hidden = true;
     explorer.scrollTop = 0;
     openDrawer();
-    flyTo(nextSite.latitude, nextSite.longitude, nextSite.areaIds ? mapView.zoom : Math.max(mapView.zoom, 3));
+    flyTo(nextSite.latitude, nextSite.longitude, nextSite.zoom ?? (nextSite.areaIds ? mapView.zoom : Math.max(mapView.zoom, 3)));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
@@ -366,6 +366,7 @@
       regionResults.hidden = false;
       setRegionStatus("");
       renderDetails();
+      return analysis;
     } catch (error) {
       if (regionRequest !== request) return;
       request.abort();
@@ -475,17 +476,126 @@
     return window.WORLD_MAP?.countries.find((country) => inCountry(country, latitude, longitude))?.name ?? null;
   }
 
-  window.countryCorrelation = async (country, variables, signal) => {
-    const ids = points.filter(([lat, lon]) => inCountry(country, lat, lon)).map(([lat, lon]) => `${lat},${lon}`);
-    if (!ids.length) return null;
-    const { series, residuals, starts } = analyseRow(await loadArea(ids, signal));
-    const [first, second] = variables;
-    if (!series[first] || !series[second]) return null;
-    const start = Math.max(series[first].firstYear, series[second].firstYear);
-    const end = Math.min(series[first].lastYear, series[second].lastYear);
-    if (end - start < 1) return null;
-    return { r: TrendStatistics.monthlyCorrelations(residuals, variables, 0, starts)[first][second],
-      points: ids.length, start, end };
+  function distanceKm(latitude, longitude, lat, lon) {
+    const radians = Math.PI / 180;
+    const arc = Math.sin((lat - latitude) * radians / 2) ** 2 +
+      Math.cos(latitude * radians) * Math.cos(lat * radians) * Math.sin((lon - longitude) * radians / 2) ** 2;
+    return 12_742 * Math.asin(Math.min(1, Math.sqrt(arc)));
+  }
+
+  const signedLongitude = (difference) => ((difference + 540) % 360) - 180;
+
+  function isInDirection(direction, north, east) {
+    const axis = { north, south: -north, east, west: -east }[direction];
+    return axis > 0 && axis >= Math.abs(direction === "north" || direction === "south" ? east : north);
+  }
+
+  function outsideCountryInDirection(country, direction, lat, lon) {
+    // Relative directions use the nearest border segment, not the country's centre.
+    const longitudeScale = Math.cos(lat * Math.PI / 180);
+    let closest = 500 / 111;
+    let delta = null;
+    for (const [outline] of country.polygons) {
+      for (let index = 0; index < outline.length; index += 1) {
+        const [lonA, latA] = outline[index];
+        const [lonB, latB] = outline[(index + 1) % outline.length];
+        const ax = signedLongitude(lonA - lon) * longitudeScale;
+        const ay = latA - lat;
+        const dx = signedLongitude(lonB - lonA) * longitudeScale;
+        const dy = latB - latA;
+        const fraction = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+        const east = -(ax + fraction * dx);
+        const north = -(ay + fraction * dy);
+        const distance = Math.hypot(east, north);
+        if (distance < closest) {
+          closest = distance;
+          delta = [north, east];
+        }
+      }
+    }
+    return delta && isInDirection(direction, ...delta);
+  }
+
+  function assistantArea(place) {
+    const { country, direction, interior } = place;
+    const name = place.displayName ?? country?.name ?? place.name;
+    let { latitude, longitude } = place;
+    let selected;
+    let distance;
+    if (country) {
+      const inside = points.filter(([lat, lon]) => inCountry(country, lat, lon));
+      selected = inside;
+      if (direction && !interior) {
+        const insideSet = new Set(inside);
+        selected = points.filter((coords) => !insideSet.has(coords) && outsideCountryInDirection(country, direction, ...coords));
+      } else if (direction && inside.length) {
+        const axis = direction === "north" || direction === "south" ? 0 : 1;
+        const values = inside.map((coords) => coords[axis]);
+        const middle = (Math.min(...values) + Math.max(...values)) / 2;
+        const sign = direction === "north" || direction === "east" ? 1 : -1;
+        selected = inside.filter((coords) => sign * (coords[axis] - middle) >= 0);
+      }
+      if (!selected.length) return null;
+      const latitudes = selected.map(([lat]) => lat);
+      const longitudes = selected.map(([, lon]) => lon);
+      latitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
+      longitude = (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
+    } else {
+      const nearby = points.map((coords) => ({ coords, km: distanceKm(latitude, longitude, ...coords) }))
+        .filter(({ coords: [lat, lon], km }) => km <= 700 && (!direction ||
+          isInDirection(direction, lat - latitude, signedLongitude(lon - longitude) * Math.cos(latitude * Math.PI / 180))))
+        .sort((a, b) => a.km - b.km).slice(0, 5);
+      if (!nearby.length || (!direction && nearby[0].km > 350)) return null;
+      selected = nearby.map(({ coords }) => coords);
+      distance = Math.ceil(nearby.at(-1).km);
+    }
+    const [width, height] = mapSize();
+    const availableWidth = width > 760 ? width - byId("drawer").offsetWidth : width;
+    const panelHeight = width > 760 ? 0 : byId("drawer").offsetHeight;
+    const availableHeight = height - panelHeight - byId("map-toolbar").getBoundingClientRect().bottom - 12;
+    const extentX = Math.max(...selected.map(([, lon]) => Math.abs(lon - longitude))) + 2.5;
+    const extentY = Math.max(...selected.map(([lat]) => Math.abs(lat - latitude))) + 2.5;
+    const zoom = Math.max(1, Math.min(8, Math.min(availableWidth / (extentX * 2), availableHeight / (extentY * 2)) / baseScale(width, height)));
+    const areaIds = selected.map(([lat, lon]) => `${lat},${lon}`);
+    return { id: `assistant:${name}:${latitude},${longitude}`, name, latitude, longitude, areaIds, selected, distance, zoom,
+      outsideBorder: Boolean(country && direction && !interior) };
+  }
+
+  window.answerClimateArea = async (question, place) => {
+    const target = place ? (place.id ? place : assistantArea(place)) : (site?.areaIds || question.kind === "trend") && site;
+    if (!target) return place ? { status: "outside_coverage" } : null;
+    const { ids, lag } = question;
+    compareMode = ids.length === 2;
+    selectedIds = new Set(ids);
+    byId("lag").value = lag;
+    if (site !== target || !analysis) {
+      if (!await selectSite(target)) return { status: "unavailable" };
+    } else {
+      openDrawer();
+      explorer.scrollTop = 0;
+      renderDetails();
+    }
+    const { series, residuals, starts } = analysis;
+    const [first, second] = ids;
+    const scope = { name: target.name, count: target.areaIds?.length ?? 1, distance: target.distance,
+      outsideBorder: target.outsideBorder };
+    if (ids.some((id) => !series[id])) return { status: "no_data", ...scope };
+    if (!second) return { status: "trend", ...scope, ...series[first] };
+    const from = Math.max(starts[first], starts[second] - lag);
+    const to = Math.min(starts[first] + residuals[first].length, starts[second] + residuals[second].length - lag);
+    if (to - from < 24) return { status: "no_data", ...scope };
+    const r = TrendStatistics.monthlyCorrelations(residuals, ids, lag, starts)[first][second];
+    return { status: "correlation", ...scope, r, from, to };
+  };
+
+  window.selectAssistantPoint = ({ lat, lon, variable_x, variable_y, lag_months }) => {
+    if (!pointIds.has(`${lat},${lon}`)) return null;
+    const target = pointSite(lat, lon);
+    const ids = [variable_x.toUpperCase(), variable_y.toUpperCase()];
+    compareMode = ids[0] !== ids[1];
+    selectedIds = new Set(ids);
+    byId("lag").value = lag_months;
+    return selectSite(target);
   };
 
   function trendMapVariable() {
@@ -549,7 +659,9 @@
   function coordinates(item) {
     if (item.areaIds) {
       const count = item.areaIds.length;
-      return `Monthly average across ${format(count, 0)} NASA grid ${count === 1 ? "point" : "points"}. Each month uses the same points.`;
+      const distance = item.distance ? ` within ${format(item.distance, 0)} km of the city` :
+        item.outsideBorder ? " within about 500 km of the border" : "";
+      return `Monthly average across ${format(count, 0)} NASA grid ${count === 1 ? "point" : "points"}${distance}. Each month uses the same points.`;
     }
     return `${item.region} at ${latLon(item)}. Each source uses its own grid resolution.`;
   }
@@ -653,8 +765,9 @@
       const trend = analysis.series[variable.id].trend;
       const unit = trendUnit(variable);
       byId("chart-title").textContent = `${variable.name} over time (${variable.unit})`;
-      const location = site.areaIds ? "the selected area" : site.name;
-      byId("result-headline").textContent = `${variable.name} in ${location} ${{
+      const location = site.outline ? "in the selected area" :
+        site.outsideBorder ? site.name[0].toLowerCase() + site.name.slice(1) : `in ${site.name}`;
+      byId("result-headline").textContent = `${variable.name} ${location} ${{
         rising: "is rising", falling: "is falling", inconclusive: "shows no clear trend yet",
       }[trend.verdict]}`;
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
@@ -1113,6 +1226,15 @@
     const halfLon = width / 2 / k;
     const halfLat = height / 2 / k;
     mapView.lon = halfLon >= 180 ? 0 : Math.min(180 - halfLon, Math.max(-180 + halfLon, mapView.lon));
+    if (width <= 760 && app.hasAttribute("data-drawer")) {
+      const toolbar = byId("map-toolbar").getBoundingClientRect().bottom;
+      const sheet = byId("drawer").offsetHeight;
+      const visibleHalf = Math.max(0, height - toolbar - sheet) / 2 / k;
+      const offset = (toolbar - sheet) / 2 / k;
+      mapView.lat = (visibleHalf >= 72 ? 12 :
+        Math.min(84 - visibleHalf, Math.max(-60 + visibleHalf, mapView.lat - offset))) + offset;
+      return;
+    }
     mapView.lat = halfLat >= 72 ? 12 : Math.min(84 - halfLat, Math.max(-60 + halfLat, mapView.lat));
   }
 
@@ -1193,6 +1315,20 @@
         });
       }
     }
+    if (!drawingArea && site?.selected) {
+      ctx.fillStyle = "rgb(31 78 156 / 0.17)";
+      for (const [lat, lon] of site.selected) {
+        const [x, y] = project(lon - 1.5, lat + 1.5);
+        const size = 3 * project.k;
+        ctx.fillRect(x, y, size, size);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#fff";
+        ctx.strokeRect(x, y, size, size);
+        ctx.lineWidth = 1.4;
+        ctx.strokeStyle = "#1f4e9c";
+        ctx.strokeRect(x, y, size, size);
+      }
+    }
     if (drawingArea) {
       ctx.beginPath();
       ctx.moveTo(width / 2 - 7, height / 2);
@@ -1206,7 +1342,7 @@
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
-    if (site && !site.outline && !drawingArea) {
+    if (site && !site.areaIds && !drawingArea) {
       const [x, y] = project(site.longitude, site.latitude);
       pin.hidden = false;
       pin.style.left = `${x}px`;
@@ -1223,8 +1359,9 @@
     // Side panel on wide screens, bottom sheet on phones: centre the place in the map that stays visible.
     const panelX = open && width > 760 ? byId("drawer").offsetWidth : 0;
     const panelY = open && width <= 760 ? byId("drawer").offsetHeight : 0;
+    const toolbar = open ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
     const k = baseScale(width, height) * zoom;
-    const target = { lat: lat - panelY / 2 / k, lon: lon + panelX / 2 / k, zoom };
+    const target = { lat: lat + (toolbar - panelY) / 2 / k, lon: lon + panelX / 2 / k, zoom };
     const from = { ...mapView };
     cancelAnimationFrame(flight);
     if (reduceMotion) {

@@ -19,6 +19,8 @@
   <script defer src="world-model.js"></script>
   <script defer src="trend-explorer.js"></script>
   <script defer src="research.js"></script>
+  <script defer src="assistant-place.js"></script>
+  <script defer src="assistant-question.js"></script>
   <script defer src="correlation-assistant.js"></script>
   <style>
     :root {
@@ -278,6 +280,7 @@
     .assistant-result { background: var(--sunken); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
     .assistant-result p { margin: 0; }
     .assistant-result .description { margin-top: 4px; }
+    #assistant-view-area { margin-top: 12px; }
     .refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
     .refresh-status:empty { display: none; }
     .refresh-actions button:disabled { cursor: wait; opacity: 0.65; }
@@ -335,7 +338,7 @@
     </div>
     <p class="sr-only" id="map-help">Click a place, or press Enter for the centre of the map. Arrow keys move the map; plus and minus zoom.</p>
 
-    <header class="float topbar">
+    <header class="float topbar" id="map-toolbar">
       <h1 class="brand">Climate Trend Explorer</h1>
       <div class="map-tools">
         <label class="map-field" for="map-variable"><span>Map measurement</span> <select id="map-variable" name="measurement"></select></label>
@@ -536,7 +539,7 @@
       <button type="button" class="icon-button" id="close-assistant" aria-label="Close">×</button>
     </div>
     <div class="assistant" id="correlation-assistant">
-      <p class="description" id="assistant-help">For a same-month correlation, ask “What is the correlation between soil wetness and wind speed in Madagascar?” For a delay of up to six months, select a map point or name a study area. Research also uses the named study areas.</p>
+      <p class="description" id="assistant-help">Ask about a trend or correlation in a city, country or area you selected. Try “What is the precipitation trend in western Nigeria?” Research searches use the six named study areas.</p>
       <form id="assistant-form">
         <fieldset>
           <label for="assistant-question">Your question</label>
@@ -559,6 +562,7 @@
         <p class="description" id="assistant-research-notice" hidden></p>
         <ol class="research-sources" id="assistant-research-sources" aria-label="Research sources" hidden></ol>
       </div>
+      <button class="button secondary small" type="button" id="assistant-view-area" hidden>View selected area on map</button>
     </div>
   </dialog>
 
@@ -589,7 +593,7 @@
         <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years.</p>
         <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check. The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now.</p>
       </div>
-      <p class="credits">Built for the NASA Space Apps Challenge. Data: <a id="data-source">NASA GES DISC Giovanni</a> (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 from NOAA ERSSTv5). Trend uncertainty: <a id="method-source">Newey–West method</a>. Map outlines: <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>. <a href="study-areas.csv" download>Download the study-area data (CSV)</a>.</p>
+      <p class="credits">Built for the NASA Space Apps Challenge. Data: <a id="data-source">NASA GES DISC Giovanni</a> (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 from NOAA ERSSTv5). Trend uncertainty: <a id="method-source">Newey–West method</a>. Map outlines: <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>. Place search: <a href="https://open-meteo.com/en/docs/geocoding-api">Open-Meteo</a> and <a href="https://www.geonames.org/">GeoNames</a>. <a href="study-areas.csv" download>Download the study-area data (CSV)</a>.</p>
     </div>
   </dialog>
 </body>
