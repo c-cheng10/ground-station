@@ -1210,7 +1210,7 @@
     byId("data-error").hidden = false;
     return;
   }
-  const heatPalette = { low: [72, 196, 194], mid: [84, 103, 122], high: [173, 145, 232] };
+  const heatPalette = { low: [72, 196, 194], mid: [48, 81, 185], high: [173, 145, 232] };
   const home = { lat: 17, lon: -18, zoom: 1 };
   const mapView = { ...home, offsetX: 0, offsetY: 0 };
   let heatVisible = true;
