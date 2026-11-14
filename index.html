@@ -58,6 +58,7 @@
     .map-stage canvas { position: absolute; inset: 0; cursor: crosshair; }
     .point-form { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 18px; border-top: 1px solid var(--rule); font-size: 0.9rem; }
     .point-form input { width: 7.5em; font: inherit; }
+    .lag-control { display: flex; align-items: center; gap: 10px; font-weight: 650; }
     .map-marker {
       position: absolute; z-index: 1; transform: translate(-50%, -50%); background: transparent; border: 0;
       width: 43px; height: 43px; border-radius: 50%; display: grid; place-items: center;
@@ -251,6 +252,8 @@
         <h2 id="correlations-title">How the variables move together</h2>
         <p class="description">Pearson correlation ranges from −1 (opposite movements) to +1 (same-direction movements). A value near 0 indicates little straight-line relationship.</p>
         <p class="description">These compare the same months after removing each variable’s seasonal cycle and long-term trend. Correlation measures association. Establishing causes requires other evidence.</p>
+        <label class="lag-control">Lag <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
+        <p class="description" id="lag-note"></p>
         <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
       </section>
       <section class="overview" aria-labelledby="overview-title">

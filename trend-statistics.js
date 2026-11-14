@@ -159,19 +159,21 @@
     return residuals.map((value) => value - mean);
   }
 
-  function monthlyCorrelations(residuals, variableIds) {
-    const lengths = Object.fromEntries(variableIds.map((id) => [id, Math.sqrt(dot(residuals[id], residuals[id]))]));
-    const correlations = Object.fromEntries(variableIds.map((id) => [id, {}]));
-    for (const [index, left] of variableIds.entries()) {
-      for (const right of variableIds.slice(index)) {
-        const denominator = lengths[left] * lengths[right];
-        const coefficient = denominator === 0 ? null : dot(residuals[left], residuals[right]) / denominator;
-        const bounded = coefficient === null ? null : Math.max(-1, Math.min(1, coefficient));
-        correlations[left][right] = bounded;
-        correlations[right][left] = bounded;
-      }
-    }
-    return correlations;
+  function pearson(x, y) {
+    const xMean = sum(x) / x.length;
+    const yMean = sum(y) / y.length;
+    const dx = x.map((value) => value - xMean);
+    const dy = y.map((value) => value - yMean);
+    const denominator = Math.sqrt(dot(dx, dx) * dot(dy, dy));
+    return denominator === 0 ? null : Math.max(-1, Math.min(1, dot(dx, dy) / denominator));
+  }
+
+  // Row variable in month t against column variable in month t + lag.
+  function monthlyCorrelations(residuals, variableIds, lag = 0) {
+    return Object.fromEntries(variableIds.map((left) => [left, Object.fromEntries(variableIds.map((right) => [
+      right,
+      pearson(residuals[left].slice(0, residuals[left].length - lag), residuals[right].slice(lag)),
+    ]))]));
   }
 
   function analyseRegion({ annual, monthly }, years, variableIds, baselineStart, baselineEnd) {
@@ -204,8 +206,8 @@
       };
       residuals[id] = monthlyResiduals(monthlyValues, time, timeSquared);
     }
-    return { series, correlations: monthlyCorrelations(residuals, variableIds) };
+    return { series, residuals };
   }
 
-  window.TrendStatistics = { analyseRegion, mannKendall };
+  window.TrendStatistics = { analyseRegion, mannKendall, monthlyCorrelations };
 })();

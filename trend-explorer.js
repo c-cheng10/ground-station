@@ -351,6 +351,12 @@
   }
 
   function renderCorrelations(variables) {
+    const lag = byId("lag").valueAsNumber;
+    const correlations = TrendStatistics.monthlyCorrelations(analysis.residuals, variables.map(({ id }) => id), lag);
+    byId("lag-value").textContent = lag === 1 ? "1 month" : `${lag} months`;
+    byId("lag-note").textContent = lag === 0
+      ? "Each cell compares the two variables in the same month."
+      : `Each cell compares the row variable with the column variable ${lag === 1 ? "1 month" : `${lag} months`} later. A strong value means the row variable tends to lead the column variable. The diagonal shows how much each variable persists over that gap.`;
     const matrix = byId("matrix");
     const head = create("thead");
     const headingRow = create("tr");
@@ -368,7 +374,7 @@
       heading.scope = "row";
       row.append(heading);
       for (const second of variables) {
-        const r = analysis.correlations[first.id][second.id];
+        const r = correlations[first.id][second.id];
         const cell = create("td", Number.isFinite(r) ? format(r, 2) : "N/A");
         if (Number.isFinite(r)) {
           const alpha = Math.abs(r) * 0.28;
@@ -580,6 +586,7 @@
     viewButtons.set(id, button);
     byId("chart-options").append(button);
   }
+  byId("lag").addEventListener("input", renderDetails);
   byId("compare-toggle").addEventListener("click", () => {
     compareMode = !compareMode;
     if (!compareMode) selectedIds = new Set([selectedIds.values().next().value]);
