@@ -33,16 +33,9 @@
     ctx.fillStyle = "#fff";
     for (const path of paths) ctx.fill(path, "evenodd");
     const land = ctx.getImageData(0, 0, width, height).data;
-    ctx.clearRect(0, 0, width, height);
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 0.85;
-    ctx.lineJoin = "round";
-    for (const path of paths) ctx.stroke(path);
-    const borders = ctx.getImageData(0, 0, width, height).data;
     const surface = ctx.createImageData(width, height);
     for (let i = 0; i < surface.data.length; i += 4) {
       surface.data[i] = land[i + 3];
-      surface.data[i + 1] = borders[i + 3];
       surface.data[i + 3] = 255;
     }
     ctx.putImageData(surface, 0, 0);

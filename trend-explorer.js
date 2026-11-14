@@ -1180,7 +1180,10 @@
     for (const { target } of entries) {
       if (target === byId("chart-stage")) drawChart();
       else if (target === byId("forecast-stage")) drawForecast();
-      else if (target === byId("trend-map-stage")) drawTrendMap();
+      else if (target === byId("trend-map-stage")) {
+        drawTrendMap();
+        syncStatic();
+      }
       else if (liveStripes.has(target)) drawStripes(target, ...liveStripes.get(target));
     }
   });
@@ -1195,9 +1198,16 @@
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
   const heatButton = byId("toggle-heat");
+  const autofocusButton = byId("camera-auto-focus");
+  const focusControl = byId("camera-focus");
+  const focusValue = byId("camera-focus-value");
+  const staticButton = byId("camera-static");
+  const grain = byId("camera-grain");
+  const cameraCoordinates = byId("camera-coordinates");
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
-  const fields = window.createGlobeFields({ countries: window.WORLD_MAP.countries, points });
-  const globe = window.createGlobeView(world);
+  const countries = window.WORLD_MAP.countries;
+  const fields = window.createGlobeFields({ countries, points });
+  const globe = window.createGlobeView(world, countries);
   if (!globe) {
     byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
     byId("data-error").hidden = false;
@@ -1215,6 +1225,13 @@
   let lensFrame = 0;
   const sensorSweep = 620;
   let flight = 0;
+  let autofocus = true;
+  let flightDefocus = 0;
+  let focusFrame = 0;
+  let blur = 0;
+  let staticTimer = 0;
+  let grainIndex = 0;
+  let grainTiles;
   let drawingArea = false;
   let magicPath = [];
   let magicPointer = null;
@@ -1319,6 +1336,7 @@
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, selection: fields.select(drawingArea ? null : site),
       relief: heatVisible && !drawingArea && site?.areaIds ? mapView.relief ?? 1 : 0 });
+    updateOptics(0.9 * Math.sin(Math.PI * lensProgress) ** 2);
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && heatVisible && !drawingArea && site?.areaIds);
     drawMagicEffects(now);
@@ -1329,6 +1347,97 @@
       pin.style.top = `${anchor[1]}px`;
     }
   }
+
+  const focalPosition = () => Math.round(16 + 68 * Math.log2(mapView.zoom) / 3);
+
+  function setDefocus(amount) {
+    const rounded = Math.round(amount * 20) / 20;
+    if (blur === rounded) return;
+    blur = rounded;
+    world.style.setProperty("--camera-defocus", `${blur}px`);
+  }
+
+  function updateOptics(lensDefocus = 0) {
+    const focusTarget = focalPosition();
+    if (autofocus) focusControl.value = focusTarget;
+    const setting = focusControl.valueAsNumber;
+    const mismatch = Math.abs(setting - focusTarget);
+    if (!focusFrame) setDefocus(autofocus ? (motion.matches ? 0 : Math.max(flightDefocus, lensDefocus)) : Math.min(5, mismatch * 0.085));
+    const focusText = autofocus ? "AUTO" : `${setting}%`;
+    if (focusValue.textContent !== focusText) focusValue.textContent = focusText;
+    focusControl.setAttribute("aria-valuetext", `${setting} percent, ${mismatch < 8 ? "in focus" : "soft focus"}`);
+    const [x, y] = viewCentre();
+    stage.style.setProperty("--camera-target-x", `${x}px`);
+    stage.style.setProperty("--camera-target-y", `${y}px`);
+    cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
+  }
+
+  function paintStatic() {
+    const ctx = grain.getContext("2d");
+    const [width, height] = mapSize();
+    if (!ctx || !width || !height) return;
+    if (!grainTiles) {
+      let seed = 0x924a239;
+      grainTiles = Array.from({ length: 5 }, () => {
+        const tile = document.createElement("canvas");
+        tile.width = tile.height = 160;
+        const tileCtx = tile.getContext("2d");
+        const image = tileCtx.createImageData(tile.width, tile.height);
+        for (let i = 0; i < image.data.length; i += 4) {
+          seed ^= seed << 13;
+          seed ^= seed >>> 17;
+          seed ^= seed << 5;
+          const value = seed & 255;
+          image.data[i] = image.data[i + 1] = image.data[i + 2] = value < 120 ? 0 : 235;
+          image.data[i + 3] = 8 + Math.round((seed >>> 8 & 63) * 0.76);
+        }
+        tileCtx.putImageData(image, 0, 0);
+        return ctx.createPattern(tile, "repeat");
+      });
+    }
+    if (grain.width !== width || grain.height !== height) {
+      grain.width = width;
+      grain.height = height;
+    }
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = grainTiles[grainIndex++ % grainTiles.length];
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  function syncStatic() {
+    clearInterval(staticTimer);
+    if (grain.hidden || document.hidden) return;
+    paintStatic();
+    if (!motion.matches) staticTimer = setInterval(paintStatic, 125);
+  }
+
+  autofocusButton.addEventListener("click", () => {
+    autofocus = !autofocus;
+    autofocusButton.setAttribute("aria-pressed", String(autofocus));
+    focusControl.disabled = autofocus;
+    cancelAnimationFrame(focusFrame);
+    focusFrame = 0;
+    if (autofocus && !motion.matches && blur > 0) {
+      const initialBlur = blur;
+      const started = performance.now();
+      const settle = (now) => {
+        const fraction = Math.min(1, (now - started) / 370);
+        setDefocus(initialBlur * (1 - ease(fraction)));
+        focusFrame = fraction < 1 ? requestAnimationFrame(settle) : 0;
+      };
+      focusFrame = requestAnimationFrame(settle);
+    }
+    updateOptics();
+  });
+  focusControl.addEventListener("input", () => updateOptics());
+  staticButton.addEventListener("click", () => {
+    grain.hidden = !grain.hidden;
+    staticButton.setAttribute("aria-pressed", String(!grain.hidden));
+    syncStatic();
+  });
+  document.addEventListener("visibilitychange", syncStatic);
+  motion.addEventListener("change", syncStatic);
+  syncStatic();
 
   function runLensChange() {
     if (!heatVisible || motion.matches || !displayedVariable || displayedVariable === trendMapVariable().id) {
@@ -1361,6 +1470,11 @@
     return [width / 2 + mapView.offsetX, height / 2 + mapView.offsetY];
   }
 
+  function stopFlight() {
+    cancelAnimationFrame(flight);
+    flightDefocus = 0;
+  }
+
   function flyTo(lat, lon, zoom, avoidPanel = true) {
     const [width] = mapSize();
     const open = avoidPanel && app.hasAttribute("data-drawer");
@@ -1377,7 +1491,7 @@
     const side = [-Math.sin(from.lon * radians), 0, Math.cos(from.lon * radians)];
     const tangent = Math.sin(angle) > 1e-5 ? endVector.map((n, i) => (n - startVector[i] * dot) / Math.sin(angle)) : side;
     const orbitFirst = angle > Math.PI * 0.42;
-    cancelAnimationFrame(flight);
+    stopFlight();
     mapTip.hidden = true;
     if (motion.matches) {
       Object.assign(mapView, target);
@@ -1398,6 +1512,8 @@
       mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * ease(t);
       mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * ease(t);
       mapView.relief = ease(Math.max(0, (t - 0.3) / 0.7));
+      const focusing = Math.max(0, (t - (orbitFirst ? 0.55 : 0)) / (orbitFirst ? 0.45 : 1));
+      flightDefocus = 1.35 * Math.sin(Math.PI * focusing) ** 2;
       if (t === 1) Object.assign(mapView, target);
       drawTrendMap(now);
       if (t < 1) flight = requestAnimationFrame(step);
@@ -1406,6 +1522,7 @@
   }
 
   function zoomBy(factor) {
+    stopFlight();
     mapView.zoom = clampZoom(mapView.zoom * factor);
     drawTrendMap();
   }
@@ -1470,7 +1587,7 @@
     areaHint.textContent = enabled ? magicInstructions : "";
     mapTip.hidden = true;
     if (enabled) {
-      cancelAnimationFrame(flight);
+      stopFlight();
       app.removeAttribute("data-drawer");
       mapView.offsetX = mapView.offsetY = 0;
       for (const option of mapVariable.options) option.disabled = false;
@@ -1559,7 +1676,7 @@
       magicPointer = { id: event.pointerId, start: point, tracing: false };
       return;
     }
-    cancelAnimationFrame(flight);
+    stopFlight();
     stage.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, point);
     const [a, b] = [...pointers.values()];
@@ -1643,7 +1760,6 @@
   stage.addEventListener("wheel", (event) => {
     event.preventDefault();
     if (magicPointer) return;
-    cancelAnimationFrame(flight);
     if (drawingArea && magicCentre) {
       magicRadius = Math.min(Math.min(...mapSize()) * 0.48, Math.max(9, magicRadius * Math.exp(-event.deltaY * 0.002)));
       drawMagicEffects(performance.now());
@@ -1652,7 +1768,7 @@
   world.addEventListener("keydown", (event) => {
     const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
     if (moves[event.key]) {
-      cancelAnimationFrame(flight);
+      stopFlight();
       mapView.lon = signedLongitude(mapView.lon + moves[event.key][0] * 15 / Math.sqrt(mapView.zoom));
       mapView.lat = clampLatitude(mapView.lat + moves[event.key][1] * 12 / Math.sqrt(mapView.zoom));
       drawTrendMap();
