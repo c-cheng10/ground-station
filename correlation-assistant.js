@@ -98,7 +98,7 @@
         const { country, first, second } = area;
         const answer = await window.countryCorrelation(country, [first.id, second.id], AbortSignal.timeout(30_000));
         if (!answer) {
-          reply.textContent = `The stored NASA grid points in ${country.name} don’t have enough complete years in common for this pair. Try a point or a smaller circle.`;
+          reply.textContent = `The stored NASA grid points in ${country.name} don’t have enough complete years in common for this pair. Try a point or a smaller area.`;
           return;
         }
         const { r, points, start, end } = answer;

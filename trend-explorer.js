@@ -355,7 +355,7 @@
       analysis = analyseRow(row);
       if (!Object.keys(analysis.series).length) {
         setRegionStatus(nextSite.areaIds
-          ? "No measurement has four consecutive complete years shared by all selected points. Try a smaller circle."
+          ? "No measurement has four consecutive complete years shared by all selected points. Try a smaller area."
           : `No measurement has four consecutive complete years at ${nextSite.name}.`);
         return;
       }
@@ -1081,17 +1081,18 @@
   const world = byId("trend-map");
   const mapTip = byId("map-tip");
   const pin = byId("map-pin");
-  const circleButton = byId("draw-circle");
-  const circleHint = byId("circle-hint");
+  const areaButton = byId("draw-circle");
+  const areaHint = byId("circle-hint");
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
   // Phones start zoomed in a little so squares are big enough to tap.
   const homeZoom = innerWidth < 760 ? 1.8 : 1;
   const mapView = { lon: 15, lat: 12, zoom: homeZoom };
   let revealLon = reduceMotion ? 180 : -180;
   let flight = 0;
-  let drawingCircle = false;
-  let circleDraft = null;
-  let circlePointer = null;
+  let drawingArea = false;
+  let outlineDraft = null; // [[lon, lat], ...] while drawing
+  let outlinePointer = null; // the pointer that is drawing, and where it started
+  let outlineCursor = null; // [lon, lat] under the mouse, for the next straight edge
 
   const mapSize = () => [world.clientWidth, world.clientHeight];
   // Plate carrée sized so the whole world (360° by the 144° the land records span) fits at zoom 1.
@@ -1163,21 +1164,36 @@
         ctx.stroke();
       }
     }
-    const circle = drawingCircle ? circleDraft : site?.circle;
-    if (circle) {
-      const [x, y] = project(circle.longitude, circle.latitude);
+    const outline = drawingArea ? outlineDraft : site?.outline;
+    if (outline?.length) {
+      const corners = outline.map(([lon, lat]) => project(lon, lat));
       ctx.beginPath();
-      ctx.arc(x, y, circle.radius * project.k, 0, 2 * Math.PI);
+      corners.forEach(([x, y], index) => ctx[index ? "lineTo" : "moveTo"](x, y));
+      if (drawingArea && outlineCursor && !outlinePointer) ctx.lineTo(...project(...outlineCursor));
+      if (!drawingArea || corners.length > 2) ctx.closePath();
       ctx.fillStyle = "rgb(31 78 156 / 0.15)";
-      ctx.fill();
+      if (corners.length > 2) ctx.fill();
+      ctx.lineJoin = "round";
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 5;
       ctx.stroke();
       ctx.strokeStyle = "#1f4e9c";
       ctx.lineWidth = 2;
       ctx.stroke();
+      if (drawingArea && !outlinePointer) {
+        // Corner dots for tap-to-draw; the first one is larger because tapping it finishes.
+        corners.forEach(([x, y], index) => {
+          ctx.beginPath();
+          ctx.arc(x, y, index ? 4 : 7, 0, 2 * Math.PI);
+          ctx.fillStyle = "#fff";
+          ctx.fill();
+          ctx.strokeStyle = "#1f4e9c";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        });
+      }
     }
-    if (drawingCircle) {
+    if (drawingArea) {
       ctx.beginPath();
       ctx.moveTo(width / 2 - 7, height / 2);
       ctx.lineTo(width / 2 + 7, height / 2);
@@ -1190,7 +1206,7 @@
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
-    if (site && !site.circle && !drawingCircle) {
+    if (site && !site.outline && !drawingArea) {
       const [x, y] = project(site.longitude, site.latitude);
       pin.hidden = false;
       pin.style.left = `${x}px`;
@@ -1272,7 +1288,7 @@
   }
 
   function openDrawer() {
-    if (drawingCircle) setCircleMode(false);
+    if (drawingArea) setAreaMode(false);
     if (!app.hasAttribute("data-drawer")) {
       app.setAttribute("data-drawer", "");
       byId("welcome").hidden = true;
@@ -1289,17 +1305,18 @@
 
   const pointers = new Map();
   let drag = null;
-  const circleInstructions = "Drag from the centre, or select the centre and edge. With the keyboard, move the map with the arrow keys and press Enter for each point.";
-  const describeCircle = (message) => { circleHint.textContent = message; };
+  const outlineInstructions = "Drag to draw around an area, or tap corners and tap the first one to finish. Keyboard: zoom in with +, move with the arrows, Enter adds a corner at the centre, Backspace removes one, Space finishes, Esc cancels.";
+  const describeOutline = (message) => { areaHint.textContent = message; };
 
-  function setCircleMode(enabled) {
-    drawingCircle = enabled;
-    circleDraft = null;
-    circlePointer = null;
+  function setAreaMode(enabled) {
+    drawingArea = enabled;
+    outlineDraft = null;
+    outlinePointer = null;
+    outlineCursor = null;
     stage.toggleAttribute("data-drawing", enabled);
-    circleButton.setAttribute("aria-pressed", String(enabled));
-    circleHint.hidden = !enabled;
-    describeCircle(enabled ? circleInstructions : "");
+    areaButton.setAttribute("aria-pressed", String(enabled));
+    areaHint.hidden = !enabled;
+    describeOutline(enabled ? outlineInstructions : "");
     mapTip.hidden = true;
     if (enabled) {
       cancelAnimationFrame(flight);
@@ -1311,46 +1328,71 @@
     drawTrendMap();
   }
 
-  function setCircleEdge(x, y) {
-    const [longitude, latitude] = projector(...mapSize()).invert(x, y);
-    circleDraft.radius = Math.hypot(longitude - circleDraft.longitude, latitude - circleDraft.latitude);
+  const toMap = (x, y) => projector(...mapSize()).invert(x, y);
+
+  function addCorner(x, y) {
+    const last = outlineDraft?.at(-1);
+    if (last) {
+      const [lx, ly] = projector(...mapSize())(...last);
+      if (Math.hypot(x - lx, y - ly) < 8) {
+        describeOutline("That’s on top of the last corner. Move the map first (zoom in with + so the arrows can move it).");
+        return;
+      }
+    }
+    outlineDraft = [...(outlineDraft || []), toMap(x, y)];
+    const count = outlineDraft.length;
+    describeOutline(count < 3
+      ? `${count} ${count === 1 ? "corner" : "corners"} placed. Add at least ${3 - count} more.`
+      : `${count} corners. Tap the first corner, or press Space, to finish.`);
     drawTrendMap();
   }
 
-  function setCircleCentre(x, y) {
-    const [longitude, latitude] = projector(...mapSize()).invert(x, y);
-    circleDraft = { longitude, latitude, radius: 0 };
-    describeCircle("Centre set. Select the circle’s edge, or move the map with the arrow keys and press Enter.");
-    drawTrendMap();
+  // Ray casting in longitude/latitude, matching how the outline is drawn on this flat map.
+  function insideOutline(lat, lon, outline) {
+    let inside = false;
+    for (let i = 0, j = outline.length - 1; i < outline.length; j = i, i += 1) {
+      const [x1, y1] = outline[i];
+      const [x2, y2] = outline[j];
+      if ((y1 > lat) !== (y2 > lat) && lon < x1 + (lat - y1) * (x2 - x1) / (y2 - y1)) inside = !inside;
+    }
+    return inside;
   }
 
-  function completeCircle() {
-    const circle = circleDraft;
-    const { latitude, longitude, radius } = circle;
-    // Use the same projected circle to select grid centres and draw the outline.
-    const areaIds = points.filter(([lat, lon]) => Math.hypot(lat - latitude, lon - longitude) <= radius)
-      .map(([lat, lon]) => `${lat},${lon}`);
+  function completeOutline() {
+    const outline = outlineDraft;
+    if (!outline || outline.length < 3) {
+      describeOutline("An area needs at least 3 corners. Keep drawing, or press Esc to cancel.");
+      return;
+    }
+    const areaIds = points.filter(([lat, lon]) => insideOutline(lat, lon, outline)).map(([lat, lon]) => `${lat},${lon}`);
     if (!areaIds.length) {
-      circleDraft = null;
-      describeCircle("No grid points inside. Draw a larger circle or move it over the map squares.");
+      outlineDraft = null;
+      describeOutline("No grid points inside. Draw a bigger outline over the coloured squares.");
       drawTrendMap();
       return;
     }
-    setCircleMode(false);
-    selectSite({ id: `area:${latitude},${longitude},${radius}`, name: "Selected area",
-      latitude, longitude, circle, areaIds });
+    const longitude = outline.reduce((total, [lon]) => total + lon, 0) / outline.length;
+    const latitude = outline.reduce((total, [, lat]) => total + lat, 0) / outline.length;
+    setAreaMode(false);
+    selectSite({ id: `area:${outline.map((corner) => corner.map((v) => v.toFixed(2)).join(",")).join(";")}`,
+      name: "Selected area", latitude, longitude, outline, areaIds });
   }
 
-  circleButton.addEventListener("click", () => setCircleMode(!drawingCircle));
+  // True when a tap lands on the first corner, which closes the outline.
+  function nearFirstCorner(x, y) {
+    if (!outlineDraft || outlineDraft.length < 3) return false;
+    const [fx, fy] = projector(...mapSize())(...outlineDraft[0]);
+    return Math.hypot(x - fx, y - fy) < 14;
+  }
+
+  areaButton.addEventListener("click", () => setAreaMode(!drawingArea));
   stage.addEventListener("pointerdown", (event) => {
     if (event.button > 0) return;
-    if (drawingCircle) {
-      if (circlePointer) return;
+    if (drawingArea) {
+      if (outlinePointer) return;
       stage.setPointerCapture(event.pointerId);
       const { offsetX: x, offsetY: y } = event;
-      circlePointer = { id: event.pointerId, hasCentre: Boolean(circleDraft), x, y };
-      if (!circleDraft) setCircleCentre(x, y);
-      else setCircleEdge(x, y);
+      outlinePointer = { id: event.pointerId, x, y, lastX: x, lastY: y, traced: false, corners: outlineDraft?.length || 0 };
       return;
     }
     stage.setPointerCapture(event.pointerId);
@@ -1364,9 +1406,25 @@
     mapTip.hidden = true;
   });
   stage.addEventListener("pointermove", (event) => {
-    if (drawingCircle) {
-      if (circleDraft && (circlePointer?.id === event.pointerId || (!circlePointer && event.pointerType === "mouse"))) {
-        setCircleEdge(event.offsetX, event.offsetY);
+    if (drawingArea) {
+      const { offsetX: x, offsetY: y } = event;
+      if (outlinePointer?.id === event.pointerId) {
+        if (!outlinePointer.traced && Math.hypot(x - outlinePointer.x, y - outlinePointer.y) < 6) return;
+        if (!outlinePointer.traced) {
+          // A drag starts a fresh freehand outline from where the press began.
+          outlinePointer.traced = true;
+          outlineDraft = [toMap(outlinePointer.x, outlinePointer.y)];
+          describeOutline("Keep drawing, then let go to close the outline.");
+        }
+        if (Math.hypot(x - outlinePointer.lastX, y - outlinePointer.lastY) >= 5) {
+          outlineDraft.push(toMap(x, y));
+          outlinePointer.lastX = x;
+          outlinePointer.lastY = y;
+          drawTrendMap();
+        }
+      } else if (!outlinePointer && outlineDraft?.length && event.pointerType === "mouse") {
+        outlineCursor = toMap(x, y);
+        drawTrendMap();
       }
       return;
     }
@@ -1389,19 +1447,20 @@
     drawTrendMap();
   });
   const endPointer = (event) => {
-    if (drawingCircle) {
-      if (circlePointer?.id !== event.pointerId) return;
-      const { x, y, hasCentre } = circlePointer;
-      circlePointer = null;
+    if (drawingArea) {
+      if (outlinePointer?.id !== event.pointerId) return;
+      const { traced } = outlinePointer;
+      outlinePointer = null;
       if (event.type === "pointercancel") {
-        if (!hasCentre) {
-          circleDraft = null;
-          describeCircle(circleInstructions);
-        }
+        if (traced) outlineDraft = null;
+        describeOutline(outlineInstructions);
         drawTrendMap();
-      } else if (hasCentre || Math.hypot(event.offsetX - x, event.offsetY - y) >= 5) {
-        setCircleEdge(event.offsetX, event.offsetY);
-        completeCircle();
+      } else if (traced) {
+        completeOutline();
+      } else if (nearFirstCorner(event.offsetX, event.offsetY)) {
+        completeOutline();
+      } else {
+        addCorner(event.offsetX, event.offsetY);
       }
       return;
     }
@@ -1434,15 +1493,15 @@
     } else if (event.key === "+" || event.key === "=") zoomAt(width / 2, height / 2, 1.5);
     else if (event.key === "-") zoomAt(width / 2, height / 2, 1 / 1.5);
     else if (event.key === "Enter") {
-      if (!drawingCircle) choosePoint(mapView.lat, mapView.lon);
-      else if (!circleDraft) setCircleCentre(width / 2, height / 2);
-      else {
-        setCircleEdge(width / 2, height / 2);
-        completeCircle();
-      }
-    }
-    else return;
-    if (drawingCircle && circleDraft && moves[event.key]) setCircleEdge(width / 2, height / 2);
+      if (!drawingArea) choosePoint(mapView.lat, mapView.lon);
+      else if (nearFirstCorner(width / 2, height / 2)) completeOutline();
+      else addCorner(width / 2, height / 2);
+    } else if (drawingArea && event.key === " ") completeOutline();
+    else if (drawingArea && event.key === "Backspace" && outlineDraft?.length) {
+      outlineDraft = outlineDraft.slice(0, -1);
+      describeOutline(outlineDraft.length ? `${outlineDraft.length} corners placed.` : outlineInstructions);
+      drawTrendMap();
+    } else return;
     event.preventDefault();
   });
   byId("zoom-in").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom * 2, false));
@@ -1458,7 +1517,7 @@
   byId("close-welcome").addEventListener("click", hideWelcome);
   byId("explore-map").addEventListener("click", hideWelcome);
   byId("show-welcome").addEventListener("click", () => {
-    if (drawingCircle) setCircleMode(false);
+    if (drawingArea) setAreaMode(false);
     closeDrawer();
     byId("welcome").hidden = false;
     byId("close-welcome").focus();
@@ -1474,9 +1533,9 @@
   how.addEventListener("click", (event) => { if (event.target === how) how.close(); });
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || how.open || assistantDialog.open) return;
-    if (drawingCircle) {
-      setCircleMode(false);
-      circleButton.focus();
+    if (drawingArea) {
+      setAreaMode(false);
+      areaButton.focus();
     } else if (app.hasAttribute("data-drawer")) closeDrawer();
     else if (!byId("welcome").hidden) hideWelcome();
   });
