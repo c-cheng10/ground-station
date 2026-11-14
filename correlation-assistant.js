@@ -63,7 +63,7 @@
 
   function showAreaAnswer(answer, question) {
     if (answer.status === "outside_coverage") {
-      reply.textContent = "No stored NASA grid point is close enough to that place. Try another place or use Draw area around map squares.";
+      reply.textContent = "No stored NASA grid point is close enough to that place. Try another place or use Magic select on the globe.";
       return;
     }
     if (answer.status === "unavailable") {
@@ -144,7 +144,7 @@
           return;
         }
         if (!point_id || area.kind === "trend") {
-          reply.textContent = "Name a city or country, or use Draw area on the map before asking about an area.";
+          reply.textContent = "Name a city or country, or use Magic select on the globe before asking about an area.";
           return;
         }
       }

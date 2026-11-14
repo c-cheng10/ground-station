@@ -344,7 +344,7 @@
     byId("story").hidden = true;
     explorer.scrollTop = 0;
     openDrawer();
-    flyTo(nextSite.latitude, nextSite.longitude, nextSite.zoom ?? (nextSite.areaIds ? mapView.zoom : Math.max(mapView.zoom, 3)));
+    flyTo(nextSite.latitude, nextSite.longitude, focusZoom(nextSite));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
@@ -549,15 +549,8 @@
       selected = nearby.map(({ coords }) => coords);
       distance = Math.ceil(nearby.at(-1).km);
     }
-    const [width, height] = mapSize();
-    const availableWidth = width > 760 ? width - byId("drawer").offsetWidth : width;
-    const panelHeight = width > 760 ? 0 : byId("drawer").offsetHeight;
-    const availableHeight = height - panelHeight - byId("map-toolbar").getBoundingClientRect().bottom - 12;
-    const extentX = Math.max(...selected.map(([, lon]) => Math.abs(lon - longitude))) + 2.5;
-    const extentY = Math.max(...selected.map(([lat]) => Math.abs(lat - latitude))) + 2.5;
-    const zoom = Math.max(1, Math.min(8, Math.min(availableWidth / (extentX * 2), availableHeight / (extentY * 2)) / baseScale(width, height)));
     const areaIds = selected.map(([lat, lon]) => `${lat},${lon}`);
-    return { id: `assistant:${name}:${latitude},${longitude}`, name, latitude, longitude, areaIds, selected, distance, zoom,
+    return { id: `assistant:${name}:${latitude},${longitude}`, name, latitude, longitude, areaIds, distance,
       outsideBorder: Boolean(country && direction && !interior) };
   }
 
@@ -609,10 +602,14 @@
     if (!entry) return;
     const unit = `${trendUnit(variable)} per decade`;
     byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
-    const scale = stripeScales[variable.id] || stripeScales.T2M;
-    byId("trend-ramp").style.background = `linear-gradient(90deg, rgb(${scale.low}), rgb(247 247 247), rgb(${scale.high}))`;
+    const { low, mid, high } = heatPalette(variable.id);
+    byId("trend-ramp").style.background = `linear-gradient(90deg, rgb(${low}), rgb(${mid}), rgb(${high}))`;
+    byId("trend-ramp").parentElement.hidden = !heatVisible;
+    const note = byId("heatmap-note");
+    if (note) note.textContent = heatVisible ? "Fainter colour marks weaker evidence or the edge of coverage." : "Heatmap off. You can still select grid points.";
     byId("trend-low").textContent = `${format(-entry.scale, variable.decimals + 1, true)}`;
     byId("trend-high").textContent = `${format(entry.scale, variable.decimals + 1, true)} ${unit}`;
+    runLensChange();
     const ranked = points.map(([lat, lon], k) => ({ lat, lon, slope: entry.slope[k], significant: entry.significant[k] }))
       .filter((item) => item.significant && item.slope !== null);
     const list = (id, items) => byId(id).replaceChildren(...(items.length ? items.map((item) => {
@@ -647,7 +644,7 @@
     byId("story").hidden = true;
     openDrawer();
     drawTrendMap();
-    setRegionStatus("No stored Giovanni point is close enough. Choose a place near one of the map squares.");
+    setRegionStatus("No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
   }
 
   function latLon(item) {
@@ -720,7 +717,7 @@
         const cell = create("td", Number.isFinite(r) ? format(r, 2) : "N/A");
         if (Number.isFinite(r)) {
           const alpha = Math.abs(r) * 0.28;
-          cell.style.backgroundColor = r < 0 ? `rgba(166, 100, 59, ${alpha})` : `rgba(28, 117, 88, ${alpha})`;
+          cell.style.backgroundColor = r < 0 ? `rgba(240, 127, 103, ${alpha})` : `rgba(75, 195, 176, ${alpha})`;
         }
         row.append(cell);
       }
@@ -765,7 +762,7 @@
       const trend = analysis.series[variable.id].trend;
       const unit = trendUnit(variable);
       byId("chart-title").textContent = `${variable.name} over time (${variable.unit})`;
-      const location = site.outline ? "in the selected area" :
+      const location = site.drawn ? "in the selected area" :
         site.outsideBorder ? site.name[0].toLowerCase() + site.name.slice(1) : `in ${site.name}`;
       byId("result-headline").textContent = `${variable.name} ${location} ${{
         rising: "is rising", falling: "is falling", inconclusive: "shows no clear trend yet",
@@ -930,12 +927,12 @@
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     for (const tick of ticks) {
-      ctx.strokeStyle = Math.abs(tick) < 1e-9 ? "#8a9bab" : "#dfe6ec";
+      ctx.strokeStyle = Math.abs(tick) < 1e-9 ? "#637986" : "#293842";
       ctx.beginPath();
       ctx.moveTo(left, y(tick));
       ctx.lineTo(right, y(tick));
       ctx.stroke();
-      ctx.fillStyle = "#46596c";
+      ctx.fillStyle = "#a5b8c3";
       ctx.fillText(format(tick, decimals), left - 9, y(tick));
     }
     ctx.textAlign = "center";
@@ -945,12 +942,12 @@
     }
 
     if (ahead) {
-      ctx.fillStyle = "#a8402a2e";
+      ctx.fillStyle = "#ff9c822e";
       ctx.beginPath();
       predicted.forEach((value, k) => ctx[k ? "lineTo" : "moveTo"](x(offset + k), y(value + band[k])));
       for (let k = predicted.length - 1; k >= 0; k -= 1) ctx.lineTo(x(offset + k), y(predicted[k] - band[k]));
       ctx.fill();
-      ctx.strokeStyle = "#9fb0c0";
+      ctx.strokeStyle = "#617485";
       ctx.setLineDash([2, 3]);
       ctx.beginPath();
       ctx.moveTo(x(offset - 0.5), top);
@@ -958,7 +955,7 @@
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.textAlign = "left";
-      ctx.fillStyle = "#7d2a18";
+      ctx.fillStyle = "#ffb19a";
       ctx.fillText("Forecast", x(offset - 0.5) + 6, top);
     }
 
@@ -972,9 +969,9 @@
       ctx.stroke();
       ctx.setLineDash([]);
     };
-    line(actual, 0, "#1f4e9c", false);
+    line(actual, 0, "#7cdeec", false);
     // In forecast view the dashed line starts from the last real month so the two join up.
-    line(ahead ? [actual.at(-1), ...predicted] : predicted, ahead ? offset - 1 : 0, "#a8402a", true);
+    line(ahead ? [actual.at(-1), ...predicted] : predicted, ahead ? offset - 1 : 0, "#ff9c82", true);
   }
 
   function updateView() {
@@ -1029,13 +1026,13 @@
     chartLayout = { left, right, length: values.length };
 
     ctx.lineWidth = 1;
-    ctx.strokeStyle = "#dfe6ec";
-    ctx.fillStyle = "#46596c";
+    ctx.strokeStyle = "#293842";
+    ctx.fillStyle = "#a5b8c3";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
     for (const tick of ticks) {
       const yPos = y(tick);
-      ctx.strokeStyle = view === "anomaly" && Math.abs(tick) < 1e-9 ? "#8a9bab" : "#dfe6ec";
+      ctx.strokeStyle = view === "anomaly" && Math.abs(tick) < 1e-9 ? "#637986" : "#293842";
       ctx.beginPath();
       ctx.moveTo(left, yPos);
       ctx.lineTo(right, yPos);
@@ -1055,7 +1052,7 @@
       ctx.fillText(String(year), x(index), bottom + 10);
     }
 
-    ctx.strokeStyle = "#1f4e9c";
+    ctx.strokeStyle = "#7cdeec";
     ctx.lineWidth = 2.1;
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -1067,7 +1064,7 @@
     ctx.stroke();
 
     if (annual) {
-      ctx.strokeStyle = "#a8402a";
+      ctx.strokeStyle = "#ff9c82";
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 4]);
       ctx.beginPath();
@@ -1082,14 +1079,14 @@
       const value = values[activeIndex];
       const xPos = x(activeIndex);
       const yPos = Number.isFinite(value) ? y(value) : top;
-      ctx.strokeStyle = "#9fb0c0";
+      ctx.strokeStyle = "#617485";
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(xPos, top);
       ctx.lineTo(xPos, bottom);
       ctx.stroke();
       if (Number.isFinite(value)) {
-        ctx.fillStyle = "#1f4e9c";
+        ctx.fillStyle = "#7cdeec";
         ctx.beginPath();
         ctx.arc(xPos, yPos, 4.5, 0, 2 * Math.PI);
         ctx.fill();
@@ -1188,218 +1185,240 @@
     }
   });
 
-  // ---- Full-screen map: pan, zoom, hover, click ----
+  // ---- Satellite globe and input ----
   const app = byId("app");
   const stage = byId("trend-map-stage");
   const world = byId("trend-map");
+  const effects = byId("globe-effects");
   const mapTip = byId("map-tip");
   const pin = byId("map-pin");
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
-  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  // Phones start zoomed in a little so squares are big enough to tap.
-  const homeZoom = innerWidth < 760 ? 1.8 : 1;
-  const mapView = { lon: 15, lat: 12, zoom: homeZoom };
-  let revealLon = reduceMotion ? 180 : -180;
+  const heatButton = byId("toggle-heat");
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  const fields = window.createGlobeFields({ countries: window.WORLD_MAP.countries, points });
+  const globe = window.createGlobeView(world);
+  if (!globe) {
+    byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
+    byId("data-error").hidden = false;
+    return;
+  }
+  const temperature = { low: [78, 190, 245], mid: [225, 234, 228], high: [250, 116, 88] };
+  const moisture = { low: [242, 152, 95], mid: [226, 236, 226], high: [66, 220, 197] };
+  const wind = { low: [91, 199, 249], mid: [231, 233, 244], high: [195, 136, 246] };
+  const heatPalette = (id) => ["T2M", "TS"].includes(id) ? temperature : id === "WS10M" ? wind : moisture;
+  const home = { lat: 17, lon: -18, zoom: 1 };
+  const mapView = { ...home, offsetX: 0, offsetY: 0 };
+  let heatVisible = true;
+  let displayedVariable;
+  let lensStarted = 0;
+  let lensFrame = 0;
+  const sensorSweep = 620;
   let flight = 0;
   let drawingArea = false;
-  let outlineDraft = null; // [[lon, lat], ...] while drawing
-  let outlinePointer = null; // the pointer that is drawing, and where it started
-  let outlineCursor = null; // [lon, lat] under the mouse, for the next straight edge
-
+  let magicPath = [];
+  let magicPointer = null;
+  let magicCentre = null;
+  let magicRadius = 34;
+  let burst;
+  const pointers = new Map();
+  let drag = null;
+  const magicInstructions = "Draw most of a circle, then release. Or tap its centre and edge. Keyboard: move with arrows, Enter marks the centre, + or − changes the radius, Enter selects, Esc cancels.";
   const mapSize = () => [world.clientWidth, world.clientHeight];
-  // Plate carrée sized so the whole world (360° by the 144° the land records span) fits at zoom 1.
-  const baseScale = (width, height) => Math.min(width / 360, height / 144);
+  const radians = Math.PI / 180;
+  const ease = (value) => value * value * (3 - 2 * value);
+  const clampZoom = (zoom) => Math.min(8, Math.max(1, zoom));
+  const clampLatitude = (latitude) => Math.min(89.9, Math.max(-89.9, latitude));
+  const toVector = (lat, lon) => [
+    Math.cos(lat * radians) * Math.cos(lon * radians),
+    Math.sin(lat * radians),
+    Math.cos(lat * radians) * Math.sin(lon * radians),
+  ];
 
-  function projector(width, height) {
-    const k = baseScale(width, height) * mapView.zoom;
-    const project = (lon, lat) => [width / 2 + (lon - mapView.lon) * k, height / 2 - (lat - mapView.lat) * k];
-    project.invert = (x, y) => [mapView.lon + (x - width / 2) / k, mapView.lat - (y - height / 2) / k];
-    project.k = k;
-    return project;
-  }
-
-  function clampView() {
+  function focusZoom(target) {
+    if (!target.areaIds) return Math.max(mapView.zoom, 3.1);
+    const spread = Math.max(2.5, ...target.areaIds.map((id) => {
+      const [lat, lon] = id.split(",").map(Number);
+      return distanceKm(target.latitude, target.longitude, lat, lon) / 111;
+    }));
     const [width, height] = mapSize();
-    mapView.zoom = Math.min(16, Math.max(1, mapView.zoom));
-    const k = baseScale(width, height) * mapView.zoom;
-    const halfLon = width / 2 / k;
-    const halfLat = height / 2 / k;
-    mapView.lon = halfLon >= 180 ? 0 : Math.min(180 - halfLon, Math.max(-180 + halfLon, mapView.lon));
-    if (width <= 760 && app.hasAttribute("data-drawer")) {
-      const toolbar = byId("map-toolbar").getBoundingClientRect().bottom;
-      const sheet = byId("drawer").offsetHeight;
-      const visibleHalf = Math.max(0, height - toolbar - sheet) / 2 / k;
-      const offset = (toolbar - sheet) / 2 / k;
-      mapView.lat = (visibleHalf >= 72 ? 12 :
-        Math.min(84 - visibleHalf, Math.max(-60 + visibleHalf, mapView.lat - offset))) + offset;
-      return;
-    }
-    mapView.lat = halfLat >= 72 ? 12 : Math.min(84 - halfLat, Math.max(-60 + halfLat, mapView.lat));
+    const mobile = width <= 760;
+    const visibleWidth = mobile ? width : width - byId("drawer").offsetWidth;
+    const visibleHeight = mobile ? height - byId("drawer").offsetHeight - byId("map-toolbar").offsetHeight : height;
+    const available = Math.min(visibleWidth, visibleHeight);
+    return clampZoom(globe.zoomFor(spread + 2.5, Math.max(30, available * 0.44)));
   }
 
-  function drawTrendMap() {
-    const drawing = prepareCanvas(world);
+  function drawMagicEffects(now) {
+    const drawing = prepareCanvas(effects);
     if (!drawing) return;
     const { ctx, width, height } = drawing;
-    clampView();
-    const project = projector(width, height);
-    const variable = trendMapVariable();
-    const entry = trendMap[variable.id];
-    const scale = stripeScales[variable.id] || stripeScales.T2M;
-    ctx.fillStyle = "#d6e3ed";
-    ctx.fillRect(0, 0, width, height);
-    const countries = window.WORLD_MAP?.countries || [];
-    const trace = (polygon) => {
+    ctx.clearRect(0, 0, width, height);
+    const [cx, cy] = viewCentre();
+    if (drawingArea && !magicPath.length && !magicCentre) {
+      ctx.strokeStyle = "rgba(244,250,255,.85)";
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
-      for (const ring of polygon) {
-        ring.forEach(([lon, lat], index) => ctx[index ? "lineTo" : "moveTo"](...project(lon, lat)));
-        ctx.closePath();
-      }
-    };
-    ctx.fillStyle = "#f6f8fa";
-    for (const country of countries) {
-      for (const polygon of country.polygons) {
-        trace(polygon);
-        ctx.fill("evenodd");
-      }
-    }
-    if (entry) {
-      // Points sit on a 3° lattice, so each square covers its share of the map.
-      points.forEach(([lat, lon], k) => {
-        const slope = entry.slope[k];
-        if (slope === null || lon > revealLon) return;
-        const [left, top] = project(lon - 1.5, lat + 1.5);
-        const [right, bottom] = project(lon + 1.5, lat - 1.5);
-        if (right < 0 || left > width || bottom < 0 || top > height) return;
-        ctx.globalAlpha = entry.significant[k] ? 1 : 0.28;
-        ctx.fillStyle = `rgb(${stripeColour(scale, slope / entry.scale)})`;
-        ctx.fillRect(left, top, right - left + 0.6, bottom - top + 0.6);
-      });
-      ctx.globalAlpha = 1;
-    }
-    ctx.strokeStyle = "#8a9db0";
-    ctx.lineWidth = 0.7;
-    for (const country of countries) {
-      for (const polygon of country.polygons) {
-        trace(polygon);
-        ctx.stroke();
-      }
-    }
-    const outline = drawingArea ? outlineDraft : site?.outline;
-    if (outline?.length) {
-      const corners = outline.map(([lon, lat]) => project(lon, lat));
-      ctx.beginPath();
-      corners.forEach(([x, y], index) => ctx[index ? "lineTo" : "moveTo"](x, y));
-      if (drawingArea && outlineCursor && !outlinePointer) ctx.lineTo(...project(...outlineCursor));
-      if (!drawingArea || corners.length > 2) ctx.closePath();
-      ctx.fillStyle = "rgb(31 78 156 / 0.15)";
-      if (corners.length > 2) ctx.fill();
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 5;
+      ctx.moveTo(cx - 7, cy);
+      ctx.lineTo(cx + 7, cy);
+      ctx.moveTo(cx, cy - 7);
+      ctx.lineTo(cx, cy + 7);
       ctx.stroke();
-      ctx.strokeStyle = "#1f4e9c";
+    }
+    if (magicPath.length || magicCentre) {
+      ctx.beginPath();
+      if (magicPath.length) magicPath.forEach(([x, y], index) => ctx[index ? "lineTo" : "moveTo"](x, y));
+      else ctx.arc(...magicCentre, magicRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(138,221,255,.36)";
+      ctx.lineWidth = 7;
+      ctx.shadowColor = "#8bddff";
+      ctx.shadowBlur = 14;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "#f8fdff";
       ctx.lineWidth = 2;
       ctx.stroke();
-      if (drawingArea && !outlinePointer) {
-        // Corner dots for tap-to-draw; the first one is larger because tapping it finishes.
-        corners.forEach(([x, y], index) => {
-          ctx.beginPath();
-          ctx.arc(x, y, index ? 4 : 7, 0, 2 * Math.PI);
-          ctx.fillStyle = "#fff";
-          ctx.fill();
-          ctx.strokeStyle = "#1f4e9c";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        });
-      }
     }
-    if (!drawingArea && site?.selected) {
-      ctx.fillStyle = "rgb(31 78 156 / 0.17)";
-      for (const [lat, lon] of site.selected) {
-        const [x, y] = project(lon - 1.5, lat + 1.5);
-        const size = 3 * project.k;
-        ctx.fillRect(x, y, size, size);
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "#fff";
-        ctx.strokeRect(x, y, size, size);
-        ctx.lineWidth = 1.4;
-        ctx.strokeStyle = "#1f4e9c";
-        ctx.strokeRect(x, y, size, size);
-      }
-    }
-    if (drawingArea) {
+    const sparkle = ([x, y], size, alpha) => {
+      ctx.fillStyle = `rgba(220,249,255,${alpha})`;
       ctx.beginPath();
-      ctx.moveTo(width / 2 - 7, height / 2);
-      ctx.lineTo(width / 2 + 7, height / 2);
-      ctx.moveTo(width / 2, height / 2 - 7);
-      ctx.lineTo(width / 2, height / 2 + 7);
-      ctx.strokeStyle = "#fff";
-      ctx.lineWidth = 4;
-      ctx.stroke();
-      ctx.strokeStyle = "#1f4e9c";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-    if (site && !site.areaIds && !drawingArea) {
-      const [x, y] = project(site.longitude, site.latitude);
-      pin.hidden = false;
-      pin.style.left = `${x}px`;
-      pin.style.top = `${y}px`;
-    } else {
-      pin.hidden = true;
+      ctx.moveTo(x, y - size);
+      ctx.quadraticCurveTo(x + 0.8, y - 0.8, x + size, y);
+      ctx.quadraticCurveTo(x + 0.8, y + 0.8, x, y + size);
+      ctx.quadraticCurveTo(x - 0.8, y + 0.8, x - size, y);
+      ctx.quadraticCurveTo(x - 0.8, y - 0.8, x, y - size);
+      ctx.fill();
+    };
+    if (!motion.matches) {
+      magicPath.forEach(([x, y], index) => {
+        if (index % 4 === 0) sparkle([x + Math.sin(index * 2.4) * 9, y + Math.cos(index * 2.4) * 9], 2 + index % 3, 0.78);
+      });
+      if (burst) {
+        const t = Math.min(1, (now - burst.start) / 670);
+        for (let i = 0; i < 22; i += 1) {
+          const angle = i * 2.39996;
+          const distance = burst.radius * (0.72 + (i % 4) * 0.08) + t * (16 + i % 5 * 5);
+          sparkle([burst.x + Math.cos(angle) * distance, burst.y + Math.sin(angle) * distance], (3 + i % 4) * (1 - 0.55 * t), (1 - t) ** 1.4);
+        }
+        if (t === 1) burst = null;
+      }
     }
   }
 
-  // Animate the view to a place; on wide screens keep it clear of the results panel.
-  function flyTo(lat, lon, zoom, avoidPanel = true) {
+  function drawTrendMap(now = performance.now()) {
+    const elapsed = lensStarted ? Math.max(0, now - lensStarted) : Infinity;
+    const lensProgress = Math.min(1, elapsed / sensorSweep);
+    const lens = 1 - 0.115 * Math.sin(Math.PI * lensProgress) ** 2;
+    const variableId = lensProgress < 0.42 && displayedVariable ? displayedVariable : trendMapVariable().id;
+    if (lensProgress >= 0.42) displayedVariable = variableId;
+    const texture = heatVisible && trendMap[variableId]
+      ? fields.measurement(trendMap[variableId], heatPalette(variableId)) : {};
+    globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
+      offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
+      ...texture, selection: fields.select(drawingArea ? null : site),
+      relief: heatVisible && !drawingArea && site?.areaIds ? mapView.relief ?? 1 : 0 });
+    const reliefNote = byId("relief-note");
+    if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && heatVisible && !drawingArea && site?.areaIds);
+    drawMagicEffects(now);
+    const anchor = !drawingArea && site && !site.areaIds && globe.project(site.longitude, site.latitude);
+    pin.hidden = !anchor;
+    if (anchor) {
+      pin.style.left = `${anchor[0]}px`;
+      pin.style.top = `${anchor[1]}px`;
+    }
+  }
+
+  function runLensChange() {
+    if (!heatVisible || motion.matches || !displayedVariable || displayedVariable === trendMapVariable().id) {
+      if (lensStarted) {
+        lensStarted = 0;
+        cancelAnimationFrame(lensFrame);
+        stage.removeAttribute("data-lens-change");
+      }
+      return;
+    }
+    if (lensStarted && stage.dataset.lensChange === trendMapVariable().id) return;
+    cancelAnimationFrame(lensFrame);
+    stage.removeAttribute("data-lens-change");
+    void stage.offsetWidth;
+    stage.dataset.lensChange = trendMapVariable().id;
+    lensStarted = performance.now();
+    const step = (now) => {
+      drawTrendMap(now);
+      if (now - lensStarted < sensorSweep) lensFrame = requestAnimationFrame(step);
+      else {
+        lensStarted = 0;
+        stage.removeAttribute("data-lens-change");
+      }
+    };
+    lensFrame = requestAnimationFrame(step);
+  }
+
+  function viewCentre() {
     const [width, height] = mapSize();
+    return [width / 2 + mapView.offsetX, height / 2 + mapView.offsetY];
+  }
+
+  function flyTo(lat, lon, zoom, avoidPanel = true) {
+    const [width] = mapSize();
     const open = avoidPanel && app.hasAttribute("data-drawer");
-    // Side panel on wide screens, bottom sheet on phones: centre the place in the map that stays visible.
-    const panelX = open && width > 760 ? byId("drawer").offsetWidth : 0;
-    const panelY = open && width <= 760 ? byId("drawer").offsetHeight : 0;
-    const toolbar = open ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
-    const k = baseScale(width, height) * zoom;
-    const target = { lat: lat + (toolbar - panelY) / 2 / k, lon: lon + panelX / 2 / k, zoom };
+    const panel = byId("drawer");
+    const offsetX = open && width > 760 ? -panel.offsetWidth / 2 : 0;
+    const toolbar = open && width <= 760 ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
+    const offsetY = toolbar ? (toolbar - panel.offsetHeight) / 2 : 0;
+    const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY, relief: 1 };
     const from = { ...mapView };
+    const startVector = toVector(from.lat, from.lon);
+    const endVector = toVector(target.lat, target.lon);
+    const dot = Math.max(-1, Math.min(1, startVector.reduce((sum, n, i) => sum + n * endVector[i], 0)));
+    const angle = Math.acos(dot);
+    const side = [-Math.sin(from.lon * radians), 0, Math.cos(from.lon * radians)];
+    const tangent = Math.sin(angle) > 1e-5 ? endVector.map((n, i) => (n - startVector[i] * dot) / Math.sin(angle)) : side;
+    const orbitFirst = angle > Math.PI * 0.42;
     cancelAnimationFrame(flight);
-    if (reduceMotion) {
+    mapTip.hidden = true;
+    if (motion.matches) {
       Object.assign(mapView, target);
       drawTrendMap();
       return;
     }
     const start = performance.now();
+    const duration = orbitFirst ? 1420 : 710;
     const step = (now) => {
-      const t = Math.min(1, (now - start) / 750);
-      const e = 1 - (1 - t) ** 3;
-      mapView.lat = from.lat + (target.lat - from.lat) * e;
-      mapView.lon = from.lon + (target.lon - from.lon) * e;
-      mapView.zoom = from.zoom * (target.zoom / from.zoom) ** e;
-      drawTrendMap();
+      const t = Math.min(1, Math.max(0, (now - start) / duration));
+      const turn = angle * ease(orbitFirst ? Math.min(1, t / 0.66) : t);
+      const [x, y, z] = startVector.map((n, i) => Math.cos(turn) * n + Math.sin(turn) * tangent[i]);
+      mapView.lat = clampLatitude(Math.atan2(y, Math.hypot(x, z)) / radians);
+      mapView.lon = Math.atan2(z, x) / radians;
+      const zoomed = (a, b, fraction) => a * (b / a) ** ease(fraction);
+      mapView.zoom = orbitFirst && t < 0.66 ? zoomed(from.zoom, 1, Math.min(1, t / 0.36)) :
+        zoomed(orbitFirst ? 1 : from.zoom, target.zoom, orbitFirst ? (t - 0.66) / 0.34 : t);
+      mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * ease(t);
+      mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * ease(t);
+      mapView.relief = ease(Math.max(0, (t - 0.3) / 0.7));
+      if (t === 1) Object.assign(mapView, target);
+      drawTrendMap(now);
       if (t < 1) flight = requestAnimationFrame(step);
     };
     flight = requestAnimationFrame(step);
   }
 
-  function zoomAt(x, y, factor) {
-    const [width, height] = mapSize();
-    const [lon, lat] = projector(width, height).invert(x, y);
-    mapView.zoom *= factor;
-    clampView();
-    const k = baseScale(width, height) * mapView.zoom;
-    mapView.lon = lon - (x - width / 2) / k;
-    mapView.lat = lat + (y - height / 2) / k;
+  function zoomBy(factor) {
+    mapView.zoom = clampZoom(mapView.zoom * factor);
     drawTrendMap();
   }
 
   function pointIndexAt(x, y) {
-    const [lon, lat] = projector(...mapSize()).invert(x, y);
+    const coords = globe.invert(x, y);
+    if (!coords) return -1;
+    const [lon, lat] = coords;
     let best = -1;
-    let bestDistance = 1.6;
-    points.forEach(([pLat, pLon], k) => {
-      const distance = Math.max(Math.abs(pLat - lat), Math.abs(pLon - lon));
-      if (distance < bestDistance) [best, bestDistance] = [k, distance];
+    let bestDistance = 1.55;
+    points.forEach(([pLat, pLon], index) => {
+      const distance = Math.max(Math.abs(pLat - lat), Math.abs(signedLongitude(pLon - lon)));
+      if (distance < bestDistance) [best, bestDistance] = [index, distance];
     });
     return best;
   }
@@ -1407,29 +1426,27 @@
   function showTip(x, y) {
     const variable = trendMapVariable();
     const entry = trendMap[variable.id];
-    const k = pointIndexAt(x, y);
-    if (!entry || k < 0 || entry.slope[k] === null) {
+    const index = pointIndexAt(x, y);
+    if (!entry || index < 0 || entry.slope[index] === null) {
       mapTip.hidden = true;
       return;
     }
-    const [lat, lon] = points[k];
+    const [lat, lon] = points[index];
     mapTip.replaceChildren(
       create("strong", countryAt(lat, lon) || "Coastal area"),
-      create("span", `${format(entry.slope[k], variable.decimals + 1, true)} ${trendUnit(variable)} per decade`),
+      create("span", `${format(entry.slope[index], variable.decimals + 1, true)} ${trendUnit(variable)} per decade`),
       create("br"),
-      create("small", entry.significant[k] ? "Clear trend. Select for details." : "No clear trend. Select for details."),
+      create("small", entry.significant[index] ? "Clear trend. Select for details." : "No clear trend. Select for details."),
     );
     mapTip.hidden = false;
-    mapTip.style.left = `${Math.min(x, mapSize()[0] - mapTip.offsetWidth - 24)}px`;
+    mapTip.style.left = `${Math.max(2, Math.min(x, mapSize()[0] - mapTip.offsetWidth - 24))}px`;
     mapTip.style.top = `${y}px`;
   }
 
   function openDrawer() {
     if (drawingArea) setAreaMode(false);
-    if (!app.hasAttribute("data-drawer")) {
-      app.setAttribute("data-drawer", "");
-      byId("welcome").hidden = true;
-    }
+    app.setAttribute("data-drawer", "");
+    byId("welcome").hidden = true;
     for (const option of mapVariable.options) option.disabled = Boolean(analysis && !analysis.series[option.value]);
     byId("drawer-title").focus({ preventScroll: true });
   }
@@ -1437,27 +1454,25 @@
   function closeDrawer() {
     app.removeAttribute("data-drawer");
     for (const option of mapVariable.options) option.disabled = false;
+    if (mapView.offsetX || mapView.offsetY) flyTo(mapView.lat, mapView.lon, mapView.zoom, false);
     world.focus({ preventScroll: true });
   }
 
-  const pointers = new Map();
-  let drag = null;
-  const outlineInstructions = "Drag to draw around an area, or tap corners and tap the first one to finish. Keyboard: zoom in with +, move with the arrows, Enter adds a corner at the centre, Backspace removes one, Space finishes, Esc cancels.";
-  const describeOutline = (message) => { areaHint.textContent = message; };
-
   function setAreaMode(enabled) {
     drawingArea = enabled;
-    outlineDraft = null;
-    outlinePointer = null;
-    outlineCursor = null;
+    magicPath = [];
+    magicPointer = null;
+    magicCentre = null;
+    magicRadius = 34;
     stage.toggleAttribute("data-drawing", enabled);
     areaButton.setAttribute("aria-pressed", String(enabled));
     areaHint.hidden = !enabled;
-    describeOutline(enabled ? outlineInstructions : "");
+    areaHint.textContent = enabled ? magicInstructions : "";
     mapTip.hidden = true;
     if (enabled) {
       cancelAnimationFrame(flight);
       app.removeAttribute("data-drawer");
+      mapView.offsetX = mapView.offsetY = 0;
       for (const option of mapVariable.options) option.disabled = false;
       byId("welcome").hidden = true;
       world.focus({ preventScroll: true });
@@ -1465,150 +1480,161 @@
     drawTrendMap();
   }
 
-  const toMap = (x, y) => projector(...mapSize()).invert(x, y);
-
-  function addCorner(x, y) {
-    const last = outlineDraft?.at(-1);
-    if (last) {
-      const [lx, ly] = projector(...mapSize())(...last);
-      if (Math.hypot(x - lx, y - ly) < 8) {
-        describeOutline("That’s on top of the last corner. Move the map first (zoom in with + so the arrows can move it).");
-        return;
-      }
+  function fitMagicCircle(path) {
+    if (path.length < 5) return null;
+    const mean = path.reduce(([a, b], [x, y]) => [a + x / path.length, b + y / path.length], [0, 0]);
+    let xx = 0, yy = 0, xy = 0, xr = 0, yr = 0;
+    for (const [x, y] of path) {
+      const a = x - mean[0];
+      const b = y - mean[1];
+      const r2 = a * a + b * b;
+      xx += a * a;
+      yy += b * b;
+      xy += a * b;
+      xr += a * r2 / 2;
+      yr += b * r2 / 2;
     }
-    outlineDraft = [...(outlineDraft || []), toMap(x, y)];
-    const count = outlineDraft.length;
-    describeOutline(count < 3
-      ? `${count} ${count === 1 ? "corner" : "corners"} placed. Add at least ${3 - count} more.`
-      : `${count} corners. Tap the first corner, or press Space, to finish.`);
-    drawTrendMap();
+    const det = xx * yy - xy * xy;
+    if (det <= (xx + yy) ** 2 * 0.013) return null;
+    const x = mean[0] + (yy * xr - xy * yr) / det;
+    const y = mean[1] + (xx * yr - xy * xr) / det;
+    const distances = path.map(([px, py]) => Math.hypot(px - x, py - y)).sort((a, b) => a - b);
+    const radius = distances[Math.floor(distances.length / 2)];
+    if (!Number.isFinite(radius) || radius < 9 || radius > Math.min(...mapSize()) * 0.49) return null;
+    if (distances[Math.floor(distances.length * 0.9)] - distances[Math.floor(distances.length * 0.1)] > radius * 0.7) return null;
+    return [x, y, radius];
   }
 
-  // Ray casting in longitude/latitude, matching how the outline is drawn on this flat map.
-  function insideOutline(lat, lon, outline) {
-    let inside = false;
-    for (let i = 0, j = outline.length - 1; i < outline.length; j = i, i += 1) {
-      const [x1, y1] = outline[i];
-      const [x2, y2] = outline[j];
-      if ((y1 > lat) !== (y2 > lat) && lon < x1 + (lat - y1) * (x2 - x1) / (y2 - y1)) inside = !inside;
-    }
-    return inside;
-  }
-
-  function completeOutline() {
-    const outline = outlineDraft;
-    if (!outline || outline.length < 3) {
-      describeOutline("An area needs at least 3 corners. Keep drawing, or press Esc to cancel.");
-      return;
-    }
-    const areaIds = points.filter(([lat, lon]) => insideOutline(lat, lon, outline)).map(([lat, lon]) => `${lat},${lon}`);
-    if (!areaIds.length) {
-      outlineDraft = null;
-      describeOutline("No grid points inside. Draw a bigger outline over the coloured squares.");
+  function completeMagicCircle(circle) {
+    magicPath = [];
+    magicCentre = null;
+    if (!circle) {
+      areaHint.textContent = "Draw a rounder arc, or tap its centre and edge.";
       drawTrendMap();
       return;
     }
-    const longitude = outline.reduce((total, [lon]) => total + lon, 0) / outline.length;
-    const latitude = outline.reduce((total, [, lat]) => total + lat, 0) / outline.length;
+    const [x, y, radius] = circle;
+    const inside = points.filter(([lat, lon]) => {
+      const p = globe.project(lon, lat);
+      return p && Math.hypot(p[0] - x, p[1] - y) <= radius;
+    });
+    if (!inside.length) {
+      areaHint.textContent = "No grid points inside. Draw a bigger circle over a coloured part of the globe.";
+      drawTrendMap();
+      return;
+    }
+    const [lon, lat] = globe.invert(x, y) ?? [...inside[0]].reverse();
+    const areaIds = inside.map(([latitude, longitude]) => `${latitude},${longitude}`);
+    const outline = Array.from({ length: 48 }, (_, index) => {
+      const angle = index * Math.PI / 24;
+      return globe.invert(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+    });
+    if (!motion.matches) burst = { x, y, radius, start: performance.now() };
     setAreaMode(false);
-    selectSite({ id: `area:${outline.map((corner) => corner.map((v) => v.toFixed(2)).join(",")).join(";")}`,
-      name: "Selected area", latitude, longitude, outline, areaIds });
+    selectSite({ id: `area:${areaIds.join(";")}`, name: "Selected area", latitude: lat, longitude: lon,
+      areaIds, drawn: true, outline: outline.every(Boolean) ? outline : null });
   }
 
-  // True when a tap lands on the first corner, which closes the outline.
-  function nearFirstCorner(x, y) {
-    if (!outlineDraft || outlineDraft.length < 3) return false;
-    const [fx, fy] = projector(...mapSize())(...outlineDraft[0]);
-    return Math.hypot(x - fx, y - fy) < 14;
+  function magicTap(x, y) {
+    if (!magicCentre) {
+      magicCentre = [x, y];
+      areaHint.textContent = "Centre placed. Tap the edge or use + and −, then Enter to select.";
+      drawTrendMap();
+    } else completeMagicCircle([...magicCentre, Math.max(9, Math.hypot(x - magicCentre[0], y - magicCentre[1]))]);
   }
 
+  heatButton.addEventListener("click", () => {
+    heatVisible = !heatVisible;
+    heatButton.setAttribute("aria-pressed", String(heatVisible));
+    runLensChange();
+    renderTrendMap();
+  });
   areaButton.addEventListener("click", () => setAreaMode(!drawingArea));
   stage.addEventListener("pointerdown", (event) => {
     if (event.button > 0) return;
+    const point = [event.offsetX, event.offsetY];
     if (drawingArea) {
-      if (outlinePointer) return;
+      if (magicPointer || !globe.invert(...point)) return;
       stage.setPointerCapture(event.pointerId);
-      const { offsetX: x, offsetY: y } = event;
-      outlinePointer = { id: event.pointerId, x, y, lastX: x, lastY: y, traced: false, corners: outlineDraft?.length || 0 };
+      magicPointer = { id: event.pointerId, start: point, tracing: false };
       return;
     }
-    stage.setPointerCapture(event.pointerId);
-    pointers.set(event.pointerId, [event.offsetX, event.offsetY]);
     cancelAnimationFrame(flight);
+    stage.setPointerCapture(event.pointerId);
+    pointers.set(event.pointerId, point);
     const [a, b] = [...pointers.values()];
-    drag = {
-      x: event.offsetX, y: event.offsetY, lon: mapView.lon, lat: mapView.lat, moved: b ? 99 : 0,
-      pinch: b ? { distance: Math.hypot(a[0] - b[0], a[1] - b[1]), zoom: mapView.zoom } : null,
-    };
+    if (b) {
+      drag.pinch = Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1]));
+      drag.zoom = mapView.zoom;
+      drag.moved = true;
+    } else drag = { point, last: point, moved: false };
     mapTip.hidden = true;
   });
   stage.addEventListener("pointermove", (event) => {
+    const point = [event.offsetX, event.offsetY];
     if (drawingArea) {
-      const { offsetX: x, offsetY: y } = event;
-      if (outlinePointer?.id === event.pointerId) {
-        if (!outlinePointer.traced && Math.hypot(x - outlinePointer.x, y - outlinePointer.y) < 6) return;
-        if (!outlinePointer.traced) {
-          // A drag starts a fresh freehand outline from where the press began.
-          outlinePointer.traced = true;
-          outlineDraft = [toMap(outlinePointer.x, outlinePointer.y)];
-          describeOutline("Keep drawing, then let go to close the outline.");
+      if (magicPointer?.id === event.pointerId) {
+        if (!magicPointer.tracing && Math.hypot(point[0] - magicPointer.start[0], point[1] - magicPointer.start[1]) >= 6) {
+          magicPointer.tracing = true;
+          magicCentre = null;
+          magicPath = [magicPointer.start];
         }
-        if (Math.hypot(x - outlinePointer.lastX, y - outlinePointer.lastY) >= 5) {
-          outlineDraft.push(toMap(x, y));
-          outlinePointer.lastX = x;
-          outlinePointer.lastY = y;
-          drawTrendMap();
+        const last = magicPath.at(-1);
+        if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) >= 3 && magicPath.length < 1400) {
+          magicPath.push(point);
+          drawMagicEffects(performance.now());
         }
-      } else if (!outlinePointer && outlineDraft?.length && event.pointerType === "mouse") {
-        outlineCursor = toMap(x, y);
-        drawTrendMap();
       }
       return;
     }
-    if (!drag) {
-      if (event.pointerType === "mouse") showTip(event.offsetX, event.offsetY);
+    if (!drag || !pointers.has(event.pointerId)) {
+      if (!drag && event.pointerType === "mouse") showTip(...point);
       return;
     }
-    pointers.set(event.pointerId, [event.offsetX, event.offsetY]);
+    pointers.set(event.pointerId, point);
     const [a, b] = [...pointers.values()];
     if (drag.pinch && b) {
-      const factor = drag.pinch.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / drag.pinch.distance / mapView.zoom;
-      zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, factor);
-      return;
+      mapView.zoom = clampZoom(drag.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / drag.pinch);
+    } else {
+      if (!drag.moved && Math.hypot(point[0] - drag.point[0], point[1] - drag.point[1]) < 5) return;
+      drag.moved = true;
+      stage.classList.add("dragging");
+      const scale = 70 / Math.max(50, globe.radius);
+      const latitudeScale = Math.max(0.32, Math.cos(mapView.lat * radians));
+      mapView.lon = signedLongitude(mapView.lon - (point[0] - drag.last[0]) * scale / latitudeScale);
+      mapView.lat = clampLatitude(mapView.lat + (point[1] - drag.last[1]) * scale);
+      drag.last = point;
     }
-    const k = projector(...mapSize()).k;
-    drag.moved = Math.max(drag.moved, Math.hypot(event.offsetX - drag.x, event.offsetY - drag.y));
-    if (drag.moved > 4) stage.classList.add("dragging");
-    mapView.lon = drag.lon - (event.offsetX - drag.x) / k;
-    mapView.lat = drag.lat + (event.offsetY - drag.y) / k;
     drawTrendMap();
   });
   const endPointer = (event) => {
     if (drawingArea) {
-      if (outlinePointer?.id !== event.pointerId) return;
-      const { traced } = outlinePointer;
-      outlinePointer = null;
+      if (magicPointer?.id !== event.pointerId) return;
+      const { tracing } = magicPointer;
+      magicPointer = null;
       if (event.type === "pointercancel") {
-        if (traced) outlineDraft = null;
-        describeOutline(outlineInstructions);
-        drawTrendMap();
-      } else if (traced) {
-        completeOutline();
-      } else if (nearFirstCorner(event.offsetX, event.offsetY)) {
-        completeOutline();
-      } else {
-        addCorner(event.offsetX, event.offsetY);
-      }
+        magicPath = [];
+        drawMagicEffects(performance.now());
+      } else if (tracing) completeMagicCircle(fitMagicCircle(magicPath));
+      else magicTap(event.offsetX, event.offsetY);
       return;
     }
-    pointers.delete(event.pointerId);
-    if (!drag || pointers.size) return;
-    const clicked = drag.moved < 5 && event.type === "pointerup";
+    if (!pointers.delete(event.pointerId) || !drag) return;
+    if (pointers.size) {
+      const [point] = pointers.values();
+      drag = { point, last: point, moved: true };
+      return;
+    }
+    const clicked = !drag.moved && event.type === "pointerup";
     drag = null;
     stage.classList.remove("dragging");
     if (clicked) {
-      const [lon, lat] = projector(...mapSize()).invert(event.offsetX, event.offsetY);
-      choosePoint(lat, lon);
+      const index = pointIndexAt(event.offsetX, event.offsetY);
+      if (index >= 0) choosePoint(...points[index]);
+      else {
+        const coords = globe.invert(event.offsetX, event.offsetY);
+        if (coords) choosePoint(coords[1], coords[0]);
+      }
     }
   };
   stage.addEventListener("pointerup", endPointer);
@@ -1616,34 +1642,47 @@
   stage.addEventListener("pointerleave", () => { mapTip.hidden = true; });
   stage.addEventListener("wheel", (event) => {
     event.preventDefault();
+    if (magicPointer) return;
     cancelAnimationFrame(flight);
-    zoomAt(event.offsetX, event.offsetY, Math.exp(-event.deltaY * 0.0015));
+    if (drawingArea && magicCentre) {
+      magicRadius = Math.min(Math.min(...mapSize()) * 0.48, Math.max(9, magicRadius * Math.exp(-event.deltaY * 0.002)));
+      drawMagicEffects(performance.now());
+    } else zoomBy(Math.exp(-event.deltaY * 0.0015));
   }, { passive: false });
   world.addEventListener("keydown", (event) => {
-    const [width, height] = mapSize();
-    const k = projector(width, height).k;
     const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
     if (moves[event.key]) {
-      mapView.lon += moves[event.key][0] * width * 0.15 / k;
-      mapView.lat += moves[event.key][1] * height * 0.15 / k;
+      cancelAnimationFrame(flight);
+      mapView.lon = signedLongitude(mapView.lon + moves[event.key][0] * 15 / Math.sqrt(mapView.zoom));
+      mapView.lat = clampLatitude(mapView.lat + moves[event.key][1] * 12 / Math.sqrt(mapView.zoom));
       drawTrendMap();
-    } else if (event.key === "+" || event.key === "=") zoomAt(width / 2, height / 2, 1.5);
-    else if (event.key === "-") zoomAt(width / 2, height / 2, 1 / 1.5);
-    else if (event.key === "Enter") {
+    } else if (["+", "=", "-"].includes(event.key)) {
+      const factor = event.key === "-" ? 1 / 1.3 : 1.3;
+      if (drawingArea && magicCentre) {
+        magicRadius = Math.min(Math.min(...mapSize()) * 0.48, Math.max(9, magicRadius * factor));
+        drawMagicEffects(performance.now());
+      } else zoomBy(factor);
+    } else if (event.key === "Enter") {
       if (!drawingArea) choosePoint(mapView.lat, mapView.lon);
-      else if (nearFirstCorner(width / 2, height / 2)) completeOutline();
-      else addCorner(width / 2, height / 2);
-    } else if (drawingArea && event.key === " ") completeOutline();
-    else if (drawingArea && event.key === "Backspace" && outlineDraft?.length) {
-      outlineDraft = outlineDraft.slice(0, -1);
-      describeOutline(outlineDraft.length ? `${outlineDraft.length} corners placed.` : outlineInstructions);
-      drawTrendMap();
+      else if (magicCentre) completeMagicCircle([...magicCentre, magicRadius]);
+      else magicTap(...viewCentre());
     } else return;
     event.preventDefault();
   });
-  byId("zoom-in").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom * 2, false));
-  byId("zoom-out").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom / 2, false));
-  byId("zoom-reset").addEventListener("click", () => flyTo(12, 15, homeZoom, false));
+  byId("zoom-in").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom * 1.6));
+  byId("zoom-out").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom / 1.6));
+  byId("zoom-reset").addEventListener("click", () => {
+    if (drawingArea) setAreaMode(false);
+    if (app.hasAttribute("data-drawer")) closeDrawer();
+    regionRequest?.abort();
+    regionRequest = null;
+    site = null;
+    analysis = null;
+    regionResults.hidden = true;
+    delete regionResults.dataset.site;
+    delete regionResults.dataset.point;
+    flyTo(home.lat, home.lon, home.zoom, false);
+  });
 
   // ---- Panels: results, welcome, how it works ----
   const hideWelcome = () => {
@@ -1741,15 +1780,4 @@
   observer.observe(byId("forecast-stage"));
   observer.observe(stage);
   renderTrendMap();
-  // The page's one load moment: trend squares sweep in west to east, like a satellite pass.
-  if (!reduceMotion) {
-    const start = performance.now();
-    const sweep = (now) => {
-      const t = Math.min(1, Math.max(0, (now - start - 250) / 1600));
-      revealLon = -180 + 360 * (1 - (1 - t) ** 3);
-      drawTrendMap();
-      if (t < 1) requestAnimationFrame(sweep);
-    };
-    requestAnimationFrame(sweep);
-  }
 })();
