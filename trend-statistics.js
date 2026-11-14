@@ -106,6 +106,36 @@
     };
   }
 
+  // Abramowitz & Stegun 7.1.26, absolute error below 1.5e-7.
+  function erfc(x) {
+    const t = 1 / (1 + 0.3275911 * x);
+    const poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    return poly * Math.exp(-x * x);
+  }
+
+  // shortcut: classic Mann-Kendall assumes independent years; switch to Hamed-Rao if annual autocorrelation is strong.
+  function mannKendall(values) {
+    const count = values.length;
+    let s = 0;
+    const slopes = [];
+    for (let i = 0; i < count - 1; i += 1) {
+      for (let j = i + 1; j < count; j += 1) {
+        s += Math.sign(values[j] - values[i]);
+        slopes.push((values[j] - values[i]) / (j - i));
+      }
+    }
+    const ties = new Map();
+    for (const value of values) ties.set(value, (ties.get(value) || 0) + 1);
+    let variance = count * (count - 1) * (2 * count + 5);
+    for (const tied of ties.values()) variance -= tied * (tied - 1) * (2 * tied + 5);
+    variance /= 18;
+    const z = s === 0 || variance === 0 ? 0 : (s - Math.sign(s)) / Math.sqrt(variance);
+    slopes.sort((left, right) => left - right);
+    const middle = slopes.length / 2;
+    const median = slopes.length % 2 ? slopes[Math.floor(middle)] : (slopes[middle - 1] + slopes[middle]) / 2;
+    return { senSlope: median * 10, mkPValue: erfc(Math.abs(z) / Math.SQRT2) };
+  }
+
   function calendarMonthMeans(values, firstYear, endYear) {
     const first = firstYear * MONTHS_PER_YEAR;
     const reference = values.slice(first, first + MONTHS_PER_YEAR);
@@ -129,19 +159,21 @@
     return residuals.map((value) => value - mean);
   }
 
-  function monthlyCorrelations(residuals, variableIds) {
-    const lengths = Object.fromEntries(variableIds.map((id) => [id, Math.sqrt(dot(residuals[id], residuals[id]))]));
-    const correlations = Object.fromEntries(variableIds.map((id) => [id, {}]));
-    for (const [index, left] of variableIds.entries()) {
-      for (const right of variableIds.slice(index)) {
-        const denominator = lengths[left] * lengths[right];
-        const coefficient = denominator === 0 ? null : dot(residuals[left], residuals[right]) / denominator;
-        const bounded = coefficient === null ? null : Math.max(-1, Math.min(1, coefficient));
-        correlations[left][right] = bounded;
-        correlations[right][left] = bounded;
-      }
-    }
-    return correlations;
+  function pearson(x, y) {
+    const xMean = sum(x) / x.length;
+    const yMean = sum(y) / y.length;
+    const dx = x.map((value) => value - xMean);
+    const dy = y.map((value) => value - yMean);
+    const denominator = Math.sqrt(dot(dx, dx) * dot(dy, dy));
+    return denominator === 0 ? null : Math.max(-1, Math.min(1, dot(dx, dy) / denominator));
+  }
+
+  // Row variable in month t against column variable in month t + lag.
+  function monthlyCorrelations(residuals, variableIds, lag = 0) {
+    return Object.fromEntries(variableIds.map((left) => [left, Object.fromEntries(variableIds.map((right) => [
+      right,
+      pearson(residuals[left].slice(0, residuals[left].length - lag), residuals[right].slice(lag)),
+    ]))]));
   }
 
   function analyseRegion({ annual, monthly }, years, variableIds, baselineStart, baselineEnd) {
@@ -170,12 +202,12 @@
         values: annualValues,
         monthlyValues,
         monthlyAnomalies: monthlyValues.map((value, index) => value - baseline[index % MONTHS_PER_YEAR]),
-        trend: fitTrend(annualValues, time, timeSquared, distribution),
+        trend: { ...fitTrend(annualValues, time, timeSquared, distribution), ...mannKendall(annualValues) },
       };
       residuals[id] = monthlyResiduals(monthlyValues, time, timeSquared);
     }
-    return { series, correlations: monthlyCorrelations(residuals, variableIds) };
+    return { series, residuals };
   }
 
-  window.TrendStatistics = { analyseRegion };
+  window.TrendStatistics = { analyseRegion, mannKendall, monthlyCorrelations };
 })();
