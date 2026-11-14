@@ -106,6 +106,36 @@
     };
   }
 
+  // Abramowitz & Stegun 7.1.26, absolute error below 1.5e-7.
+  function erfc(x) {
+    const t = 1 / (1 + 0.3275911 * x);
+    const poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    return poly * Math.exp(-x * x);
+  }
+
+  // shortcut: classic Mann-Kendall assumes independent years; switch to Hamed-Rao if annual autocorrelation is strong.
+  function mannKendall(values) {
+    const count = values.length;
+    let s = 0;
+    const slopes = [];
+    for (let i = 0; i < count - 1; i += 1) {
+      for (let j = i + 1; j < count; j += 1) {
+        s += Math.sign(values[j] - values[i]);
+        slopes.push((values[j] - values[i]) / (j - i));
+      }
+    }
+    const ties = new Map();
+    for (const value of values) ties.set(value, (ties.get(value) || 0) + 1);
+    let variance = count * (count - 1) * (2 * count + 5);
+    for (const tied of ties.values()) variance -= tied * (tied - 1) * (2 * tied + 5);
+    variance /= 18;
+    const z = s === 0 || variance === 0 ? 0 : (s - Math.sign(s)) / Math.sqrt(variance);
+    slopes.sort((left, right) => left - right);
+    const middle = slopes.length / 2;
+    const median = slopes.length % 2 ? slopes[Math.floor(middle)] : (slopes[middle - 1] + slopes[middle]) / 2;
+    return { senSlope: median * 10, mkPValue: erfc(Math.abs(z) / Math.SQRT2) };
+  }
+
   function calendarMonthMeans(values, firstYear, endYear) {
     const first = firstYear * MONTHS_PER_YEAR;
     const reference = values.slice(first, first + MONTHS_PER_YEAR);
@@ -170,12 +200,12 @@
         values: annualValues,
         monthlyValues,
         monthlyAnomalies: monthlyValues.map((value, index) => value - baseline[index % MONTHS_PER_YEAR]),
-        trend: fitTrend(annualValues, time, timeSquared, distribution),
+        trend: { ...fitTrend(annualValues, time, timeSquared, distribution), ...mannKendall(annualValues) },
       };
       residuals[id] = monthlyResiduals(monthlyValues, time, timeSquared);
     }
     return { series, correlations: monthlyCorrelations(residuals, variableIds) };
   }
 
-  window.TrendStatistics = { analyseRegion };
+  window.TrendStatistics = { analyseRegion, mannKendall };
 })();

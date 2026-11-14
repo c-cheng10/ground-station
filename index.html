@@ -239,9 +239,12 @@
             <div><dt>Change per decade</dt><dd class="slope" id="trend-slope"></dd></div>
             <div><dt>95% interval for change per decade</dt><dd id="trend-ci"></dd></div>
             <div><dt>Adjusted p-value</dt><dd id="trend-p"></dd></div>
+            <div><dt>Theil-Sen change per decade</dt><dd id="trend-sen"></dd></div>
+            <div><dt>Mann-Kendall adjusted p-value</dt><dd id="trend-mk"></dd></div>
           </dl>
           <p id="trend-meaning"></p>
-          <p>The p-value is adjusted across the eight variables in this region. A trend is marked rising or falling when its adjusted p-value is at most 0.05.</p>
+          <p id="trend-agree"></p>
+          <p>The p-values are adjusted across the eight variables in this region. A trend is marked rising or falling when its adjusted p-value is at most 0.05. Mann-Kendall and Theil-Sen give a second opinion built on ranks and medians, so a few extreme years cannot drive the result.</p>
         </aside>
       </div>
       <section class="correlations" id="correlations" aria-labelledby="correlations-title" hidden>

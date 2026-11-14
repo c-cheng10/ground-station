@@ -121,15 +121,24 @@
     retryRegion.hidden = !canRetry;
   }
 
-  function adjustRegionTests(series) {
-    const trends = Object.values(series).map(({ trend }) => trend).sort((left, right) => left.pValue - right.pValue);
+  function holmAdjust(trends, key, adjustedKey) {
     let adjustedP = 0;
-    trends.forEach((trend, index) => {
-      adjustedP = Math.min(1, Math.max(adjustedP, (trends.length - index) * trend.pValue));
-      trend.adjustedPValue = adjustedP;
-      trend.verdict = adjustedP <= 0.05 ? (trend.slope > 0 ? "rising" : "falling") : "inconclusive";
+    [...trends].sort((left, right) => left[key] - right[key]).forEach((trend, index) => {
+      adjustedP = Math.min(1, Math.max(adjustedP, (trends.length - index) * trend[key]));
+      trend[adjustedKey] = adjustedP;
     });
   }
+
+  function adjustRegionTests(series) {
+    const trends = Object.values(series).map(({ trend }) => trend);
+    holmAdjust(trends, "pValue", "adjustedPValue");
+    holmAdjust(trends, "mkPValue", "mkAdjustedPValue");
+    for (const trend of trends) {
+      trend.verdict = trend.adjustedPValue <= 0.05 ? (trend.slope > 0 ? "rising" : "falling") : "inconclusive";
+    }
+  }
+
+  const pText = (p) => p < 0.001 ? "<0.001" : format(p, 3);
 
   async function selectSite(nextSite) {
     if (regionRequest && site.id === nextSite.id) return;
@@ -398,7 +407,13 @@
       verdict.textContent = verdictLabels[trend.verdict];
       byId("trend-slope").textContent = `${format(trend.slope, variable.decimals, true)} ${unit}`;
       byId("trend-ci").textContent = `${format(trend.ciLow, variable.decimals, true)} to ${format(trend.ciHigh, variable.decimals, true)} ${unit}`;
-      byId("trend-p").textContent = trend.adjustedPValue < 0.001 ? "<0.001" : format(trend.adjustedPValue, 3);
+      byId("trend-p").textContent = pText(trend.adjustedPValue);
+      byId("trend-sen").textContent = `${format(trend.senSlope, variable.decimals, true)} ${unit}`;
+      byId("trend-mk").textContent = pText(trend.mkAdjustedPValue);
+      const mkSignificant = trend.mkAdjustedPValue <= 0.05;
+      byId("trend-agree").textContent = mkSignificant === (trend.verdict !== "inconclusive")
+        ? "The Mann-Kendall test agrees with this result."
+        : `The Mann-Kendall test disagrees: it finds this trend ${mkSignificant ? "significant" : "not significant"}, so treat the result with caution.`;
       const meaning = trend.verdict === "rising" ? risingMeans[variable.id] : fallingMeans[variable.id];
       byId("trend-meaning").textContent = trend.verdict === "inconclusive"
         ? "The record leaves the direction of change uncertain."
