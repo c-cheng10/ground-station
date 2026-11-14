@@ -13,8 +13,10 @@
   }
 
   const mapFrames = {
-    "North America": { west: -170, east: -48, south: 6, north: 74, aspect: 0.80 },
-    "South America": { west: -87, east: -32, south: -57, north: 14, aspect: 0.95 },
+    World: { west: -180, east: 180, south: -58, north: 84, aspect: 1 },
+    Americas: { west: -170, east: -30, south: -57, north: 74, aspect: 0.85 },
+    "Europe & Africa": { west: -25, east: 60, south: -38, north: 72, aspect: 0.85 },
+    "Asia & Oceania": { west: 55, east: 180, south: -48, north: 78, aspect: 0.85 },
   };
   const verdictLabels = {
     rising: "Rising",
@@ -110,7 +112,7 @@
   const regionMessage = byId("region-message");
   const retryRegion = byId("retry-region");
   const refreshRegion = byId("refresh-region");
-  let mapContinent = "North America";
+  let mapContinent = "World";
   let site = null;
   let analysis = null;
   let regionRequest = null;
@@ -326,7 +328,9 @@
   }
 
   function visibleSites() {
-    return data.sites.filter(({ continent }) => continent === mapContinent);
+    const { west, east, south, north } = mapFrames[mapContinent];
+    return data.sites.filter(({ latitude, longitude }) =>
+      longitude >= west && longitude <= east && latitude >= south && latitude <= north);
   }
 
   function updateSiteButtons() {
@@ -395,11 +399,11 @@
     ctx.lineWidth = 0.75;
     ctx.setLineDash([2, 4]);
     ctx.beginPath();
-    for (let lat = -50; lat <= 70; lat += 10) {
+    for (let lat = Math.ceil(frame.south / 10) * 10; lat <= frame.north; lat += 10) {
       ctx.moveTo(...project(frame.west, lat));
       ctx.lineTo(...project(frame.east, lat));
     }
-    for (let lon = -170; lon <= -30; lon += 10) {
+    for (let lon = Math.ceil(frame.west / 10) * 10; lon <= frame.east; lon += 10) {
       ctx.moveTo(...project(lon, frame.north));
       ctx.lineTo(...project(lon, frame.south));
     }
@@ -409,7 +413,7 @@
     ctx.fillStyle = "#f8fafb";
     ctx.strokeStyle = "#9fb0c0";
     ctx.lineWidth = 0.9;
-    for (const country of window.AMERICAS_MAP?.countries || []) {
+    for (const country of window.WORLD_MAP?.countries || []) {
       for (const polygon of country.polygons) {
         ctx.beginPath();
         for (const ring of polygon) {
