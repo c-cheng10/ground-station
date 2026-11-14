@@ -199,14 +199,17 @@
     }
     #toggle-heat[aria-pressed="true"]::before { background: var(--control); border-color: var(--control); }
     .circle-hint { flex: 1 0 100%; margin: 0; padding: 7px 0 2px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.875rem; }
-    #camera-static {
+    .camera-actions {
       position: absolute; inset-block-start: calc(100% + 8px); inset-inline-end: 0;
+      display: flex; gap: 6px;
+    }
+    .camera-actions .button {
       min-height: 44px; padding: 4px 11px;
       background: var(--glass); backdrop-filter: blur(12px);
       font: 500 0.74rem var(--numbers); letter-spacing: 0.02em;
     }
     #camera-static[aria-pressed="true"] { color: var(--control-hover); border-color: #577c88; background: var(--tint); }
-    .stage[data-drawing] ~ .topbar #camera-static { visibility: hidden; }
+    .stage[data-drawing] ~ .topbar .camera-actions { visibility: hidden; }
 
     /* Welcome card */
     .welcome { top: 92px; left: var(--map-inset); width: min(305px, calc(100vw - 32px)); max-height: calc(100dvh - 284px); overflow: auto; overscroll-behavior: contain; padding: 18px; }
@@ -446,7 +449,7 @@
       <div class="pin" id="map-pin" hidden></div>
       <div class="tip" id="map-tip" hidden></div>
     </div>
-    <p class="sr-only" id="map-help">Drag or use the arrow keys to rotate the globe. Plus and minus zoom. Select a place or press Enter for the centre of the view.</p>
+    <p class="sr-only" id="map-help">Drag or use the arrow keys to rotate the globe or orbit the selected area. Plus and minus zoom. Select a place or press Enter for the centre of the view.</p>
 
     <header class="float topbar" id="map-toolbar">
       <h1 class="brand">Climate Trend Explorer</h1>
@@ -465,7 +468,10 @@
         </button>
       </div>
       <p class="circle-hint" id="circle-hint" role="status" hidden></p>
-      <button type="button" class="button secondary small" id="camera-static" aria-pressed="true" aria-controls="camera-grain">Static</button>
+      <div class="camera-actions">
+        <button type="button" class="button secondary small" id="deselect-area" aria-controls="trend-map drawer" hidden>Deselect</button>
+        <button type="button" class="button secondary small" id="camera-static" aria-pressed="true" aria-controls="camera-grain">Static</button>
+      </div>
     </header>
 
     <p class="error" role="alert" id="data-error" hidden></p>
@@ -495,7 +501,7 @@
       <p id="trend-map-sub"></p>
       <div class="trend-key"><span id="trend-low"></span><span class="ramp" id="trend-ramp" aria-hidden="true"></span><span id="trend-high"></span></div>
       <p id="heatmap-note">Fainter colour means weaker evidence.</p>
-      <p id="relief-note" hidden>Peak height shows the size of the change.</p>
+      <p id="relief-note" hidden>Peak height shows the size of the change. Drag to orbit the selected area.</p>
       <details class="changes">
         <summary>Biggest changes</summary>
         <div class="extremes">
@@ -694,7 +700,8 @@
       <div>
         <h3>The trend test</h3>
         <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next. The Mann-Kendall test checks the answer a second way, and both are adjusted for testing 9 measurements at once (the Holm method).</p>
-        <p>The heatmap estimates trends between nearby sampled points on land and groups them into nine bands of equal width. The globe uses the Mann-Kendall test with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method). When you select an area, taller peaks show larger changes in either direction, and colour shows whether the measurement rose or fell.</p>
+        <p>The heatmap estimates trends between nearby sampled points on land and groups them into nine bands of equal width. The globe uses the Mann-Kendall test with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method).</p>
+        <p>Countries lift above the globe when you select an area. Taller peaks show larger changes, and colour shows whether the measurement rose or fell. The charts use the grid points in the selection.</p>
       </div>
       <div>
         <h3>The forecast</h3>

@@ -333,6 +333,12 @@
     const request = new AbortController();
     regionRequest = request;
     site = nextSite;
+    if (!site.platformCountries) site.platformCountries = selectedCountries(site);
+    loweringCountries = null;
+    mapView.rise = 0;
+    mapView.orbitAzimuth = 0;
+    mapView.orbitTilt = 0.86;
+    deselectButton.hidden = false;
     analysis = null;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
@@ -474,6 +480,13 @@
 
   function countryAt(latitude, longitude) {
     return window.WORLD_MAP?.countries.find((country) => inCountry(country, latitude, longitude))?.name ?? null;
+  }
+
+  function selectedCountries(target) {
+    const coordinates = target.areaIds ? target.areaIds.map((id) => id.split(",").map(Number)) :
+      [[target.latitude, target.longitude]];
+    if (target.outline) coordinates.push(...target.outline.map(([lon, lat]) => [lat, lon]));
+    return countries.filter((country) => coordinates.some(([lat, lon]) => inCountry(country, lat, lon)));
   }
 
   function distanceKm(latitude, longitude, lat, lon) {
@@ -632,6 +645,9 @@
     regionRequest?.abort();
     regionRequest = null;
     site = null;
+    deselectButton.hidden = true;
+    mapView.rise = 0;
+    loweringCountries = null;
     analysis = null;
     chartLayout = null;
     delete regionResults.dataset.site;
@@ -1196,6 +1212,7 @@
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
   const heatButton = byId("toggle-heat");
+  const deselectButton = byId("deselect-area");
   const staticButton = byId("camera-static");
   const grain = byId("camera-grain");
   const cameraCoordinates = byId("camera-coordinates");
@@ -1216,7 +1233,7 @@
     return;
   }
   const home = { lat: 17, lon: -18, zoom: 1 };
-  const mapView = { ...home, offsetX: 0, offsetY: 0 };
+  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, orbitAzimuth: 0, orbitTilt: 0.86 };
   let heatVisible = true;
   let displayedVariable;
   let lensStarted = 0;
@@ -1227,12 +1244,15 @@
   let staticTimer = 0;
   let grainIndex = 0;
   let grainTiles;
+  let loweringCountries = null;
   let drawingArea = false;
   let magicPath = [];
   let magicPointer = null;
   let magicCentre = null;
   let magicRadius = 34;
-  let burst;
+  let sparkles = [];
+  let sparkleFrame = 0;
+  let sparkleSeed = 0;
   const pointers = new Map();
   let drag = null;
   const magicInstructions = "Draw most of a circle, then release. Or tap its centre and edge. Keyboard: move with arrows, Enter marks the centre, + or − changes the radius, Enter selects, Esc cancels.";
@@ -1248,15 +1268,23 @@
   ];
 
   function focusZoom(target) {
-    if (!target.areaIds) return Math.max(mapView.zoom, 3.1);
-    const spread = Math.max(2.5, ...target.areaIds.map((id) => {
+    if (!target.areaIds && !target.platformCountries?.length) return Math.max(mapView.zoom, 3.1);
+    const angularDistance = (lat, lon) => distanceKm(target.latitude, target.longitude, lat, lon) / 111;
+    const samples = (target.areaIds ?? []).map((id) => {
       const [lat, lon] = id.split(",").map(Number);
-      return distanceKm(target.latitude, target.longitude, lat, lon) / 111;
-    }));
+      return angularDistance(lat, lon);
+    });
+    let countrySpread = 0;
+    for (const country of target.platformCountries ?? []) {
+      for (const [outline] of country.polygons) {
+        for (const [lon, lat] of outline) countrySpread = Math.max(countrySpread, angularDistance(lat, lon));
+      }
+    }
+    const spread = Math.max(2.5, Math.min(countrySpread, 14), ...samples);
     const [width, height] = mapSize();
     const mobile = width <= 760;
     const visibleWidth = mobile ? width : width - byId("drawer").offsetWidth;
-    const visibleHeight = mobile ? height - byId("drawer").offsetHeight - byId("map-toolbar").offsetHeight : height;
+    const visibleHeight = mobile ? height - byId("drawer").offsetHeight - byId("map-toolbar").offsetHeight - 38 : height;
     const available = Math.min(visibleWidth, visibleHeight);
     return clampZoom(globe.zoomFor(spread + 2.5, Math.max(30, available * 0.44)));
   }
@@ -1281,42 +1309,45 @@
       ctx.beginPath();
       if (magicPath.length) magicPath.forEach(([x, y], index) => ctx[index ? "lineTo" : "moveTo"](x, y));
       else ctx.arc(...magicCentre, magicRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(138,221,255,.36)";
-      ctx.lineWidth = 7;
-      ctx.shadowColor = "#8bddff";
-      ctx.shadowBlur = 14;
+      ctx.strokeStyle = "rgba(174,228,255,.20)";
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = "#b1eaff";
+      ctx.shadowBlur = 5;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.stroke();
       ctx.shadowBlur = 0;
       ctx.strokeStyle = "#f8fdff";
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1.35;
       ctx.stroke();
     }
-    const sparkle = ([x, y], size, alpha) => {
-      ctx.fillStyle = `rgba(220,249,255,${alpha})`;
+    sparkles = sparkles.filter(({ start }) => now - start < 370);
+    for (const particle of sparkles) {
+      const t = Math.max(0, (now - particle.start) / 370);
+      const x = particle.x + particle.dx * t;
+      const y = particle.y + particle.dy * t;
+      const size = particle.size * (1 - 0.35 * t);
+      ctx.fillStyle = `rgba(220,249,255,${0.64 * (1 - t) ** 1.6})`;
       ctx.beginPath();
       ctx.moveTo(x, y - size);
-      ctx.quadraticCurveTo(x + 0.8, y - 0.8, x + size, y);
-      ctx.quadraticCurveTo(x + 0.8, y + 0.8, x, y + size);
-      ctx.quadraticCurveTo(x - 0.8, y + 0.8, x - size, y);
-      ctx.quadraticCurveTo(x - 0.8, y - 0.8, x, y - size);
+      ctx.lineTo(x + size * 0.65, y);
+      ctx.lineTo(x, y + size);
+      ctx.lineTo(x - size * 0.65, y);
       ctx.fill();
-    };
-    if (!motion.matches) {
-      magicPath.forEach(([x, y], index) => {
-        if (index % 4 === 0) sparkle([x + Math.sin(index * 2.4) * 9, y + Math.cos(index * 2.4) * 9], 2 + index % 3, 0.78);
-      });
-      if (burst) {
-        const t = Math.min(1, (now - burst.start) / 670);
-        for (let i = 0; i < 22; i += 1) {
-          const angle = i * 2.39996;
-          const distance = burst.radius * (0.72 + (i % 4) * 0.08) + t * (16 + i % 5 * 5);
-          sparkle([burst.x + Math.cos(angle) * distance, burst.y + Math.sin(angle) * distance], (3 + i % 4) * (1 - 0.55 * t), (1 - t) ** 1.4);
-        }
-        if (t === 1) burst = null;
-      }
     }
+  }
+
+  function emitSparkle(x, y, angle = sparkleSeed * 2.39996) {
+    if (motion.matches) return;
+    const distance = 4 + sparkleSeed % 6;
+    sparkles.push({ x, y, dx: distance * Math.cos(angle), dy: distance * Math.sin(angle),
+      size: 0.85 + 0.15 * (sparkleSeed++ % 4), start: performance.now() });
+    if (sparkleFrame) return;
+    const update = (now) => {
+      drawMagicEffects(now);
+      sparkleFrame = sparkles.length ? requestAnimationFrame(update) : 0;
+    };
+    sparkleFrame = requestAnimationFrame(update);
   }
 
   function drawTrendMap(now = performance.now()) {
@@ -1327,13 +1358,18 @@
     if (lensProgress >= 0.42) displayedVariable = variableId;
     const texture = heatVisible && trendMap[variableId]
       ? fields.measurement(trendMap[variableId]) : {};
+    const platformCountries = drawingArea ? null : site?.platformCountries ?? (mapView.rise > 0 ? loweringCountries : null);
+    const platform = fields.platform(platformCountries);
+    const hasRelief = Boolean(heatVisible && !drawingArea && (platform || site?.areaIds));
     globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
-      ...texture, selection: fields.select(drawingArea ? null : site),
-      relief: heatVisible && !drawingArea && site?.areaIds ? mapView.relief ?? 1 : 0 });
+      ...texture, platform, platformCountries, rise: mapView.rise,
+      tilt: mapView.orbitTilt * mapView.rise, orbitAzimuth: mapView.orbitAzimuth,
+      selection: site ? platform ?? fields.select(drawingArea ? null : site) : null,
+      relief: hasRelief ? mapView.relief ?? 1 : 0 });
     updateViewfinder();
     const reliefNote = byId("relief-note");
-    if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && heatVisible && !drawingArea && site?.areaIds);
+    if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
     drawMagicEffects(now);
     const anchor = !drawingArea && site && !site.areaIds && globe.project(site.longitude, site.latitude);
     pin.hidden = !anchor;
@@ -1444,8 +1480,12 @@
     return [width / 2 + mapView.offsetX, height / 2 + mapView.offsetY];
   }
 
-  function stopFlight() {
+  function stopFlight(keepLowering = false) {
     cancelAnimationFrame(flight);
+    if (!keepLowering && !site && loweringCountries) {
+      mapView.rise = 0;
+      loweringCountries = null;
+    }
     if (focusAnimation?.playState === "running" && focusAnimation.currentTime < focusAnimation.effect.getTiming().delay) {
       focusAnimation.cancel();
     }
@@ -1458,7 +1498,8 @@
     const offsetX = open && width > 760 ? -panel.offsetWidth / 2 : 0;
     const toolbar = open && width <= 760 ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
     const offsetY = toolbar ? (toolbar - panel.offsetHeight) / 2 : 0;
-    const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY, relief: 1 };
+    const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY, relief: 1,
+      rise: site?.platformCountries?.length ? 1 : 0 };
     const from = { ...mapView };
     const startVector = toVector(from.lat, from.lon);
     const endVector = toVector(target.lat, target.lon);
@@ -1467,10 +1508,11 @@
     const side = [-Math.sin(from.lon * radians), 0, Math.cos(from.lon * radians)];
     const tangent = Math.sin(angle) > 1e-5 ? endVector.map((n, i) => (n - startVector[i] * dot) / Math.sin(angle)) : side;
     const orbitFirst = angle > Math.PI * 0.42;
-    stopFlight();
+    stopFlight(true);
     mapTip.hidden = true;
     if (motion.matches) {
       Object.assign(mapView, target);
+      if (!target.rise) loweringCountries = null;
       drawTrendMap();
       return;
     }
@@ -1491,8 +1533,13 @@
         zoomed(orbitFirst ? 1 : from.zoom, target.zoom, orbitFirst ? (t - 0.66) / 0.34 : t);
       mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * ease(t);
       mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * ease(t);
-      mapView.relief = ease(Math.max(0, (t - 0.3) / 0.7));
-      if (t === 1) Object.assign(mapView, target);
+      const lift = ease(Math.max(0, (t - (orbitFirst ? 0.4 : 0.14)) / (orbitFirst ? 0.6 : 0.86)));
+      mapView.rise = from.rise + (target.rise - from.rise) * lift;
+      mapView.relief = (from.relief ?? 0) + (target.relief - (from.relief ?? 0)) * lift;
+      if (t === 1) {
+        Object.assign(mapView, target);
+        if (!target.rise) loweringCountries = null;
+      }
       drawTrendMap(now);
       if (t < 1) flight = requestAnimationFrame(step);
     };
@@ -1567,6 +1614,7 @@
     areaHint.textContent = enabled ? magicInstructions : "";
     mapTip.hidden = true;
     if (enabled) {
+      sparkles = [];
       stopFlight();
       app.removeAttribute("data-drawer");
       mapView.offsetX = mapView.offsetY = 0;
@@ -1626,10 +1674,23 @@
       const angle = index * Math.PI / 24;
       return globe.invert(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
     });
-    if (!motion.matches) burst = { x, y, radius, start: performance.now() };
+    for (let i = 0; i < 8; i += 1) {
+      const angle = i * Math.PI / 4;
+      emitSparkle(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius, angle);
+    }
+    const target = { id: `area:${areaIds.join(";")}`, name: "Selected area", latitude: lat, longitude: lon,
+      areaIds, drawn: true, outline: outline.every(Boolean) ? outline : null };
+    target.platformCountries = selectedCountries(target);
+    for (const country of countries) {
+      if (target.platformCountries.includes(country)) continue;
+      const overlaps = country.polygons.some(([ring]) => ring.some(([lon, lat]) => {
+        const p = globe.project(lon, lat);
+        return p && Math.hypot(p[0] - x, p[1] - y) <= radius;
+      }));
+      if (overlaps) target.platformCountries.push(country);
+    }
     setAreaMode(false);
-    selectSite({ id: `area:${areaIds.join(";")}`, name: "Selected area", latitude: lat, longitude: lon,
-      areaIds, drawn: true, outline: outline.every(Boolean) ? outline : null });
+    selectSite(target);
   }
 
   function magicTap(x, y) {
@@ -1638,6 +1699,16 @@
       areaHint.textContent = "Centre placed. Tap the edge or use + and −, then Enter to select.";
       drawTrendMap();
     } else completeMagicCircle([...magicCentre, Math.max(9, Math.hypot(x - magicCentre[0], y - magicCentre[1]))]);
+  }
+
+  function orbitRegion(dx, dy) {
+    if (drawingArea || !site?.platformCountries?.length) return false;
+    mapView.lon = site.longitude;
+    mapView.lat = site.latitude;
+    mapView.rise = mapView.relief = 1;
+    mapView.orbitAzimuth = signedLongitude(mapView.orbitAzimuth + dx * 0.75);
+    mapView.orbitTilt = Math.max(0.15, Math.min(1, mapView.orbitTilt + dy * 0.005));
+    return true;
   }
 
   heatButton.addEventListener("click", () => {
@@ -1679,6 +1750,7 @@
         const last = magicPath.at(-1);
         if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) >= 3 && magicPath.length < 1400) {
           magicPath.push(point);
+          if (magicPath.length % 5 === 0) emitSparkle(...point);
           drawMagicEffects(performance.now());
         }
       }
@@ -1698,10 +1770,14 @@
       if (!drag.moved && Math.hypot(point[0] - drag.point[0], point[1] - drag.point[1]) < 5) return;
       drag.moved = true;
       stage.classList.add("dragging");
-      const scale = 70 / Math.max(50, globe.radius);
-      const latitudeScale = Math.max(0.32, Math.cos(mapView.lat * radians));
-      mapView.lon = signedLongitude(mapView.lon - (point[0] - drag.last[0]) * scale / latitudeScale);
-      mapView.lat = clampLatitude(mapView.lat + (point[1] - drag.last[1]) * scale);
+      const dx = point[0] - drag.last[0];
+      const dy = point[1] - drag.last[1];
+      if (!orbitRegion(dx, dy)) {
+        const scale = 70 / Math.max(50, globe.radius);
+        const latitudeScale = Math.max(0.32, Math.cos(mapView.lat * radians));
+        mapView.lon = signedLongitude(mapView.lon - dx * scale / latitudeScale);
+        mapView.lat = clampLatitude(mapView.lat + dy * scale);
+      }
       drag.last = point;
     }
     drawTrendMap();
@@ -1751,8 +1827,11 @@
     const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
     if (moves[event.key]) {
       stopFlight();
-      mapView.lon = signedLongitude(mapView.lon + moves[event.key][0] * 15 / Math.sqrt(mapView.zoom));
-      mapView.lat = clampLatitude(mapView.lat + moves[event.key][1] * 12 / Math.sqrt(mapView.zoom));
+      const [dx, dy] = moves[event.key];
+      if (!orbitRegion(dx * 40, dy * 22)) {
+        mapView.lon = signedLongitude(mapView.lon + dx * 15 / Math.sqrt(mapView.zoom));
+        mapView.lat = clampLatitude(mapView.lat + dy * 12 / Math.sqrt(mapView.zoom));
+      }
       drawTrendMap();
     } else if (["+", "=", "-"].includes(event.key)) {
       const factor = event.key === "-" ? 1 / 1.3 : 1.3;
@@ -1769,18 +1848,23 @@
   });
   byId("zoom-in").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom * 1.6));
   byId("zoom-out").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom / 1.6));
-  byId("zoom-reset").addEventListener("click", () => {
+  function clearSelection(view) {
     if (drawingArea) setAreaMode(false);
     if (app.hasAttribute("data-drawer")) closeDrawer();
     regionRequest?.abort();
     regionRequest = null;
+    loweringCountries = site?.platformCountries ?? null;
     site = null;
     analysis = null;
+    deselectButton.hidden = true;
     regionResults.hidden = true;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
-    flyTo(home.lat, home.lon, home.zoom, false);
-  });
+    flyTo(view.lat, view.lon, view.zoom, false);
+    world.focus({ preventScroll: true });
+  }
+  byId("zoom-reset").addEventListener("click", () => clearSelection(home));
+  deselectButton.addEventListener("click", () => clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 }));
 
   // ---- Panels: results, welcome, how it works ----
   const hideWelcome = () => {

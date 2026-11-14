@@ -7,31 +7,35 @@
   const radiusScale = 0.398;
   const columns = 288;
   const rows = 144;
-  const ocean = [55, 86, 105];
+  const ocean = [29, 53, 72];
   const ground = [44, 52, 61];
   const rimColour = [8, 15, 20];
+  const platformLift = 0.031;
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
   const point = (lon, lat) => [Math.cos(lat) * Math.cos(lon), Math.sin(lat), Math.cos(lat) * Math.sin(lon)];
 
   const vertexShader = `
     precision highp float;
     attribute vec3 aPoint;
     attribute vec2 aUv;
+    attribute float aWallTop;
     uniform vec3 uRight, uNorth, uFront;
     uniform vec2 uScale, uShift;
-    uniform float uDistance, uRelief;
-    uniform bool uBorders;
+    uniform float uDistance, uRelief, uLift;
+    uniform mediump int uLayer;
     uniform sampler2D uHeight, uSelection, uSurface;
     varying vec2 vUv;
     varying vec3 vPoint;
+    varying float vWallTop;
     float elevation(vec2 uv) {
       float height = 0.0;
       if (uRelief > 0.0) {
         float land = smoothstep(0.5, 1.0, texture2D(uSurface, uv).r);
-        float selected = texture2D(uSelection, uv).r;
+        float selected = uLayer >= 2 ? 1.0 : texture2D(uSelection, uv).r;
         height = texture2D(uHeight, uv).r * selected * land * uRelief;
       }
-      return height;
+      return height + (uLayer >= 2 ? uLift : 0.0);
     }
     const vec2 mesh = vec2(${columns}.0, ${rows}.0);
     vec3 meshVertex(vec2 cell) {
@@ -52,26 +56,31 @@
       return meshVertex(lo + vec2(1.0)) * (t.x + t.y - 1.0) + east * (1.0 - t.y) + south * (1.0 - t.x);
     }
     void main() {
-      vec3 displaced = uBorders ? borderVertex(aUv) : aPoint * (1.0 + elevation(aUv));
+      bool border = uLayer == 1 || uLayer == 3;
+      vec3 displaced = border || uLayer == 4 ? borderVertex(aUv) : aPoint * (1.0 + elevation(aUv));
+      if (uLayer == 4 && aWallTop < 0.5) displaced = normalize(displaced) * 0.998;
       float w = uDistance - dot(displaced, uFront);
       vec2 xy = vec2(dot(displaced, uRight), dot(displaced, uNorth));
       // Perspective depth with near 0.012 and far 16 in units of Earth radii.
-      float depth = w * 1.001501 - 0.024018 - (uBorders ? 0.00012 * w : 0.0);
+      float depth = w * 1.001501 - 0.024018 - (border ? 0.00012 * w : 0.0);
       gl_Position = vec4(xy * uScale + w * uShift, depth, w);
       vUv = aUv;
       vPoint = displaced;
+      vWallTop = aWallTop;
     }
   `;
 
   const fragmentShader = (palette) => `
     precision highp float;
     uniform vec3 uRight, uNorth, uFront;
-    uniform float uDistance, uRelief;
-    uniform bool uHeatVisible, uFocused, uBorders;
+    uniform float uDistance, uRelief, uRise;
+    uniform bool uHeatVisible, uFocused;
+    uniform mediump int uLayer;
     uniform vec2 uTexel;
-    uniform sampler2D uSurface, uHeat, uSelection, uHeight;
+    uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform;
     varying vec2 vUv;
     varying vec3 vPoint;
+    varying float vWallTop;
     vec3 bandColour(float value) {
       ${palette.slice(0, -1).map((colour, index) =>
         `if (value < ${((index + 1) / palette.length).toFixed(8)}) return vec3(${colour}) / 255.0;`
@@ -79,9 +88,10 @@
       return vec3(${palette.at(-1)}) / 255.0;
     }
     float peak(vec2 uv) {
-      return texture2D(uHeight, uv).r * texture2D(uSelection, uv).r;
+      return texture2D(uHeight, uv).r * (uLayer == 2 ? 1.0 : texture2D(uSelection, uv).r);
     }
     void main() {
+      if (uLayer == 2 && texture2D(uPlatform, vUv).r < 0.46) discard;
       vec3 bodyNormal = normalize(vPoint);
       vec3 screenNormal = vec3(dot(bodyNormal, uRight), dot(bodyNormal, uNorth), dot(bodyNormal, uFront));
       vec3 toEye = normalize(uDistance * uFront - vPoint);
@@ -91,10 +101,15 @@
       vec4 surface = texture2D(uSurface, vUv);
       float land = smoothstep(0.48, 0.62, surface.r);
       float selected = uFocused ? texture2D(uSelection, vUv).r : 1.0;
-      if (uBorders) {
+      if (uLayer == 4) {
+        vec3 wall = mix(vec3(0.07, 0.12, 0.17), vec3(0.28, 0.41, 0.46), pow(vWallTop, 1.5));
+        gl_FragColor = vec4(wall * (0.72 + 0.33 * lambert), 1.0);
+        return;
+      }
+      if (uLayer == 1 || uLayer == 3) {
         float heat = uHeatVisible ? texture2D(uHeat, vUv).g : 0.0;
         vec3 ink = mix(vec3(0.61, 0.77, 0.80), vec3(0.04, 0.08, 0.11), smoothstep(0.20, 0.66, heat));
-        float contrast = mix(0.14, 0.54, smoothstep(0.02, 0.94, selected));
+        float contrast = uLayer == 3 ? 0.65 : uRise >= 0.0 ? 0.54 - 0.25 * uRise : mix(0.14, 0.54, smoothstep(0.02, 0.94, selected));
         gl_FragColor = vec4(ink, contrast * smoothstep(0.0, 0.09, facing));
         return;
       }
@@ -103,7 +118,7 @@
       if (uHeatVisible && land > 0.0) {
         vec2 heat = texture2D(uHeat, vUv).rg;
         float grade = 0.86 + 0.14 * lambert;
-        if (uRelief > 0.0 && selected > 0.01 && heat.g > 0.005) {
+        if (uRelief > 0.0 && (uLayer == 2 || selected > 0.01) && heat.g > 0.005) {
           vec2 dx = vec2(uTexel.x, 0.0);
           vec2 dy = vec2(0.0, uTexel.y);
           float longitude = (vUv.x - 0.5) * 6.2831853;
@@ -119,9 +134,11 @@
         float value = heat.r / max(heat.g, 1.0 / 255.0);
         color = mix(color, bandColour(value) * grade, heat.g * land);
       }
-      color *= mix(0.34, 1.0, smoothstep(0.02, 0.94, selected));
+      float brightness = uLayer == 2 ? mix(0.92, 1.03, selected) :
+        uRise >= 0.0 ? 1.0 - 0.38 * uRise : mix(0.34, 1.0, smoothstep(0.02, 0.94, selected));
+      color *= brightness;
       float edge = pow(1.0 - facing, 5.0);
-      color += (vec3(${rimColour}) / 255.0) * edge * mix(0.40, 1.0, selected);
+      color += (vec3(${rimColour}) / 255.0) * edge * brightness;
       gl_FragColor = vec4(color, 1.0);
     }
   `;
@@ -189,8 +206,22 @@
   function vertexBuffer(gl, vertices) {
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices instanceof Float32Array ? vertices : new Float32Array(vertices), gl.STATIC_DRAW);
     return buffer;
+  }
+
+  function platformWalls(segments) {
+    const walls = new Float32Array(segments.length * 18 / 5);
+    const corners = [[0, 0], [5, 0], [0, 1], [0, 1], [5, 0], [5, 1]];
+    let offset = 0;
+    for (let i = 0; i < segments.length; i += 10) {
+      for (const [endpoint, top] of corners) {
+        walls.set(segments.subarray(i + endpoint, i + endpoint + 5), offset);
+        walls[offset + 5] = top;
+        offset += 6;
+      }
+    }
+    return walls;
   }
 
   function sphere(gl) {
@@ -226,20 +257,29 @@
     const borderBuffer = borders.length ? vertexBuffer(gl, borders) : null;
     const position = gl.getAttribLocation(program, "aPoint");
     const uv = gl.getAttribLocation(program, "aUv");
+    const wallTop = gl.getAttribLocation(program, "aWallTop");
     const lineWidth = gl.getParameter(gl.ALIASED_LINE_WIDTH_RANGE)[1];
     gl.enableVertexAttribArray(position);
     gl.enableVertexAttribArray(uv);
-    function bindVertices(buffer) {
+    function bindVertices(buffer, walls = false) {
+      const stride = walls ? 24 : 20;
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-      gl.vertexAttribPointer(position, 3, gl.FLOAT, false, 20, 0);
-      gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, 20, 12);
+      gl.vertexAttribPointer(position, 3, gl.FLOAT, false, stride, 0);
+      gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, stride, 12);
+      if (walls) {
+        gl.enableVertexAttribArray(wallTop);
+        gl.vertexAttribPointer(wallTop, 1, gl.FLOAT, false, stride, 20);
+      } else {
+        gl.disableVertexAttribArray(wallTop);
+        gl.vertexAttrib1f(wallTop, 0);
+      }
     }
     const locations = new Map();
     const uniform = (name) => {
       if (!locations.has(name)) locations.set(name, gl.getUniformLocation(program, name));
       return locations.get(name);
     };
-    const names = ["uSurface", "uHeat", "uSelection", "uHeight"];
+    const names = ["uSurface", "uHeat", "uSelection", "uHeight", "uPlatform"];
     const textures = names.map((name, unit) => {
       const texture = gl.createTexture();
       gl.activeTexture(gl.TEXTURE0 + unit);
@@ -268,7 +308,23 @@
     gl.enable(gl.CULL_FACE);
     gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-    return ({ frame, surface, heat, selection, heightMap, relief }) => {
+    function drawBorders(buffer, count, layer, dpr) {
+      if (!count) return;
+      bindVertices(buffer);
+      gl.uniform1i(uniform("uLayer"), layer);
+      gl.enable(gl.BLEND);
+      gl.depthMask(false);
+      gl.lineWidth(Math.min(lineWidth, dpr));
+      gl.drawArrays(gl.LINES, 0, count);
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
+
+    let liftedCountries;
+    let platformBorder;
+    let platformWall;
+    let borderVertexCount = 0;
+    return ({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise }) => {
       if (gl.isContextLost()) return;
       const { width, height, front, right, north, distance, focal, offsetX, offsetY } = frame;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -278,7 +334,7 @@
         canvas.width = pixelWidth;
         canvas.height = pixelHeight;
       }
-      [surface, heat, selection, heightMap].forEach((texture, unit) => setTexture(unit, texture));
+      [surface, heat, selection, heightMap, platform].forEach((texture, unit) => setTexture(unit, texture));
       gl.viewport(0, 0, pixelWidth, pixelHeight);
       gl.uniform3fv(uniform("uRight"), right);
       gl.uniform3fv(uniform("uNorth"), north);
@@ -289,26 +345,43 @@
       gl.uniform1i(uniform("uHeatVisible"), heat !== null);
       gl.uniform1i(uniform("uFocused"), selection !== null);
       gl.uniform2f(uniform("uTexel"), 1 / (heightMap?.width || 1), 1 / (heightMap?.height || 1));
-      gl.uniform1f(uniform("uRelief"), heat && selection && heightMap ? 0.030 * relief : 0);
+      const hasPlatform = platform !== null;
+      gl.uniform1f(uniform("uRise"), hasPlatform ? rise : -1);
+      gl.uniform1f(uniform("uLift"), hasPlatform ? platformLift * rise : 0);
+      gl.uniform1f(uniform("uRelief"), !hasPlatform && heat && selection && heightMap ? 0.030 * relief : 0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       bindVertices(mesh.buffer);
-      gl.uniform1i(uniform("uBorders"), 0);
+      gl.uniform1i(uniform("uLayer"), 0);
       gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
-      if (borderBuffer) {
-        bindVertices(borderBuffer);
-        gl.uniform1i(uniform("uBorders"), 1);
-        gl.enable(gl.BLEND);
-        gl.depthMask(false);
-        gl.lineWidth(Math.min(lineWidth, dpr));
-        gl.drawArrays(gl.LINES, 0, borders.length / 5);
-        gl.depthMask(true);
-        gl.disable(gl.BLEND);
+      drawBorders(borderBuffer, borders.length / 5, 1, dpr);
+      if (!hasPlatform || rise < 0.001) return;
+      if (liftedCountries !== platformCountries) {
+        if (platformBorder) gl.deleteBuffer(platformBorder);
+        if (platformWall) gl.deleteBuffer(platformWall);
+        const lines = borderSegments(platformCountries);
+        borderVertexCount = lines.length / 5;
+        platformBorder = borderVertexCount ? vertexBuffer(gl, lines) : null;
+        platformWall = borderVertexCount ? vertexBuffer(gl, platformWalls(lines)) : null;
+        liftedCountries = platformCountries;
       }
+
+      gl.uniform1f(uniform("uRelief"), heat && heightMap ? 0.019 * Math.min(rise, relief) : 0);
+      if (platformWall) {
+        bindVertices(platformWall, true);
+        gl.uniform1i(uniform("uLayer"), 4);
+        gl.disable(gl.CULL_FACE);
+        gl.drawArrays(gl.TRIANGLES, 0, borderVertexCount * 3);
+        gl.enable(gl.CULL_FACE);
+      }
+      bindVertices(mesh.buffer);
+      gl.uniform1i(uniform("uLayer"), 2);
+      gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
+      drawBorders(platformBorder, borderVertexCount, 3, dpr);
     };
   }
 
 
-  // shortcut: the Canvas fallback keeps the optical framing and data palette; vertex relief needs WebGL.
+  // shortcut: the Canvas fallback highlights the selected countries without displacing their surface.
   function softwareRenderer(canvas, borders, palette) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
@@ -325,7 +398,7 @@
       return textures.get(source);
     }
 
-    return ({ frame, surface, heat, selection }) => {
+    return ({ frame, surface, heat, selection, platform, rise }) => {
       const { width, height, cx, cy, focal, distance, front, right, north } = frame;
       const scale = Math.min(1, 500 / Math.max(width, height));
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -341,6 +414,7 @@
       const landTexture = pixels(surface);
       const heatTexture = pixels(heat);
       const selectionTexture = pixels(selection);
+      const platformTexture = pixels(platform);
       const textureIndex = (texture, u, v) =>
         4 * (Math.min(texture.width - 1, Math.floor(u * texture.width)) +
           texture.width * Math.min(texture.height - 1, Math.floor(v * texture.height)));
@@ -362,7 +436,9 @@
           const at = 4 * (y * w + x);
           const landI = landTexture ? textureIndex(landTexture, u, v) : 0;
           const land = (landTexture?.data[landI] ?? 0) / 255;
-          const weight = selectionTexture ? 0.34 + 0.66 * selectionTexture.data[textureIndex(selectionTexture, u, v)] / 255 : 1;
+          const weight = platformTexture
+            ? 1 - 0.38 * rise * (1 - platformTexture.data[textureIndex(platformTexture, u, v)] / 255)
+            : selectionTexture ? 0.34 + 0.66 * selectionTexture.data[textureIndex(selectionTexture, u, v)] / 255 : 1;
           const light = 0.70 + 0.49 * Math.max(0, -0.48 * localX + 0.48 * localY + 0.73 * z);
           const heatI = heatTexture && land > 0.5 ? textureIndex(heatTexture, u, v) : 0;
           const coverage = heatTexture && land > 0.5 ? heatTexture.data[heatI + 1] : 0;
@@ -400,7 +476,8 @@
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
         const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
-        const dim = selectionTexture && selectionTexture.data[textureIndex(selectionTexture, u, v)] < 128;
+        const dim = platformTexture ? rise > 0.25 && platformTexture.data[textureIndex(platformTexture, u, v)] < 128
+          : selectionTexture && selectionTexture.data[textureIndex(selectionTexture, u, v)] < 128;
         const path = paths[(dim ? 2 : 0) + (dark ? 1 : 0)];
         path.moveTo(...project(visible(a, b)));
         path.lineTo(...project(visible(b, a)));
@@ -415,9 +492,9 @@
     };
   }
 
-  function surfaceDistance(px, py, distance) {
+  function surfaceDistance(px, py, distance, radius = 1) {
     const a = 1 + px * px + py * py;
-    const discriminant = distance * distance - a * (distance * distance - 1);
+    const discriminant = distance * distance - a * (distance * distance - radius * radius);
     return discriminant < 0 ? null : (distance - Math.sqrt(discriminant)) / a;
   }
 
@@ -427,32 +504,62 @@
     const draw = gl ? webglRenderer(canvas, gl, borders, palette) : softwareRenderer(canvas, borders, palette);
     if (!draw) return null;
     let frame;
+    let maskSource;
+    let maskPixels;
+
+    function onPlatform(longitude, latitude) {
+      const mask = frame?.platform;
+      if (!mask || !frame.lift) return false;
+      if (mask !== maskSource) {
+        maskSource = mask;
+        maskPixels = mask.data ? mask : mask.getContext("2d").getImageData(0, 0, mask.width, mask.height);
+      }
+      const { width, height, data } = maskPixels;
+      const x = Math.min(width - 1, Math.max(0, Math.floor(width * (longitude + 180) / 360)));
+      const y = Math.min(height - 1, Math.max(0, Math.floor(height * (90 - latitude) / 180)));
+      return data[4 * (x + width * y)] >= 118;
+    }
 
     function render({ longitude, latitude, zoom = 1, lens = 1, offsetX = 0, offsetY = 0,
-      surface = null, heat = null, selection = null, heightMap = null, relief = 0 }) {
+      surface = null, heat = null, selection = null, heightMap = null, relief = 0,
+      platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0 }) {
       const { clientWidth: width, clientHeight: height } = canvas;
       if (!width || !height) return;
       const lon = longitude * rad;
       const lat = latitude * rad;
-      const front = point(lon, lat);
-      const right = [-Math.sin(lon), 0, Math.cos(lon)];
-      const north = [-Math.sin(lat) * Math.cos(lon), Math.cos(lat), -Math.sin(lat) * Math.sin(lon)];
+      const aim = point(lon, lat);
+      const aimRight = [-Math.sin(lon), 0, Math.cos(lon)];
+      const aimNorth = cross(aimRight, aim);
       const shortSide = Math.min(width, height);
       const nominalFocal = focalScale * shortSide;
       const nominalRadius = radiusScale * shortSide * zoom;
       const distance = Math.hypot(1, nominalFocal / nominalRadius);
       const focal = nominalFocal * lens;
+      rise = Math.max(0, Math.min(1, rise));
+      const lift = gl && platform ? platformLift * rise : 0;
+      // Rotate around the aim point and keep that point centred on the elevated shell.
+      const pitch = gl && platform ? Math.min(15 * rad, 0.48 * (distance - 1 - lift)) * tilt : 0;
+      const azimuth = orbitAzimuth * rad;
+      const front = aim.map((value, i) => value * Math.cos(pitch) - Math.sin(pitch) *
+        (aimNorth[i] * Math.cos(azimuth) + aimRight[i] * Math.sin(azimuth)));
+      const horizon = Math.hypot(front[0], front[2]);
+      const right = horizon > 1e-8 ? [-front[2] / horizon, 0, front[0] / horizon] : aimRight;
+      const north = cross(right, front);
+      const aimScale = focal * (1 + lift) / (distance - (1 + lift) * dot(aim, front));
+      offsetX -= aimScale * dot(aim, right);
+      offsetY += aimScale * dot(aim, north);
       frame = { front, right, north, distance, focal, cx: width / 2 + offsetX, cy: height / 2 + offsetY,
-        width, height, offsetX, offsetY };
-      draw({ frame, surface, heat, selection, heightMap, relief });
+        width, height, offsetX, offsetY, lift, platform };
+      draw({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise });
     }
 
     function project(longitude, latitude) {
       if (!frame) return null;
       const { front, right, north, distance, focal, cx, cy } = frame;
-      const target = point(longitude * rad, latitude * rad);
+      const radius = onPlatform(longitude, latitude) ? 1 + frame.lift : 1;
+      const target = point(longitude * rad, latitude * rad).map((value) => value * radius);
       const z = dot(target, front);
-      if (z * distance < 1) return null;
+      if (z * distance < radius * radius) return null;
       const scale = focal / (distance - z);
       return [cx + scale * dot(target, right), cy - scale * dot(target, north)];
     }
@@ -462,10 +569,17 @@
       const { front, right, north, distance, focal, cx, cy } = frame;
       const px = (x - cx) / focal;
       const py = (cy - y) / focal;
-      const t = surfaceDistance(px, py, distance);
-      if (t === null) return null;
-      const p = front.map((value, index) => value * (distance - t) + t * (right[index] * px + north[index] * py));
-      return [Math.atan2(p[2], p[0]) / rad, Math.asin(Math.max(-1, Math.min(1, p[1]))) / rad];
+      function geographicHit(radius) {
+        const t = surfaceDistance(px, py, distance, radius);
+        if (t === null) return null;
+        const p = front.map((value, index) => value * (distance - t) + t * (right[index] * px + north[index] * py));
+        return [Math.atan2(p[2], p[0]) / rad, Math.asin(Math.max(-1, Math.min(1, p[1] / radius))) / rad];
+      }
+      if (frame.lift) {
+        const raised = geographicHit(1 + frame.lift);
+        if (raised && onPlatform(...raised)) return raised;
+      }
+      return geographicHit(1);
     }
 
     function zoomFor(degrees, pixels) {

@@ -183,6 +183,8 @@
     const measurements = new Map();
     let selectedSite;
     let selection;
+    let platformCountries;
+    let platform;
     return {
       surface,
       measurement(entry) {
@@ -205,6 +207,15 @@
           selection = makeSelection(site, pointsById);
         }
         return selection;
+      },
+      platform(selectedCountries) {
+        if (!selectedCountries?.length) return null;
+        if (platformCountries !== selectedCountries) {
+          // The bundled country polygons are already split at the date line.
+          platform = makeSurface(selectedCountries).surface;
+          platformCountries = selectedCountries;
+        }
+        return platform;
       },
     };
   };
