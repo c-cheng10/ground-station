@@ -3,6 +3,8 @@ window.TREND_CONFIG = {
   "endYear": 2025,
   "baselineStart": 1991,
   "baselineEnd": 2020,
+  "supabaseUrl": "https://vbumlhsonrozcrzcuirm.supabase.co",
+  "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZidW1saHNvbnJvemNyemN1aXJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ2NzYzNjgsImV4cCI6MjExMDI1MjM2OH0.Q2TSoe9HcDGc2zs599LCj5_sdGs4-JzCYEmDL9vbuKY",
   "sourceUrl": "https://power.larc.nasa.gov/docs/services/api/temporal/monthly/",
   "methodUrl": "https://www.nber.org/papers/t0055",
   "variables": [

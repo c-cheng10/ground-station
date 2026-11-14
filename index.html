@@ -167,6 +167,8 @@
       border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .results-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+    .results-bar p { margin: 0; color: var(--muted); font-size: 0.9rem; }
     .story { padding: 18px 22px; background: #fff7e6; border-radius: 16px; box-shadow: var(--shadow-1); }
     .story h3 { font-size: 1rem; margin-bottom: 4px; }
     .story p { margin: 0; max-width: 78ch; }
@@ -354,6 +356,10 @@
           </div>
 
           <div id="region-results" class="main" hidden>
+            <div class="results-bar">
+              <p>Saved in this browser, so it opens instantly next time.</p>
+              <button type="button" class="button secondary small" id="refresh-region">Refresh from NASA</button>
+            </div>
             <article class="card answer" id="single-report" aria-labelledby="result-headline">
               <span class="verdict" id="trend-verdict"></span>
               <h2 id="result-headline"></h2>
@@ -442,7 +448,7 @@
         <div class="card">
           <h3>The data</h3>
           <p>Every number comes from NASA POWER, which serves MERRA-2: a weather model continuously corrected with satellite and ground observations, from 1981 to today.</p>
-          <p>The tool averages the 9 grid cells around your point, each about 50 km across.</p>
+          <p>The tool averages the 9 grid cells around your point, each about 50 km across. Results are saved in your browser, and Refresh adds newly finished months to the team’s shared Supabase dataset for the 6 study areas.</p>
         </div>
         <div class="card">
           <h3>The trend test</h3>
