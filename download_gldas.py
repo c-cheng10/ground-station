@@ -1,11 +1,11 @@
-"""Download monthly NASA data (GLDAS, MERRA-2, GPM) from Giovanni for a global grid of land points.
+"""Download monthly NASA data from Giovanni for global land and ocean grids.
 
 Giovanni (giovanni.gsfc.nasa.gov) serves GLDAS Noah 0.25° monthly: version 2.0 covers
 1948-2014 and version 2.1 covers 2000 to today. Each request returns one variable at
 one point. Responses are cached in giovanni-cache/, so reruns skip finished requests.
 
-    python download_gldas.py --pilot          # one point, then report quota used
-    python download_gldas.py --spacing 3      # every land point on a 3° lattice
+    python download_gldas.py --pilot          # one land point and one ocean point
+    python download_gldas.py --spacing 3 --workers 8
 
 Needs EARTHDATA_TOKEN in .env (see .env.example).
 """
@@ -17,7 +17,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -35,6 +35,20 @@ REQUESTS = GLDAS20 + [
     # GLDAS 2.1 air temperature, only for the site's "Do the datasets agree?" check.
     ("2_1_Tair_f_inst", "GLDAS_NOAH025_M_2_1_Tair_f_inst", 2000, 2025),
 ]
+ATMOSPHERE_REQUESTS = [
+    ("airs_TotO3", "AIRS3STM_7_0_TotO3_A", 2002, 2025),
+    ("merra_TO3", "M2IMNXASM_5_12_4_TO3", 1980, 2025),
+    ("airs_TotH2OVap", "AIRS3STM_7_0_TotH2OVap_A", 2002, 2025),
+    ("airs_CloudFrc", "AIRS3STM_7_0_CloudFrc_A", 2002, 2025),
+    ("airs_OLR", "AIRS3STM_7_0_OLR_A", 2002, 2025),
+    ("merra_TROPT", "M2IMNXASM_5_12_4_TROPT", 1980, 2025),
+    ("airs_TropHeight", "AIRS3STM_7_0_TropHeight_A", 2002, 2025),
+]
+LAND_REQUESTS = REQUESTS + ATMOSPHERE_REQUESTS
+OCEAN_REQUESTS = [request for request in REQUESTS if request[0] in {"merra_T2M", "gpm_precipitation"}] + [
+    ("airs_SurfSkinTemp", "AIRS3STM_7_0_SurfSkinTemp_A", 2002, 2025),
+] + ATMOSPHERE_REQUESTS
+PILOT_OCEAN_POINT = (-13.375, -139.375)
 # Study areas and examples the site already uses, so they are always in the dataset.
 FIXED_POINTS = [(44.125, -80.625), (38.625, -100.125), (23.125, -102.375), (-3.125, -60.125),
                 (-15.625, -47.625), (-49.625, -70.625), (14.125, 1.875)]
@@ -78,6 +92,14 @@ def grid(spacing):
     return sorted(points | set(FIXED_POINTS))
 
 
+def ocean_grid(spacing):
+    rings = land_polygons()
+    latitudes = [cell_centre(-60 + (i + 0.5) * spacing) for i in range(int(130 / spacing))]
+    longitudes = [cell_centre(-180 + (i + 0.5) * spacing) for i in range(int(360 / spacing))]
+    return sorted({(lat, lon) for lat in latitudes for lon in longitudes
+                   if not on_land(lat, lon, rings)})
+
+
 def fetch(token, name, data, first, last, lat, lon):
     path = CACHE / f"{lat}_{lon}" / f"{name}.csv"
     if path.exists():
@@ -90,8 +112,8 @@ def fetch(token, name, data, first, last, lat, lon):
             with urlopen(request, timeout=180) as response:
                 body = response.read().decode("utf-8")
             break
-        except HTTPError as error:
-            if error.code in (401, 403):
+        except (URLError, TimeoutError) as error:
+            if isinstance(error, HTTPError) and error.code in (401, 403):
                 raise SystemExit("Giovanni refused the token. Generate a new one at urs.earthdata.nasa.gov and update .env.")
             if attempt == 3:
                 raise
@@ -100,7 +122,9 @@ def fetch(token, name, data, first, last, lat, lon):
         # Ocean, ice sheet or outside coverage: record it so reruns don't ask again.
         body = "NO DATA\n" + body[:500]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    pending = path.with_suffix(".tmp")
+    pending.write_text(body, encoding="utf-8")
+    pending.replace(path)
     return "saved"
 
 
@@ -109,30 +133,53 @@ def quota(token):
         return json.load(response)["quota"]
 
 
+def download_job(token, job):
+    try:
+        return fetch(token, *job)
+    except (URLError, TimeoutError) as error:
+        _, data, _, _, lat, lon = job
+        print(f"  failed {data} at {lat},{lon}: {error}", flush=True)
+        return "failed"
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pilot", action="store_true", help="download one point and report the quota it used")
+    parser.add_argument("--pilot", action="store_true", help="download one land and one ocean point")
     parser.add_argument("--spacing", type=float, default=3.0, help="lattice spacing in degrees")
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
-    token = read_env().get("EARTHDATA_TOKEN")
+    if args.spacing <= 0 or args.workers <= 0:
+        parser.error("spacing and workers must be positive")
+    token = read_env().get("EARTHDATA_TOKEN", "").strip("\"'")
     if not token:
         raise SystemExit("Add EARTHDATA_TOKEN to .env first (see .env.example).")
 
-    points = FIXED_POINTS[:1] if args.pilot else grid(args.spacing)
-    jobs = [(*request, lat, lon) for lat, lon in points for request in REQUESTS]
+    land = FIXED_POINTS[:1] if args.pilot else grid(args.spacing)
+    ocean = [PILOT_OCEAN_POINT] if args.pilot else ocean_grid(args.spacing)
+    ocean = sorted(set(ocean).difference(land))
+    jobs = [(*request, lat, lon) for points, requests in ((land, LAND_REQUESTS), (ocean, OCEAN_REQUESTS))
+            for lat, lon in points for request in requests]
+    cached = sum((CACHE / f"{lat}_{lon}" / f"{name}.csv").exists() for name, _, _, _, lat, lon in jobs)
     before = quota(token)
-    print(f"{len(points)} points, {len(jobs)} requests, quota used so far {before:.4f}")
+    print(f"{len(land)} land points, {len(ocean)} ocean points, {len(jobs)} requests ({cached} cached), "
+          f"quota used so far {before:.11f}", flush=True)
     started = time.time()
-    with ThreadPoolExecutor(args.workers) as pool:
-        for done, result in enumerate(pool.map(lambda job: fetch(token, *job), jobs), 1):
+    failures = 0
+    pool = ThreadPoolExecutor(args.workers)
+    try:
+        for done, result in enumerate(pool.map(lambda job: download_job(token, job), jobs), 1):
+            failures += result == "failed"
             if done % 50 == 0 or done == len(jobs):
-                print(f"  {done}/{len(jobs)} ({result}), {time.time() - started:.0f} s", flush=True)
+                print(f"  {done}/{len(jobs)} ({failures} failed), {time.time() - started:.0f} s", flush=True)
+    finally:
+        pool.shutdown(cancel_futures=True)
     after = quota(token)
-    per_point = (after - before) / len(points)
-    print(f"quota used {before:.4f} -> {after:.4f}; about {per_point:.5f} per point")
+    per_point = (after - before) / (len(land) + len(ocean))
+    print(f"quota used {before:.11f} -> {after:.11f}; about {per_point:.11f} per point")
     if args.pilot and per_point > 0:
         print(f"a full month's quota covers about {int((1 - after) / per_point)} more points")
+    if failures:
+        raise SystemExit(f"{failures} requests failed. Rerun to retry them from the cache checkpoint.")
 
 
 if __name__ == "__main__":
