@@ -5,16 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#0b1a2b">
-  <meta name="description" content="Pick any place on land and test 45 years of NASA data for a real climate trend.">
+  <meta name="description" content="Pick any place on land and test decades of NASA data for a real climate trend.">
   <title>Climate Trend Explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&display=swap">
-  <script defer src="americas-map.js"></script>
+  <script defer src="world-map.js"></script>
   <script defer src="trend-config.js"></script>
-  <script defer src="power-data.js"></script>
+  <script defer src="points-index.js"></script>
+  <script defer src="featured-stripes.js"></script>
   <script defer src="trend-statistics.js"></script>
+  <script defer src="world-model.js"></script>
   <script defer src="trend-explorer.js"></script>
+  <script defer src="research.js"></script>
+  <script defer src="correlation-assistant.js"></script>
   <style>
     :root {
       --night: #0b1a2b;
@@ -167,6 +171,9 @@
       border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .agree { margin-top: 18px; padding: 14px 16px; border-radius: 12px; background: var(--sunken); }
+    .agree h3 { font-size: 1rem; margin-bottom: 4px; }
+    .agree p { margin: 0; color: var(--muted); font-size: 0.95rem; }
     .story { padding: 18px 22px; background: #fff7e6; border-radius: 16px; box-shadow: var(--shadow-1); }
     .story h3 { font-size: 1rem; margin-bottom: 4px; }
     .story p { margin: 0; max-width: 78ch; }
@@ -205,6 +212,12 @@
     .numbers dt { color: var(--muted); font-size: 0.84rem; }
     .numbers dd { margin: 2px 0 0; font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
     .note { color: var(--muted); font-size: 0.9rem; margin: 12px 0 0; }
+    .forecast { margin-top: 30px; padding-top: 6px; border-top: 1px solid var(--rule); }
+    .skill { display: inline-block; margin: 14px 0 0; padding: 8px 14px; border-radius: 12px; background: #e6f2ec; color: #12503a; font-weight: 700; }
+    .skill[data-weak] { background: #f4efe2; color: #6a4b12; }
+    .forecast-stage { height: 280px; }
+    .swatch.forecast { border-top: 2.5px dashed var(--warm); }
+    .swatch.band { height: 12px; border: 0; border-radius: 3px; background: #a8402a33; }
     .about { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--rule); display: grid; grid-template-columns: 1fr 1fr; gap: 18px 32px; }
     .about p { margin: 0; color: var(--muted); font-size: 0.92rem; }
     .glossary summary { cursor: pointer; font-weight: 700; color: var(--control); }
@@ -232,7 +245,33 @@
     .matrix tbody th { white-space: nowrap; }
 
     /* How it works */
-    .method-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+    .research-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 14px; }
+    .research-form label { display: grid; gap: 4px; font-size: 0.85rem; font-weight: 700; }
+    .research-form input { width: 7em; min-height: 38px; padding: 6px 10px; border: 1px solid #b0c0ce; border-radius: 10px; background: #fff; }
+    .research-form button:disabled { cursor: default; opacity: 0.65; }
+    .research-status:empty { margin: 0; }
+    .research-sources { margin: 14px 0 0; padding-inline-start: 24px; overflow-wrap: anywhere; }
+    .research-sources li + li { margin-top: 12px; }
+    .research-sources li p { margin-top: 2px; }
+
+    /* Correlation assistant */
+    .assistant { scroll-margin-top: 16px; }
+    .assistant fieldset { border: 0; padding: 0; margin: 14px 0 0; min-width: 0; }
+    .assistant label { display: block; font-weight: 700; margin-bottom: 6px; }
+    .assistant textarea {
+      display: block; width: 100%; padding: 10px 12px; resize: vertical; background: var(--surface);
+      color: var(--ink); border: 1px solid #b0c0ce; border-radius: 10px; font: inherit;
+    }
+    .assistant-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .assistant button:disabled { cursor: wait; opacity: 0.65; }
+    .assistant-reply { white-space: pre-line; margin: 14px 0 0; overflow-wrap: anywhere; }
+    .assistant-reply:empty { margin: 0; }
+    .assistant-result { background: var(--sunken); border-radius: 12px; padding: 12px 14px; margin-top: 12px; }
+    .assistant-result p { margin: 0; }
+    .assistant-result .description { margin-top: 4px; }
+
+    /* How it works */
+    .method-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
     .method-grid .card { padding: 24px; }
     .method-grid h3 { font-size: 1.15rem; margin-bottom: 10px; }
     .method-grid p { margin: 0 0 10px; color: var(--muted); }
@@ -271,19 +310,20 @@
 <body>
   <a class="skip" href="#explore">Skip to the explorer</a>
   <header class="hero">
-    <canvas class="hero-stripes" id="hero-stripes" role="img" aria-label="Climate stripes for Southern Ontario air temperature, 1981 to 2025, shifting from mostly blue years to mostly red years."></canvas>
+    <canvas class="hero-stripes" id="hero-stripes" role="img" aria-label="Climate stripes for Southern Ontario air temperature, 1980 to 2025."></canvas>
     <div class="shell topbar">
       <a class="brand" href="#">Climate Trend Explorer</a>
       <nav class="nav" aria-label="Sections">
         <a href="#examples">Examples</a>
         <a href="#explore">Explorer</a>
         <a href="#how">How it works</a>
-        <a class="keep" href="americas-trends.csv" download>Download the data</a>
+        <a class="keep" href="study-areas.csv" download>Download the data</a>
+        <a class="keep" href="#correlation-assistant">Ask AI</a>
       </nav>
     </div>
     <div class="shell hero-body">
       <h1>Is the climate where you live really changing?</h1>
-      <p class="hero-lead">Pick any place on land, choose something to measure, and test 45 years of NASA satellite and weather-model data for a real trend. Every result comes with a plain-English answer, so no statistics background is needed.</p>
+      <p class="hero-lead">Pick a stored land location, choose something to measure, and test decades of NASA satellite and model data for a trend.</p>
       <div class="hero-actions">
         <a class="button primary" href="#examples">Try an example</a>
         <a class="button secondary" href="#explore">Pick my own place</a>
@@ -291,7 +331,7 @@
     </div>
     <div class="shell hero-key">
       <span class="scale"><span>Colder</span><span aria-hidden="true"></span><span>Warmer</span></span>
-      <span>Behind this page: air temperature in Southern Ontario, one stripe per year from 1981 to 2025.</span>
+      <span>Southern Ontario air temperature, one stripe per year from 1980 to 2025.</span>
     </div>
   </header>
 
@@ -319,13 +359,12 @@
               <h3 class="step" id="map-title">1. Pick a place</h3>
               <div id="continent-controls" class="segmented" role="group" aria-label="Map region"></div>
             </div>
-            <p class="hint">Click anywhere on land. Each area covers about 150 km, so local quirks average out.</p>
+            <p class="hint">Click near a stored land point or choose a study area below.</p>
             <div class="map-stage" id="map-stage">
               <canvas id="map" aria-hidden="true"></canvas>
               <div id="map-markers" role="group" aria-label="Study areas on map"></div>
             </div>
             <div id="site-list" class="site-list" role="group" aria-labelledby="site-list-title"></div>
-            <button type="button" class="button secondary small" id="refresh-region" hidden>Refresh from NASA</button>
             <form class="point-form" id="point-form">
               <p>Or type any point on Earth. South and west are negative.</p>
               <label>Latitude <input name="latitude" type="number" inputmode="decimal" autocomplete="off" min="-90" max="90" step="any" placeholder="43.7" required></label>
@@ -392,6 +431,23 @@
                 <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
               </dl>
               <p class="note" id="trend-agree"></p>
+              <div class="agree" id="datasets-agree" hidden>
+                <h3>Do the datasets agree?</h3>
+                <p id="datasets-agree-text"></p>
+              </div>
+
+              <section class="forecast" id="forecast" aria-labelledby="forecast-title" hidden>
+                <div class="chart-head">
+                  <h3 id="forecast-title">What happens next?</h3>
+                  <div class="segmented" id="forecast-options" role="group" aria-label="Forecast view"></div>
+                </div>
+                <p class="skill" id="forecast-skill"></p>
+                <p class="description" id="forecast-text"></p>
+                <div class="chart-stage forecast-stage" id="forecast-stage">
+                  <canvas id="forecast-chart" role="img" aria-labelledby="forecast-title" aria-describedby="forecast-text"></canvas>
+                </div>
+                <div class="legend" id="forecast-legend"></div>
+              </section>
 
               <div class="about">
                 <div>
@@ -405,7 +461,7 @@
                     <dt>Likely range (95%)</dt><dd>The real rate of change probably sits in this range. If it crosses zero, the data can’t tell rising from falling.</dd>
                     <dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. Scientists usually call 0.05 (1 in 20) or smaller significant.</dd>
                     <dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it.</dd>
-                    <dt>Why p-values are adjusted</dt><dd>Testing 8 measurements at once raises the odds that one looks significant by luck, so the tool raises the bar (the Holm method).</dd>
+                    <dt>Why p-values are adjusted</dt><dd>Testing several measurements raises the odds that one looks significant by chance. The Holm method accounts for those tests.</dd>
                   </dl>
                 </details>
               </div>
@@ -413,10 +469,22 @@
 
             <section class="card card-pad" id="correlations" aria-labelledby="correlations-title" hidden>
               <h3 class="card-title" id="correlations-title">How the measurements move together</h3>
-              <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, so you only see month-to-month surprises. A link is not proof that one causes the other.</p>
+              <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, so you only see month-to-month surprises. Records cover different years, so each pair is compared over the years both have. A link is not proof that one causes the other.</p>
               <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
               <p class="description" id="lag-note"></p>
               <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
+            </section>
+
+            <section class="card card-pad" id="research" aria-labelledby="research-title">
+              <h3 class="card-title" id="research-title">Research context</h3>
+              <p class="description" id="research-scope"></p>
+              <form class="research-form" id="research-form" aria-describedby="research-scope">
+                <label for="research-start">From year<input type="number" id="research-start" step="1" required></label>
+                <label for="research-end">To year<input type="number" id="research-end" step="1" required></label>
+                <button class="button secondary small" id="research-submit" type="submit">Find research</button>
+              </form>
+              <p class="description research-status" id="research-status" role="status"></p>
+              <ol class="research-sources" id="research-sources" aria-label="Research sources" hidden></ol>
             </section>
 
             <section class="card card-pad" aria-labelledby="overview-title">
@@ -430,6 +498,32 @@
               </div>
             </section>
           </div>
+          <section class="card card-pad assistant" id="correlation-assistant" aria-labelledby="assistant-title">
+            <h3 class="card-title" id="assistant-title">Ask about climate data</h3>
+            <p class="description" id="assistant-help">Name a study area or select one on the map. Ask about a correlation up to six months apart, or request research on a measurement and time period.</p>
+            <form id="assistant-form">
+              <fieldset>
+                <label for="assistant-question">Your question</label>
+                <textarea id="assistant-question" rows="2" maxlength="500" required aria-describedby="assistant-help"></textarea>
+                <div class="assistant-actions">
+                  <button type="submit" class="button primary small">Ask AI</button>
+                  <button type="button" class="button secondary small" data-question="In Southern Ontario, how does precipitation correlate with root-zone soil wetness one month later?">Try rain and soil wetness</button>
+                  <button type="button" class="button secondary small" data-question="What is the same-month correlation between air temperature and relative humidity in the Cerrado?">Try temperature and humidity</button>
+                  <button type="button" class="button secondary small" data-question="Find research on precipitation and root-zone soil wetness in Southern Ontario in 2016.">Try drought research</button>
+                </div>
+              </fieldset>
+            </form>
+            <div role="status">
+              <p class="assistant-reply" id="assistant-reply"></p>
+              <div class="assistant-result" id="assistant-result" hidden>
+                <p><strong id="assistant-result-title"></strong></p>
+                <p id="assistant-result-value"></p>
+                <p class="description" id="assistant-result-window"></p>
+              </div>
+              <p class="description" id="assistant-research-notice" hidden></p>
+              <ol class="research-sources" id="assistant-research-sources" aria-label="Research sources" hidden></ol>
+            </div>
+          </section>
         </div>
       </div>
     </section>
@@ -442,19 +536,25 @@
       <div class="method-grid">
         <div class="card">
           <h3>The data</h3>
-          <p>Every number comes from NASA POWER, which serves MERRA-2: a weather model continuously corrected with satellite and ground observations, from 1981 to today.</p>
-          <p>The tool averages the 9 grid cells around your point, each about 50 km across.</p>
-          <p>For the six study areas, Refresh from NASA saves newly available complete months to the shared dataset. The charts cover 1981–2025.</p>
+          <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (1980–2025), a weather model constantly corrected with observations. Precipitation comes from the GPM satellites (1998–2025). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
+          <p>The map uses the available land points stored in the team’s database. Coverage grows as new points are imported.</p>
         </div>
         <div class="card">
           <h3>The trend test</h3>
           <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next.</p>
-          <p>The Mann-Kendall test checks the answer a second way. With 8 measurements tested at once, both are adjusted with the Holm method.</p>
+          <p>The Mann-Kendall test checks the answer a second way. Both tests use the Holm method to account for testing multiple measurements.</p>
+        </div>
+        <div class="card">
+          <h3>The forecast</h3>
+          <p>The forecast model uses the previous 12 months, a five-year average and an El Niño index. It predicts the next month and feeds that prediction back in for up to 12 months.</p>
+          <p>The bundled comparison covers 2020–2025 at 74 held-out locations. The anomaly baseline includes 2020, so this is not a strictly untouched time holdout.</p>
         </div>
         <div class="card">
           <h3>Honest limits</h3>
-          <p>A trend can be real and still not reach significance yet; a longer record often settles it. Rainfall from weather models can shift when the satellites feeding them change.</p>
-          <p><a id="data-source">NASA POWER documentation</a> and the <a id="method-source">trend uncertainty method</a>.</p>
+          <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years.</p>
+          <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check.</p>
+          <p>The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now. For that, use the trend line and its range.</p>
+          <p><a id="data-source">NASA Giovanni</a> and the <a id="method-source">trend uncertainty method</a>.</p>
         </div>
       </div>
     </section>
@@ -462,7 +562,7 @@
 
   <footer class="footer">
     <div class="shell">
-      <p>Built for the NASA Space Apps Challenge. Data from NASA POWER (MERRA-2). Map outlines from <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>.</p>
+      <p>Built for the NASA Space Apps Challenge. Data from NASA GES DISC Giovanni (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 index from NOAA ERSSTv5). Map outlines from <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>.</p>
     </div>
   </footer>
 </body>

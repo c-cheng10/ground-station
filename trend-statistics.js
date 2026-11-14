@@ -168,12 +168,18 @@
     return denominator === 0 ? null : Math.max(-1, Math.min(1, dot(dx, dy) / denominator));
   }
 
-  // Row variable in month t against column variable in month t + lag.
-  function monthlyCorrelations(residuals, variableIds, lag = 0) {
-    return Object.fromEntries(variableIds.map((left) => [left, Object.fromEntries(variableIds.map((right) => [
-      right,
-      pearson(residuals[left].slice(0, residuals[left].length - lag), residuals[right].slice(lag)),
-    ]))]));
+  // Row variable in month t against column variable in month t + lag, over the months both
+  // records cover. starts[id] is the month index where that variable's residuals begin.
+  function monthlyCorrelations(residuals, variableIds, lag = 0, starts = {}) {
+    return Object.fromEntries(variableIds.map((left) => [left, Object.fromEntries(variableIds.map((right) => {
+      const leftStart = starts[left] || 0;
+      const rightStart = starts[right] || 0;
+      const from = Math.max(leftStart, rightStart - lag);
+      const to = Math.min(leftStart + residuals[left].length, rightStart + residuals[right].length - lag);
+      if (to - from < 24) return [right, null];
+      return [right, pearson(residuals[left].slice(from - leftStart, to - leftStart),
+        residuals[right].slice(from + lag - rightStart, to + lag - rightStart))];
+    }))]));
   }
 
   function analyseRegion({ annual, monthly }, years, variableIds, baselineStart, baselineEnd) {
@@ -209,5 +215,57 @@
     return { series, residuals };
   }
 
-  window.TrendStatistics = { analyseRegion, mannKendall, monthlyCorrelations };
+  // World model (trained by train_world_model.py). Month indexes count from January of
+  // model.startYear. Inputs: the last 12 months of each variable's scaled anomaly, each one's
+  // 5-year mean, El Niño for the 12 months before the target (frozen after `origin`, the last
+  // known month), the target calendar month and latitude.
+  function worldModelStep(model, window, targetMonth, origin, lat) {
+    const x = window.slice(-model.lags).flat();
+    for (let v = 0; v < model.variables.length; v += 1) x.push(sum(window.map((row) => row[v])) / window.length);
+    for (let k = model.lags; k >= 1; k -= 1) x.push(model.enso[Math.min(targetMonth - k, origin)]);
+    const angle = 2 * Math.PI * (targetMonth % 12) / 12;
+    x.push(Math.sin(angle), Math.cos(angle), lat / 90);
+    return model.layers.reduce((input, layer) => {
+      const output = layer.b.map((bias, j) => input.reduce((total, value, i) => total + value * layer.w[i][j], bias));
+      return layer.activation === "tanh" ? output.map(Math.tanh) : output;
+    }, x);
+  }
+
+  // Anomalies from each point's own monthly normal over model.normal years, on the full month axis.
+  function modelAnomalies(model, monthly) {
+    const first = (model.normal[0] - model.startYear) * 12;
+    const last = (model.normal[1] - model.startYear + 1) * 12;
+    return Object.fromEntries(model.variables.map((id) => {
+      const values = monthly[id].map((value) => value ?? NaN);
+      const normal = Array.from({ length: MONTHS_PER_YEAR }, (_, month) => {
+        const sample = values.slice(first, last).filter((_, k) => k % MONTHS_PER_YEAR === month);
+        return sum(sample) / sample.length;
+      });
+      return [id, values.map((value, k) => value - normal[k % MONTHS_PER_YEAR])];
+    }));
+  }
+
+  function scaledWindow(model, anomalies, end) {
+    return Array.from({ length: model.recent }, (_, k) =>
+      model.variables.map((id, v) => anomalies[id][end - model.recent + k] / model.scale[v]));
+  }
+
+  // Anomalies for the 12 months after `end` (exclusive month index), feeding predictions back in.
+  function forecast(model, anomalies, lat, end) {
+    let window = scaledWindow(model, anomalies, end);
+    return Array.from({ length: model.leads }, (_, k) => {
+      const step = worldModelStep(model, window, end + k, end - 1, lat);
+      window = [...window.slice(1), step];
+      return step.map((value, v) => value * model.scale[v]);
+    });
+  }
+
+  // One-month-ahead predictions for months first..last-1, each from the real months before it.
+  function backtest(model, anomalies, lat, first, last) {
+    return Array.from({ length: last - first }, (_, k) =>
+      worldModelStep(model, scaledWindow(model, anomalies, first + k), first + k, first + k - 1, lat)
+        .map((value, v) => value * model.scale[v]));
+  }
+
+  window.TrendStatistics = { analyseRegion, mannKendall, monthlyCorrelations, modelAnomalies, forecast, backtest };
 })();
