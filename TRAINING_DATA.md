@@ -50,3 +50,11 @@ The table is private to database administrators and the backend service role. Ke
 ## Training
 
 Group by `cell_id` and order by `yyyymm` before building input sequences. Use the same target-month cutoffs for all regions. Fit scaling on the training period only. Supabase refreshes add to the shared dataset. The charts continue to use the end year set in `trend-config.js`.
+
+## Stored correlations
+
+After importing the training CSVs, run [correlations.sql](supabase/correlations.sql) to create `climate_correlations`, a stored query result. Each row is a connection between two variables in one study area. `pearson_r` measures how strongly they move together after removing the seasonal cycle and linear trend from their area-weighted monthly values.
+
+Filter by `region_id`, `variable_x`, `variable_y`, and `lag_months`. A lag of 2 compares X this month with Y two months later. Return `pearson_r`, `paired_months`, `first_month`, `last_month`, and `method` so a reader can see how each result was computed. The server role can query this view.
+
+The view uses January 1981 through December 2025, matching the historical charts. Run `refresh materialized view concurrently public.climate_correlations;` as the database owner after correcting records in that window.
