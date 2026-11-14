@@ -602,7 +602,7 @@
     if (!entry) return;
     const unit = `${trendUnit(variable)} per decade`;
     byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
-    const { low, mid, high } = heatPalette(variable.id);
+    const { low, mid, high } = heatPalette;
     byId("trend-ramp").style.background = `linear-gradient(90deg, rgb(${low}), rgb(${mid}), rgb(${high}))`;
     byId("trend-ramp").parentElement.hidden = !heatVisible;
     const note = byId("heatmap-note");
@@ -1198,9 +1198,6 @@
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
   const heatButton = byId("toggle-heat");
-  const autofocusButton = byId("camera-auto-focus");
-  const focusControl = byId("camera-focus");
-  const focusValue = byId("camera-focus-value");
   const staticButton = byId("camera-static");
   const grain = byId("camera-grain");
   const cameraCoordinates = byId("camera-coordinates");
@@ -1213,10 +1210,7 @@
     byId("data-error").hidden = false;
     return;
   }
-  const temperature = { low: [78, 190, 245], mid: [225, 234, 228], high: [250, 116, 88] };
-  const moisture = { low: [242, 152, 95], mid: [226, 236, 226], high: [66, 220, 197] };
-  const wind = { low: [91, 199, 249], mid: [231, 233, 244], high: [195, 136, 246] };
-  const heatPalette = (id) => ["T2M", "TS"].includes(id) ? temperature : id === "WS10M" ? wind : moisture;
+  const heatPalette = { low: [72, 196, 194], mid: [84, 103, 122], high: [173, 145, 232] };
   const home = { lat: 17, lon: -18, zoom: 1 };
   const mapView = { ...home, offsetX: 0, offsetY: 0 };
   let heatVisible = true;
@@ -1225,10 +1219,7 @@
   let lensFrame = 0;
   const sensorSweep = 620;
   let flight = 0;
-  let autofocus = true;
-  let flightDefocus = 0;
-  let focusFrame = 0;
-  let blur = 0;
+  let focusAnimation;
   let staticTimer = 0;
   let grainIndex = 0;
   let grainTiles;
@@ -1331,12 +1322,12 @@
     const variableId = lensProgress < 0.42 && displayedVariable ? displayedVariable : trendMapVariable().id;
     if (lensProgress >= 0.42) displayedVariable = variableId;
     const texture = heatVisible && trendMap[variableId]
-      ? fields.measurement(trendMap[variableId], heatPalette(variableId)) : {};
+      ? fields.measurement(trendMap[variableId], heatPalette) : {};
     globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, selection: fields.select(drawingArea ? null : site),
       relief: heatVisible && !drawingArea && site?.areaIds ? mapView.relief ?? 1 : 0 });
-    updateOptics(0.9 * Math.sin(Math.PI * lensProgress) ** 2);
+    updateViewfinder();
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && heatVisible && !drawingArea && site?.areaIds);
     drawMagicEffects(now);
@@ -1348,28 +1339,22 @@
     }
   }
 
-  const focalPosition = () => Math.round(16 + 68 * Math.log2(mapView.zoom) / 3);
-
-  function setDefocus(amount) {
-    const rounded = Math.round(amount * 20) / 20;
-    if (blur === rounded) return;
-    blur = rounded;
-    world.style.setProperty("--camera-defocus", `${blur}px`);
-  }
-
-  function updateOptics(lensDefocus = 0) {
-    const focusTarget = focalPosition();
-    if (autofocus) focusControl.value = focusTarget;
-    const setting = focusControl.valueAsNumber;
-    const mismatch = Math.abs(setting - focusTarget);
-    if (!focusFrame) setDefocus(autofocus ? (motion.matches ? 0 : Math.max(flightDefocus, lensDefocus)) : Math.min(5, mismatch * 0.085));
-    const focusText = autofocus ? "AUTO" : `${setting}%`;
-    if (focusValue.textContent !== focusText) focusValue.textContent = focusText;
-    focusControl.setAttribute("aria-valuetext", `${setting} percent, ${mismatch < 8 ? "in focus" : "soft focus"}`);
+  function updateViewfinder() {
     const [x, y] = viewCentre();
     stage.style.setProperty("--camera-target-x", `${x}px`);
     stage.style.setProperty("--camera-target-y", `${y}px`);
     cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
+  }
+
+  function refocus(delay = 0) {
+    if (motion.matches || focusAnimation?.playState === "running") return;
+    focusAnimation = world.animate([
+      { filter: "blur(0px)", offset: 0 },
+      { filter: "blur(1.65px)", offset: 0.22 },
+      { filter: "blur(0.4px)", offset: 0.55 },
+      { filter: "blur(0.58px)", offset: 0.69 },
+      { filter: "blur(0px)", offset: 1 },
+    ], { duration: 410, delay, easing: "ease-out" });
   }
 
   function paintStatic() {
@@ -1411,32 +1396,16 @@
     if (!motion.matches) staticTimer = setInterval(paintStatic, 125);
   }
 
-  autofocusButton.addEventListener("click", () => {
-    autofocus = !autofocus;
-    autofocusButton.setAttribute("aria-pressed", String(autofocus));
-    focusControl.disabled = autofocus;
-    cancelAnimationFrame(focusFrame);
-    focusFrame = 0;
-    if (autofocus && !motion.matches && blur > 0) {
-      const initialBlur = blur;
-      const started = performance.now();
-      const settle = (now) => {
-        const fraction = Math.min(1, (now - started) / 370);
-        setDefocus(initialBlur * (1 - ease(fraction)));
-        focusFrame = fraction < 1 ? requestAnimationFrame(settle) : 0;
-      };
-      focusFrame = requestAnimationFrame(settle);
-    }
-    updateOptics();
-  });
-  focusControl.addEventListener("input", () => updateOptics());
   staticButton.addEventListener("click", () => {
     grain.hidden = !grain.hidden;
     staticButton.setAttribute("aria-pressed", String(!grain.hidden));
     syncStatic();
   });
   document.addEventListener("visibilitychange", syncStatic);
-  motion.addEventListener("change", syncStatic);
+  motion.addEventListener("change", () => {
+    if (motion.matches) focusAnimation?.cancel();
+    syncStatic();
+  });
   syncStatic();
 
   function runLensChange() {
@@ -1454,6 +1423,7 @@
     void stage.offsetWidth;
     stage.dataset.lensChange = trendMapVariable().id;
     lensStarted = performance.now();
+    refocus(105);
     const step = (now) => {
       drawTrendMap(now);
       if (now - lensStarted < sensorSweep) lensFrame = requestAnimationFrame(step);
@@ -1472,7 +1442,9 @@
 
   function stopFlight() {
     cancelAnimationFrame(flight);
-    flightDefocus = 0;
+    if (focusAnimation?.playState === "running" && focusAnimation.currentTime < focusAnimation.effect.getTiming().delay) {
+      focusAnimation.cancel();
+    }
   }
 
   function flyTo(lat, lon, zoom, avoidPanel = true) {
@@ -1500,6 +1472,10 @@
     }
     const start = performance.now();
     const duration = orbitFirst ? 1420 : 710;
+    if (orbitFirst || Math.abs(Math.log(target.zoom / from.zoom)) > 0.06) {
+      focusAnimation?.cancel();
+      refocus(orbitFirst ? 920 : 245);
+    }
     const step = (now) => {
       const t = Math.min(1, Math.max(0, (now - start) / duration));
       const turn = angle * ease(orbitFirst ? Math.min(1, t / 0.66) : t);
@@ -1512,8 +1488,6 @@
       mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * ease(t);
       mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * ease(t);
       mapView.relief = ease(Math.max(0, (t - 0.3) / 0.7));
-      const focusing = Math.max(0, (t - (orbitFirst ? 0.55 : 0)) / (orbitFirst ? 0.45 : 1));
-      flightDefocus = 1.35 * Math.sin(Math.PI * focusing) ** 2;
       if (t === 1) Object.assign(mapView, target);
       drawTrendMap(now);
       if (t < 1) flight = requestAnimationFrame(step);
@@ -1523,7 +1497,9 @@
 
   function zoomBy(factor) {
     stopFlight();
-    mapView.zoom = clampZoom(mapView.zoom * factor);
+    const zoom = clampZoom(mapView.zoom * factor);
+    if (zoom !== mapView.zoom) refocus();
+    mapView.zoom = zoom;
     drawTrendMap();
   }
 
@@ -1711,7 +1687,9 @@
     pointers.set(event.pointerId, point);
     const [a, b] = [...pointers.values()];
     if (drag.pinch && b) {
-      mapView.zoom = clampZoom(drag.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / drag.pinch);
+      const zoom = clampZoom(drag.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / drag.pinch);
+      if (Math.abs(Math.log(zoom / mapView.zoom)) > 0.012) refocus();
+      mapView.zoom = zoom;
     } else {
       if (!drag.moved && Math.hypot(point[0] - drag.point[0], point[1] - drag.point[1]) < 5) return;
       drag.moved = true;
