@@ -203,7 +203,11 @@
       <div id="region-results" hidden>
       <section class="variables" aria-labelledby="variables-title">
         <h2 id="variables-title"></h2>
-        <div class="variable-actions"><button type="button" class="compare-toggle" id="compare-toggle" aria-pressed="false">Compare variables</button><p id="variable-hint">Choose a variable to see its trend.</p></div>
+        <div class="variable-actions">
+          <button type="button" class="compare-toggle" id="compare-toggle" aria-pressed="false">Compare variables</button>
+          <button type="button" class="compare-toggle" id="refresh-region">Refresh from NASA</button>
+          <p id="variable-hint">Choose a variable to see its trend.</p>
+        </div>
         <div id="variable-options" class="variable-options" role="group" aria-label="Variables"></div>
       </section>
       <div class="report" id="single-report">
@@ -254,7 +258,7 @@
       </div>
       <details class="method">
         <summary>Data and methods</summary>
-        <p>The explorer requests data from NASA POWER when a study area is selected. Each annual point averages nine grid cells from NASA’s MERRA-2, which combines observations with a weather model. A straight line fitted across the historical years gives the change per decade. The 95% interval accounts for correlation between nearby years. The verdict uses the Holm-adjusted p-value across the eight tests for the selected region.</p>
+        <p>The explorer saves each study area’s NASA POWER chart records in your browser. With Supabase connected, Refresh saves additional complete months to the shared training dataset. The chart shows the displayed historical years. Each annual point averages nine grid cells from NASA’s MERRA-2, which combines observations with a weather model. A straight line fitted across the historical years gives the change per decade. The 95% interval accounts for correlation between nearby years. The verdict uses the Holm-adjusted p-value across the eight tests for the selected region.</p>
         <p><a id="data-source">NASA POWER documentation</a> · <a id="method-source">Trend uncertainty method</a> · <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth map data</a></p>
       </details>
     </div>

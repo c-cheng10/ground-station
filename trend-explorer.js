@@ -54,6 +54,7 @@
   const regionStatus = byId("region-status");
   const regionMessage = byId("region-message");
   const retryRegion = byId("retry-region");
+  const refreshRegion = byId("refresh-region");
   let mapContinent = "North America";
   let site = null;
   let analysis = null;
@@ -131,35 +132,104 @@
     });
   }
 
-  async function selectSite(nextSite) {
+  function analyseRecords(records) {
+    const result = TrendStatistics.analyseRegion(records, years, variableIds, data.baselineStart, data.baselineEnd);
+    adjustRegionTests(result.series);
+    return result;
+  }
+
+  function readCachedAnalysis(key) {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved ? analyseRecords(JSON.parse(saved)) : null;
+    } catch {
+      // A corrupt entry or blocked browser storage falls back to NASA.
+      return null;
+    }
+  }
+
+  async function syncNewMonths(regionId, signal) {
+    const url = new URL("/functions/v1/refresh-climate", data.supabaseUrl);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${data.supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ region_id: regionId }),
+      signal,
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Supabase could not refresh the region.");
+    if (!Number.isInteger(result.new_rows) || result.new_rows < 0 ||
+        !Number.isInteger(result.latest_month) || result.latest_month % 100 < 1 ||
+        result.latest_month % 100 > 12 || result.latest_month < 198101) {
+      throw new Error("Supabase returned an invalid refresh result.");
+    }
+    const latest = monthFormat.format(new Date(Date.UTC(
+      Math.floor(result.latest_month / 100), result.latest_month % 100 - 1, 1
+    )));
+    return result.new_rows
+      ? `Saved ${result.new_rows} new grid-cell records to Supabase through ${latest}.`
+      : `No new complete months from NASA POWER. Supabase has records through ${latest}.`;
+  }
+
+  async function selectSite(nextSite, refresh = false) {
     if (regionRequest && site.id === nextSite.id) return;
     regionRequest?.abort();
-    const request = new AbortController();
-    regionRequest = request;
+    regionRequest = null;
+    const key = `nasa-power-v1:${nextSite.id}:${nextSite.latitude},${nextSite.longitude}:${data.startYear}-${data.endYear}:${variableIds.join(",")}`;
+    analysis = site?.id === nextSite.id && analysis ? analysis : readCachedAnalysis(key);
     site = nextSite;
-    analysis = null;
     chartLayout = null;
     updateSiteButtons();
     drawMap();
-    regionResults.hidden = true;
-    setRegionStatus(`Loading ${nextSite.name} from NASA POWER…`);
+    regionResults.hidden = !analysis;
+    refreshRegion.disabled = refresh;
+    if (analysis) renderDetails();
+    if (analysis && !refresh) {
+      setRegionStatus("");
+      return;
+    }
+
+    const request = new AbortController();
+    regionRequest = request;
+    const syncToSupabase = refresh && analysis && data.supabaseUrl;
+    setRegionStatus(`${analysis ? "Refreshing" : "Loading"} ${nextSite.name} from NASA POWER…`);
     try {
+      if (syncToSupabase) {
+        const message = await syncNewMonths(nextSite.id, request.signal);
+        if (regionRequest === request) setRegionStatus(message);
+        return;
+      }
       const records = await PowerData.loadRegion(nextSite, data.startYear, data.endYear, variableIds, { signal: request.signal });
       if (regionRequest !== request) return;
-      analysis = TrendStatistics.analyseRegion(records, years, variableIds, data.baselineStart, data.baselineEnd);
-      adjustRegionTests(analysis.series);
+      analysis = analyseRecords(records);
+      try {
+        localStorage.setItem(key, JSON.stringify(records));
+      } catch {
+        // The plot still works if the browser cannot save the result.
+      }
       regionResults.hidden = false;
-      setRegionStatus("");
+      setRegionStatus(refresh ? `Updated ${nextSite.name} in this browser. Supabase is awaiting setup.` : "");
       renderDetails();
     } catch (error) {
       if (regionRequest !== request) return;
-      analysis = null;
-      regionResults.hidden = true;
       console.warn("Region data load failed", error);
-      setRegionStatus(`Could not load ${nextSite.name} from NASA POWER. Check your connection and try again.`, true);
+      const detail = analysis ? "Showing the last successful result." : "Check your connection and try again.";
+      const problem = syncToSupabase && error instanceof Error
+        ? error.message : `Could not load ${nextSite.name} from NASA POWER.`;
+      setRegionStatus(`${problem} ${detail}`, true);
     } finally {
-      if (regionRequest === request) regionRequest = null;
+      if (regionRequest === request) {
+        regionRequest = null;
+        refreshRegion.disabled = false;
+      }
     }
+  }
+
+  function visibleSites() {
+    return data.sites.filter(({ continent }) => continent === mapContinent);
   }
 
   function updateSiteButtons() {
@@ -169,7 +239,7 @@
   }
 
   function renderSiteList() {
-    const buttons = data.sites.filter((item) => item.continent === mapContinent).map((item) => {
+    const buttons = visibleSites().map((item) => {
       const button = create("button");
       button.dataset.site = item.id;
       button.append(create("strong", item.name), create("small", item.region));
@@ -236,7 +306,7 @@
       }
     }
 
-    for (const item of data.sites.filter((item) => item.continent === mapContinent)) {
+    for (const item of visibleSites()) {
       const { west, east, south, north } = item.bounds;
       const [left, top] = project(west, north);
       const [right, bottom] = project(east, south);
@@ -263,7 +333,7 @@
   function renderMap() {
     const container = byId("map-markers");
     container.replaceChildren();
-    for (const item of data.sites.filter((item) => item.continent === mapContinent)) {
+    for (const item of visibleSites()) {
       const marker = create("button", "", "map-marker");
       marker.dataset.site = item.id;
       marker.dataset.mapSite = item.id;
@@ -570,7 +640,8 @@
   renderSiteList();
   renderMap();
   setRegionStatus("Choose a study area to load its NASA POWER records.");
-  retryRegion.addEventListener("click", () => selectSite(site));
+  retryRegion.addEventListener("click", () => selectSite(site, true));
+  refreshRegion.addEventListener("click", () => selectSite(site, true));
 
   const observer = new ResizeObserver((entries) => {
     if (entries.some(({ target }) => target === byId("map-stage"))) drawMap();
