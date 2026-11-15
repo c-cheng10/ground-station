@@ -644,7 +644,7 @@
 
     function render({ longitude, latitude, zoom = 1, lens = 1, offsetX = 0, offsetY = 0,
       surface = null, heat = null, selection = null, heightMap = null, relief = 0,
-      platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0,
+      platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0, cameraLift = platform ? rise : 0,
       selectionSegments = null, outlineOpacity = 0 }) {
       const { clientWidth: width, clientHeight: height } = canvas;
       if (!width || !height) return;
@@ -660,13 +660,13 @@
       rise = Math.max(0, Math.min(1, rise));
       const lift = gl && platform ? platformLift * rise : 0;
       const reliefHeight = reliefAvailable && heat && heightMap ? platformRelief * Math.min(rise, relief) : 0;
-      const distance = Math.hypot(1, nominalFocal / nominalRadius) + lift;
+      const distance = Math.hypot(1, nominalFocal / nominalRadius) + (gl ? platformLift * cameraLift : 0);
       const aimRadius = 1 + (lift && readTexture(platform, longitude, latitude) >= 0.46
         ? lift + reliefHeight * readTexture(heightMap, longitude, latitude) : 0);
       // Solve for the orbit angle that produces the requested viewing angle at the target.
       const sightAngle = 68 * rad * Math.max(0, Math.min(1, tilt));
       const pitch = sightAngle - Math.asin(aimRadius / distance * Math.sin(sightAngle));
-      const azimuth = orbitAzimuth * rise * rad;
+      const azimuth = orbitAzimuth * rad;
       const eye = aim.map((value, i) => distance * (value * Math.cos(pitch) - Math.sin(pitch) *
         (aimNorth[i] * Math.cos(azimuth) + aimRight[i] * Math.sin(azimuth))));
       const front = unit(eye.map((value, i) => value - aim[i] * aimRadius));

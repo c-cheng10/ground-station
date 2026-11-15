@@ -1298,7 +1298,8 @@
   }
   const home = { lat: 17, lon: -18, zoom: 1 };
   const initialOrbitTilt = 0.9;
-  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, outlineOpacity: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
+  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, outlineOpacity: 0,
+    cameraFocus: 0, cameraLift: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
   let heatVisible = true;
   let displayedVariable;
   let lensStarted = 0;
@@ -1430,7 +1431,8 @@
     globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, platform, platformCountries, rise: mapView.rise,
-      tilt: mapView.orbitTilt * mapView.rise, orbitAzimuth: mapView.orbitAzimuth,
+      tilt: mapView.orbitTilt * mapView.cameraFocus, orbitAzimuth: mapView.orbitAzimuth * mapView.cameraFocus,
+      cameraLift: mapView.cameraLift,
       selectionSegments: viewedSite?.selectionSegments, outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
       selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
     cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
@@ -1563,14 +1565,16 @@
     const swapAt = changingSite && from.rise > 0 && selection ? 0.34 : 0;
     const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY,
       rise: selection ? 1 : 0, outlineOpacity: selection ? 1 : 0, orbitAzimuth: changingSite ? 0 : from.orbitAzimuth,
-      orbitTilt: changingSite ? initialOrbitTilt : from.orbitTilt };
+      orbitTilt: changingSite ? initialOrbitTilt : from.orbitTilt,
+      cameraFocus: selection ? 1 : 0, cameraLift: nextCountries.length ? 1 : 0 };
     const startVector = toVector(from.lat, from.lon);
     const endVector = toVector(target.lat, target.lon);
     const dot = Math.max(-1, Math.min(1, startVector.reduce((sum, n, i) => sum + n * endVector[i], 0)));
     const angle = Math.acos(dot);
     const side = [-Math.sin(from.lon * radians), 0, Math.cos(from.lon * radians)];
     const tangent = Math.sin(angle) > 1e-5 ? endVector.map((n, i) => (n - startVector[i] * dot) / Math.sin(angle)) : side;
-    const orbitFirst = angle > Math.PI * 0.42;
+    const longFlight = angle > Math.PI * 0.42;
+    const viaOverview = longFlight && (!previous || !selection);
     stopFlight();
     mapTip.hidden = true;
     if (motion.matches) {
@@ -1580,27 +1584,31 @@
       return;
     }
     const start = performance.now();
-    const duration = orbitFirst ? 1420 : 710;
-    if (orbitFirst || Math.abs(Math.log(target.zoom / from.zoom)) > 0.06) {
+    const duration = longFlight ? 1420 : 710;
+    if (viaOverview || Math.abs(Math.log(target.zoom / from.zoom)) > 0.06) {
       focusAnimation?.cancel();
-      refocus(orbitFirst ? 920 : 245);
+      refocus(viaOverview ? 920 : 245);
     }
     const step = (now) => {
       const t = Math.min(1, Math.max(0, (now - start) / duration));
       const progress = ease(t);
-      const turn = angle * (orbitFirst ? ease(Math.min(1, t / 0.66)) : progress);
+      const turn = angle * (viaOverview ? ease(Math.min(1, t / 0.66)) : progress);
       const [x, y, z] = startVector.map((n, i) => Math.cos(turn) * n + Math.sin(turn) * tangent[i]);
       mapView.lat = clampLatitude(Math.atan2(y, Math.hypot(x, z)) / radians);
       mapView.lon = Math.atan2(z, x) / radians;
       const zoomed = (a, b, fraction) => a * (b / a) ** ease(fraction);
-      mapView.zoom = orbitFirst && t < 0.66 ? zoomed(from.zoom, 1, Math.min(1, t / 0.36)) :
-        zoomed(orbitFirst ? 1 : from.zoom, target.zoom, orbitFirst ? (t - 0.66) / 0.34 : t);
+      mapView.zoom = viaOverview && t < 0.66 ? zoomed(from.zoom, 1, Math.min(1, t / 0.36)) :
+        zoomed(viaOverview ? 1 : from.zoom, target.zoom, viaOverview ? (t - 0.66) / 0.34 : t);
       mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * progress;
       mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * progress;
       mapView.orbitAzimuth = from.orbitAzimuth + (target.orbitAzimuth - from.orbitAzimuth) * progress;
       mapView.orbitTilt = from.orbitTilt + (target.orbitTilt - from.orbitTilt) * progress;
-      const liftStart = Math.max(swapAt, orbitFirst ? 0.6 : 0.14);
+      const liftStart = Math.max(swapAt, viaOverview ? 0.6 : 0.14);
       const lift = ease(Math.max(0, (t - liftStart) / (1 - liftStart)));
+      const lowering = ease(Math.min(1, t / 0.5));
+      const cameraProgress = selection ? lift : lowering;
+      mapView.cameraFocus = from.cameraFocus + (target.cameraFocus - from.cameraFocus) * cameraProgress;
+      mapView.cameraLift = from.cameraLift + (target.cameraLift - from.cameraLift) * cameraProgress;
       if (t < swapAt) {
         const remaining = 1 - ease(t / swapAt);
         mapView.rise = keepPlatform ? from.rise : from.rise * remaining;
@@ -1612,7 +1620,7 @@
         const startOpacity = changingSite ? 0 : from.outlineOpacity;
         mapView.outlineOpacity = startOpacity + (1 - startOpacity) * ease(Math.max(0, (t - 0.6) / 0.4));
       } else {
-        const remaining = 1 - ease(Math.min(1, t / 0.5));
+        const remaining = 1 - lowering;
         mapView.rise = from.rise * remaining;
         mapView.outlineOpacity = from.outlineOpacity * remaining;
         if (!mapView.rise) viewedSite = null;
