@@ -23,7 +23,7 @@
   <script defer src="globe-fields.js?v=5"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=6"></script>
-  <script defer src="trend-explorer.js?v=18"></script>
+  <script defer src="trend-explorer.js?v=19"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=3"></script>
@@ -1022,7 +1022,7 @@
       </div>
       <div>
         <h3>The trend test</h3>
-        <p>A fitted line through the yearly averages gives the change per decade. The t-test and 95% confidence interval allow for correlation between nearby years. Mann–Kendall checks whether yearly values tend to rise or fall, using the Hamed–Rao correction when needed. Both p-values use the Holm adjustment for testing multiple measurements.</p>
+        <p>A fitted line through the yearly averages gives the change per decade. The t-test and 95% confidence interval allow for correlation between nearby years. Mann–Kendall checks whether yearly values tend to rise or fall, using the Hamed–Rao correction when needed. Both p-values use the Holm adjustment for testing several measurements at once, applied separately to the surface measurements and the air measurements.</p>
         <p>The heatmap estimates trends between nearby sampled points and groups them into nine bands. The map corrects the trend test for checking many places at once. The results panel corrects for testing several measurements at one place.</p>
         <p>On the Land layer, countries lift when you select an area and taller peaks show larger changes. Water and Air show a selection outline. The charts use the grid points in the selection.</p>
       </div>

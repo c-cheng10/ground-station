@@ -288,10 +288,13 @@
   }
 
   function adjustRegionTests(series) {
-    const trends = Object.values(series).map(({ trend }) => trend);
-    holmAdjust(trends, "pValue", "adjustedPValue");
-    holmAdjust(trends, "mkPValue", "mkAdjustedPValue");
-    for (const trend of trends) {
+    // Surface and air measurements answer separate questions, so each group is corrected on its own.
+    for (const group of [true, false]) {
+      const family = Object.entries(series).filter(([id]) => layers.air.includes(id) === group).map(([, { trend }]) => trend);
+      holmAdjust(family, "pValue", "adjustedPValue");
+      holmAdjust(family, "mkPValue", "mkAdjustedPValue");
+    }
+    for (const { trend } of Object.values(series)) {
       trend.verdict = trend.adjustedPValue <= 0.05 ? (trend.slope > 0 ? "rising" : "falling") : "inconclusive";
     }
   }
@@ -1254,7 +1257,7 @@
       "- Yearly averages use complete calendar years only.",
       "- Change per decade: least-squares straight line through the yearly averages, times 10.",
       "- 95% interval and t-test p-value use Newey-West standard errors (3 years of lag) and Student's t with n-2 degrees of freedom.",
-      `- p-values are Holm-adjusted across the ${exportVariables().length} measurements tested at this place. Rising/Falling means adjusted p <= 0.05.`,
+      "- p-values are Holm-adjusted within each group tested at this place: surface measurements together, air measurements (ozone, tropopause, water vapour, clouds, outgoing longwave) together. Rising/Falling means adjusted p <= 0.05.",
       "- Mann-Kendall (with the Hamed-Rao correction) and Theil-Sen give a second, rank-based check.",
       "- Monthly anomalies are the difference from each calendar month's average over the record.",
       "- Forecast: ridge world model on monthly anomalies with El Nino (KNMI Climate Explorer, Nino 3.4); the 90% range is 1.645 x test error.",
