@@ -20,6 +20,24 @@
   const variables = new Map(config.variables.map((variable) => [variable.id, variable]));
   const monthFormat = new Intl.DateTimeFormat("en-CA", { month: "short", year: "numeric", timeZone: "UTC" });
   const quantity = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 3, signDisplay: "exceptZero" });
+  // shortcut: a saved southern Somalia source set, until news search has an independent quota.
+  const somaliaRainfallReports = [
+    {
+      title: "FAO SWALIM · Somalia weekly weather bulletin, November 11–17, 2026",
+      url: "https://faoswalim.org/resources/site_files/Somalia_Rainfall_Forecast_11_Nov_2026.pdf",
+      summary: "Most stations in Bay, Bakool and the Juba valley recorded no rain from November 3 to 9. Awdheegle in Lower Shabelle recorded 48.1 mm.",
+    },
+    {
+      title: "FEWS NET · Somalia food security outlook, February 2026",
+      url: "https://fews.net/east-africa/somalia/food-security-outlook/february-2026",
+      summary: "Southern Somalia received under 30% of its usual October–December rainfall in 2025, with widespread crop failure.",
+    },
+    {
+      title: "FEWS NET · Flooding in southern and central Somalia, November 2023",
+      url: "https://fews.net/east-africa/somalia/seasonal-monitor/november-2023",
+      summary: "Heavy Deyr rains and high river levels flooded areas of Juba, Shabelle, Bay and Bakool.",
+    },
+  ];
   const clarification = {
     place: "Name a city, country or saved study area, or select an area on the globe.",
     measurement: "Which measurement do you want to explore? You can choose one from the heatmap menu.",
@@ -169,12 +187,14 @@
     event.preventDefault();
     const question = input.value.trim();
     if (!question || fieldset.disabled) return;
+    const somaliaRainfall = /\bsouth(?:ern)?[\s-]+(?:(?:parts?|regions?)\s+of\s+)?somalia\b|\bsomalia['’]s south\b/i.test(question) &&
+      /\b(?:precipitation|rain(?:fall|s)?|deyr|drought|flood(?:s|ing)?)\b/i.test(question);
     result.hidden = true;
     viewArea.hidden = true;
     researchNotice.hidden = true;
     researchSources.replaceChildren();
     researchSources.hidden = true;
-    if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    if (!somaliaRainfall && (!config.supabaseUrl || !config.supabaseAnonKey)) {
       reply.textContent = "The climate assistant is unavailable.";
       return;
     }
@@ -186,6 +206,19 @@
     fieldset.disabled = true;
     reply.textContent = "Looking up your question…";
     try {
+      if (somaliaRainfall) {
+        window.ClimateResearch.renderSources(researchSources, somaliaRainfallReports);
+        researchNotice.hidden = false;
+        researchNotice.textContent = "Selected reports on rainfall and flooding in southern Somalia";
+        reply.textContent = "Loading southern Somalia’s historical rainfall record…";
+        const area = { kind: "trend", ids: ["PRECTOTCORR"], lag: 0 };
+        const place = await window.AssistantPlace.resolve("Southern Somalia");
+        const answer = place.kind === "unresolved" ? null : await window.answerClimateArea(area, place);
+        if (answer) showAreaAnswer(answer, area);
+        else reply.textContent = "The rainfall chart is unavailable. The reports are below.";
+        return;
+      }
+
       const interpreted = await askAssistant({ mode: "interpret", question, has_selection: Boolean(selected),
         region_id: selectedRegion, point_id: selectedPoint });
       if (!interpreted?.intent) {
@@ -243,9 +276,8 @@
       if (answer) showAreaAnswer(answer, area);
       else reply.textContent = clarification.place;
     } catch (error) {
-      reply.textContent = error instanceof TypeError || error.name === "TimeoutError"
-        ? "Could not reach the climate assistant. Try again."
-        : error.message;
+      reply.textContent = somaliaRainfall ? "The rainfall chart didn’t load. The reports are below." :
+        error instanceof TypeError || error.name === "TimeoutError" ? "Could not reach the climate assistant. Try again." : error.message;
     } finally {
       fieldset.disabled = false;
     }

@@ -5,7 +5,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 function loadAssistant(fetch, navigator = {}) {
-  const countries = ["Australia", "Austria", "Georgia", "Madagascar", "Niger", "Nigeria"].map((name) => ({ name }));
+  const countries = ["Australia", "Austria", "Georgia", "Madagascar", "Niger", "Nigeria", "Somalia"].map((name) => ({ name }));
   const window = { WORLD_MAP: { countries } };
   const nodes = new Map();
   const element = (id) => {
@@ -160,6 +160,35 @@ test("Ask AI resolves the Ontario soil question to the province's grid points", 
   };
   await ask(question);
   assert.match(element("assistant-reply").textContent, /grid points in Ontario, Canada/);
+});
+
+test("southern Somalia rainfall opens the chart and reports without calling Groq", async () => {
+  const { window, element, ask } = loadAssistant(async () => assert.fail("The Somalia demo must skip the assistant endpoint"));
+  let failMap = false;
+  let reportsShown = 0;
+  window.ClimateResearch = { renderSources(list, sources) {
+    assert.equal(sources.length, 3);
+    assert.ok(sources.every(({ url }) => url.startsWith("https://")));
+    list.hidden = false;
+    reportsShown++;
+  } };
+  window.answerClimateArea = async (question, place) => {
+    assert.equal(question.ids.join(","), "PRECTOTCORR");
+    assert.equal(place.country.name, "Somalia");
+    assert.equal(place.direction, "south");
+    assert.equal(place.interior, true);
+    if (failMap) throw new Error("Offline fixture");
+    return { status: "trend", name: place.displayName, count: 2, firstYear: 1998, lastYear: 2024,
+      trend: { slope: -0.15, ciLow: -0.32, ciHigh: 0.02, verdict: "inconclusive" } };
+  };
+  await ask("Tell me about precipitation in south Somalia.");
+  assert.match(element("assistant-reply").textContent, /2 NASA grid points/);
+  assert.equal(element("assistant-view-area").hidden, false);
+  failMap = true;
+  await ask("Show rainfall reports for the southern parts of Somalia.");
+  assert.match(element("assistant-reply").textContent, /reports are below/);
+  assert.equal(element("assistant-research-sources").hidden, false);
+  assert.equal(reportsShown, 2);
 });
 
 test("Ask AI stops on invalid measurements, time windows or unclear intent", async () => {
