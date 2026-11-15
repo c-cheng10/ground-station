@@ -51,6 +51,17 @@ For a separate Giovanni deployment, apply [giovanni_correlations.sql](supabase/g
 
 The historical [POWER correlation migration](supabase/correlations.sql) belongs to the earlier POWER schema.
 
+## Ocean and atmospheric data
+
+The extended import uses the 3° land and 5° ocean Giovanni grids. Apply
+[`supabase/giovanni_ocean_atmosphere.sql`](supabase/giovanni_ocean_atmosphere.sql)
+in the project SQL Editor, then run `python import_ocean_atmosphere.py --upload`
+with the Supabase backend key in `.env`. Run without `--upload` to validate the
+local cache and rebuild `ocean-atmosphere.js`. The import adds atmospheric arrays
+to existing land rows and inserts ocean and additional land rows. Monthly arrays
+use the January 1948 origin. The ocean rows carry MERRA-2 air temperature and
+GPM precipitation in addition to the new measurements.
+
 ## Refresh a stored point
 
 **Refresh from Giovanni** fetches newly available complete months for the selected point. It can extend MERRA-2 temperature and humidity, GPM IMERG precipitation, and the GLDAS 2.1 temperature comparison. The GLDAS 2.0 land measurements retain their fixed record ending in 2014. Existing observations are preserved, including when requests overlap.

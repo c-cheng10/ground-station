@@ -2,7 +2,13 @@
   "use strict";
 
   const data = window.TREND_CONFIG;
-  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {}, TREND_MAP: trendMap = {} } = window;
+  const { TrendStatistics, POINTS_INDEX: landPoints = [], FEATURED_STRIPES: featured = {}, TREND_MAP: landTrends = {},
+    GIOVANNI_EXTENSION: extension } = window;
+  const oceanPoints = extension?.ocean ?? [];
+  const points = [...landPoints, ...(extension?.extraLand ?? []), ...oceanPoints];
+  const oceanIds = new Set(oceanPoints.map((point) => point.join(",")));
+  const trendMap = { ...landTrends, ...extension?.trends };
+  if (data && extension) data.variables.push(...extension.variables);
   const byId = (id) => document.getElementById(id);
   const explorer = byId("explorer");
   if (!data || !data.sites.length || !data.variables.length || !points.length || !TrendStatistics) {
@@ -13,6 +19,7 @@
   }
   const pointId = ({ latitude, longitude }) => `${latitude},${longitude}`;
   const gridSpacing = 3;
+  const oceanSpacing = 5;
   const sourceCellHalfSize = 0.125;
   const sampleCountries = new Map();
   const pointIds = new Set(points.map(([lat, lon]) => `${lat},${lon}`));
@@ -65,8 +72,11 @@
   const heat = { low: [33, 102, 172], high: [178, 24, 43], note: "Blue years were colder than average, red years warmer." };
   const water = { low: [140, 81, 10], high: [1, 102, 94], note: "Brown years were drier than average, teal years wetter." };
   const stripeScales = {
-    T2M: heat, TS: heat,
-    PRECTOTCORR: water, QV2M: water, RH2M: water, GWETROOT: water, EVLAND: water,
+    T2M: heat, TS: heat, OCEAN_SKIN_TEMP: heat, TROPOPAUSE_TEMP: heat,
+    PRECTOTCORR: water, QV2M: water, RH2M: water, GWETROOT: water, EVLAND: water, COLUMN_WATER_VAPOUR: water,
+    OZONE_COLUMN: { ...water, note: "Brown years had less ozone than average, teal years more." },
+    CLOUD_FRACTION: { ...water, note: "Brown years had less cloud cover than average, teal years more." },
+    OUTGOING_LONGWAVE: { ...water, note: "Brown years emitted less thermal radiation than average, teal years more." },
     WS10M: { low: [33, 102, 172], high: [84, 39, 143], note: "Blue years were calmer than average, purple years windier." },
     SNOW: { low: [140, 81, 10], high: [33, 102, 172], note: "Brown years had less snow than average, blue years more." },
   };
@@ -245,7 +255,7 @@
 
   const pText = (p) => p < 0.001 ? "<0.001" : format(p, 3);
 
-  // Every land point's record is stored in Supabase by build_gldas_dataset.py (NASA Giovanni data).
+  // Monthly observations are stored in Supabase on the shared January 1948 axis.
   async function loadPoints(ids, signal) {
     const url = new URL("/rest/v1/climate_points", data.supabaseUrl);
     const filter = ids.length === 1 ? `eq.${ids[0]}` : `in.(${ids.map((id) => JSON.stringify(id)).join(",")})`;
@@ -404,7 +414,7 @@
       }
       regionResults.dataset.site = nextSite.id;
       if (!nextSite.areaIds) regionResults.dataset.point = row.id;
-      byId("point-tools").hidden = Boolean(nextSite.areaIds);
+      byId("point-tools").hidden = Boolean(nextSite.areaIds || nextSite.ocean);
       regionResults.hidden = false;
       setRegionStatus("");
       renderDetails();
@@ -474,24 +484,26 @@
     }
   }
 
-  // Snap to the nearest stored land point; null when the nearest is too far to stand for the click.
+  // Snap to the nearest stored sample within the reach of its grid.
   function pointSite(latitude, longitude) {
     let best = null;
     let bestKm = Infinity;
     for (const [lat, lon] of points) {
-      const dLon = ((lon - longitude + 540) % 360) - 180;
-      const km = 111 * Math.hypot(lat - latitude, dLon * Math.cos(latitude * Math.PI / 180));
+      const km = distanceKm(latitude, longitude, lat, lon);
+      if (km > (oceanIds.has(`${lat},${lon}`) ? 400 : 350)) continue;
       if (km < bestKm) [best, bestKm] = [[lat, lon], km];
     }
-    if (bestKm > 350) return null;
+    if (!best) return null;
     const item = { latitude: best[0], longitude: best[1] };
+    const ocean = oceanIds.has(pointId(item));
     const named = storedSites.find((point) => pointId(point) === pointId(item));
     if (named) return named;
     return {
       ...item,
       id: `point:${best[0]},${best[1]}`,
-      name: countryAt(best[0], best[1]) || latLon(item),
-      region: "Nearest NASA grid point",
+      name: ocean ? `Ocean at ${latLon(item)}` : countryAt(best[0], best[1]) || latLon(item),
+      region: ocean ? "Nearest NASA ocean grid point" : "Nearest NASA land grid point",
+      ocean,
       bounds: { south: best[0] - sourceCellHalfSize, north: best[0] + sourceCellHalfSize,
         west: best[1] - sourceCellHalfSize, east: best[1] + sourceCellHalfSize },
     };
@@ -517,6 +529,7 @@
 
   function countryForSample(latitude, longitude) {
     const id = `${latitude},${longitude}`;
+    if (oceanIds.has(id)) return null;
     if (sampleCountries.has(id)) return sampleCountries.get(id);
     let match = countries.find((country) => inCountry(country, latitude, longitude));
     if (!match && pointIds.has(id)) {
@@ -684,7 +697,7 @@
       .filter((item) => item.significant && item.slope !== null);
     const list = (id, items) => byId(id).replaceChildren(...(items.length ? items.map((item) => {
       const button = create("button", "", "pick-variable");
-      button.textContent = `${(countryAt(item.lat, item.lon) || "Coastal area")}: ${format(item.slope, variable.decimals + 1, true)} ${unit}`;
+      button.textContent = `${sampleName(item.lat, item.lon)}: ${format(item.slope, variable.decimals + 1, true)} ${unit}`;
       button.addEventListener("click", () => choosePoint(item.lat, item.lon));
       const li = create("li");
       li.append(button);
@@ -710,7 +723,7 @@
     chartLayout = null;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
-    byId("drawer-place").textContent = useGridCell ? "No data for this cell" : "No land data here";
+    byId("drawer-place").textContent = "No data for this location";
     byId("site-description").textContent = "";
     regionResults.hidden = true;
     byId("story").hidden = true;
@@ -718,7 +731,7 @@
     openDrawer();
     flyTo(mapView.zoom);
     setRegionStatus(useGridCell
-      ? "There’s no stored NASA point for this 3° cell. Select a nearby cell or use Magic select to cover more ground."
+      ? "There’s no stored NASA point for this cell. Select a nearby cell or use Magic select to cover more ground."
       : "No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
   }
 
@@ -726,6 +739,11 @@
     const latitude = `${format(Math.abs(item.latitude), 1)}° ${item.latitude < 0 ? "S" : "N"}`;
     const longitude = `${format(Math.abs(item.longitude), 2)}° ${item.longitude < 0 ? "W" : "E"}`;
     return `${latitude}, ${longitude}`;
+  }
+
+  function sampleName(lat, lon) {
+    return oceanIds.has(`${lat},${lon}`) ? `Ocean at ${latLon({ latitude: lat, longitude: lon })}` :
+      countryAt(lat, lon) || "Coastal area";
   }
 
   function coordinates(item) {
@@ -1159,9 +1177,20 @@
     }
   }
 
-  for (const variable of data.variables) {
-    mapVariable.add(new Option(variable.name, variable.id));
-    compareVariable.add(new Option(variable.name, variable.id));
+  for (const select of [mapVariable, compareVariable]) {
+    const groups = new Map();
+    for (const variable of data.variables) {
+      const group = variable.id === "OCEAN_SKIN_TEMP" ? "Ocean" :
+        extension?.variables.includes(variable) ? "Atmosphere" :
+          ["T2M", "PRECTOTCORR"].includes(variable.id) ? "Land and ocean" : "Land";
+      if (!groups.has(group)) {
+        const options = document.createElement("optgroup");
+        options.label = group;
+        groups.set(group, options);
+        select.append(options);
+      }
+      groups.get(group).append(new Option(variable.name, variable.id));
+    }
   }
   mapVariable.addEventListener("change", () => {
     compareMode = false;
@@ -1622,7 +1651,8 @@
     let bestDistance = Infinity;
     points.forEach(([pLat, pLon], index) => {
       const distance = Math.max(Math.abs(pLat - lat), Math.abs(signedLongitude(pLon - lon)));
-      if (distance <= gridSpacing / 2 && distance < bestDistance) [best, bestDistance] = [index, distance];
+      const step = oceanIds.has(`${pLat},${pLon}`) ? oceanSpacing : gridSpacing;
+      if (distance <= step / 2 && distance < bestDistance) [best, bestDistance] = [index, distance];
     });
     return best;
   }
@@ -1632,13 +1662,13 @@
     const entry = trendMap[variable.id];
     const coords = globe.invert(x, y);
     const index = coords ? gridPointIndex(coords[1], coords[0]) : -1;
-    if (!entry || index < 0 || entry.slope[index] === null) {
+    if (!entry || index < 0 || !Number.isFinite(entry.slope[index])) {
       mapTip.hidden = true;
       return;
     }
     const [lat, lon] = points[index];
     mapTip.replaceChildren(
-      create("strong", countryAt(lat, lon) || "Coastal area"),
+      create("strong", sampleName(lat, lon)),
       create("span", `${format(entry.slope[index], variable.decimals + 1, true)} ${trendUnit(variable)} per decade`),
       create("br"),
       create("small", entry.significant[index] ? "Clear trend. Select for details." : "No clear trend. Select for details."),
