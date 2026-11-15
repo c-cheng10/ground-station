@@ -949,29 +949,22 @@
     if (comparison) {
       const other = comparison.variable;
       const second = mapEntry(other.id, comparison.layer);
-      byId("trend-map-title").textContent = "Two trends · change per decade";
+      byId("trend-map-title").textContent = `${variable.name} vs ${other.name}`;
       byId("trend-map-sub").textContent = "";
       byId("trend-map-sub").hidden = true;
-      const key = create("table");
-      key.innerHTML = '<thead><tr><td></td><th scope="col">Falls</th><th scope="col">Near 0</th><th scope="col">Rises</th></tr></thead>';
-      const rows = key.createTBody();
-      ["Rises", "Near 0", "Falls"].forEach((label, row) => {
-        const tr = rows.insertRow();
-        const th = create("th", label);
-        th.scope = "row";
-        tr.append(th);
-        comparisonPalette.slice((2 - row) * 3, (3 - row) * 3).forEach((colour, col) => {
-          const cell = tr.insertCell();
-          cell.setAttribute("aria-label", `${variable.name} ${["falls", "near zero", "rises"][col]}; ${other.name} ${label.toLowerCase()}`);
-          cell.style.backgroundColor = `rgb(${colour})`;
-        });
-      });
-      const vertical = `↑ ${other.name} (${trendUnit(other)}) · ${second.years.join("–")}`;
-      const horizontal = `→ ${variable.name} (${trendUnit(variable)}) · ${entry.years.join("–")}`;
+      const key = create("ul", "", "agreement-key");
+      for (const { colour, label } of Object.values(agreement)) {
+        const item = create("li");
+        const swatch = create("span", "", "agreement-swatch");
+        swatch.style.backgroundColor = `rgb(${colour})`;
+        item.append(swatch, create("span", label));
+        key.append(item);
+      }
       for (const legend of legends) {
-        const title = legend.id.endsWith("mobile") ? [create("h4", "Two trends · change per decade")] : [];
-        legend.replaceChildren(...title, create("p", vertical), key.cloneNode(true), create("p", horizontal),
-          create("small", `Near 0 is ±${format(entry.scale / 3, variable.decimals + 1)} horizontally and ±${format(second.scale / 3, other.decimals + 1)} vertically. Colour requires both measurements.`));
+        const title = legend.id.endsWith("mobile") ? [create("h4", `${variable.name} vs ${other.name}`)] : [];
+        legend.replaceChildren(...title, key.cloneNode(true),
+          create("small", `Are both trends heading the same way? Only clear (statistically significant) trends count; ` +
+            `“Not clear” means at least one isn’t. Years: ${variable.name} ${entry.years.join("–")}, ${other.name} ${second.years.join("–")}.`));
       }
       return;
     }
@@ -1764,12 +1757,25 @@
     CLOUD_FRACTION: humidityPalette,
     OUTGOING_LONGWAVE: humidityPalette,
   };
-  // Row and column classes both run from falling to rising.
-  const comparisonPalette = [
-    [232, 232, 232], [172, 228, 228], [90, 200, 200],
-    [223, 176, 214], [165, 173, 211], [86, 152, 185],
-    [190, 100, 172], [140, 98, 170], [85, 114, 188],
-  ];
+  // Two-trend map: four plain categories. The renderer looks colours up by class (falls, unclear, rises)
+  // for each measurement, so the 3 x 3 table below collapses into those four.
+  const agreement = {
+    both_rising: { colour: [239, 138, 76], label: "Both rising" },
+    both_falling: { colour: [76, 156, 232], label: "Both falling" },
+    opposite: { colour: [186, 112, 226], label: "Opposite directions" },
+    unclear: { colour: [96, 108, 118], label: "Not clear" },
+  };
+  const agreementOf = (x, y) => x === 1 || y === 1 ? "unclear" : x !== y ? "opposite" : x === 2 ? "both_rising" : "both_falling";
+  const comparisonPalette = [0, 1, 2].flatMap((y) => [0, 1, 2].map((x) => agreement[agreementOf(x, y)].colour));
+  // Only significant trends count as rising or falling; everything else lands in the middle class.
+  const clearTrends = new WeakMap();
+  function clearOnly(entry) {
+    if (!clearTrends.has(entry)) {
+      clearTrends.set(entry, { ...entry, scale: 1, slope: entry.slope.map((value, index) =>
+        Number.isFinite(value) ? (entry.significant[index] ? Math.sign(value) : 0) : value) });
+    }
+    return clearTrends.get(entry);
+  }
   const globe = window.createGlobeView(world, countries);
   if (!globe) {
     byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
@@ -1901,8 +1907,9 @@
   function mapLayer({ variable, layer: name, comparison }) {
     const primary = fields.measurement(mapEntry(variable.id, name));
     if (!comparison) return { ...primary, palette: heatPalettes[variable.id] ?? temperaturePalette, blend: name !== "land" };
-    const second = fields.measurement(mapEntry(comparison.variable.id, comparison.layer));
-    return { ...primary, comparisonHeat: second.heat, palette: comparisonPalette, blend: name !== "land" && comparison.layer !== "land" };
+    const first = fields.measurement(clearOnly(mapEntry(variable.id, name)));
+    const second = fields.measurement(clearOnly(mapEntry(comparison.variable.id, comparison.layer)));
+    return { ...first, heightMap: primary.heightMap, comparisonHeat: second.heat, palette: comparisonPalette, blend: name !== "land" && comparison.layer !== "land" };
   }
 
   function drawFilterFrame(now) {
@@ -2167,9 +2174,11 @@
     }
     const [lat, lon] = points[index];
     const value = (item, map) => `${format(map.slope[index], item.decimals + 1, true)} ${trendUnit(item)} per decade`;
+    const classOf = (map) => map.significant[index] ? (map.slope[index] > 0 ? 2 : 0) : 1;
     mapTip.replaceChildren(create("strong", sampleName(lat, lon)), ...(comparison ? [
       create("span", `${variable.name} · ${value(variable, entry)}`), create("br"),
-      create("span", `${comparison.variable.name} · ${value(comparison.variable, second)}`),
+      create("span", `${comparison.variable.name} · ${value(comparison.variable, second)}`), create("br"),
+      create("small", agreement[agreementOf(classOf(entry), classOf(second))].label),
     ] : [
       create("span", value(variable, entry)), create("br"),
       create("small", entry.significant[index] ? "Clear trend. Select for details." : "No clear trend. Select for details."),
