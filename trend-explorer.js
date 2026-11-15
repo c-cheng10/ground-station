@@ -175,22 +175,55 @@
     retryRegion.hidden = !canRetry;
   }
 
-  function drawStripes(canvas, values, variableId, shown = values.length) {
+  function drawStripes(canvas, values, variableId, firstYear) {
     const drawing = prepareCanvas(canvas);
     if (!drawing) return;
     const { ctx, width, height } = drawing;
+    const bandHeight = firstYear === undefined ? height : height - 24;
+    const stripeWidth = width / values.length;
     const scale = stripeScales[variableId] || stripeScales.T2M;
     const mean = values.reduce((total, value) => total + value, 0) / values.length;
     // Saturate at 2.2 standard deviations, close to the published warming-stripes scale.
     const spread = 2.2 * Math.sqrt(values.reduce((total, value) => total + (value - mean) ** 2, 0) / values.length) || 1;
-    values.slice(0, shown).forEach((value, index) => {
+    values.forEach((value, index) => {
       const t = Math.max(-1, Math.min(1, (value - mean) / spread));
       const end = t < 0 ? scale.low : scale.high;
       const rgb = end.map((channel) => Math.round(247 + (channel - 247) * Math.abs(t)));
       ctx.fillStyle = `rgb(${rgb})`;
       // Overlap by a pixel so no hairline gaps show between stripes.
-      ctx.fillRect(Math.floor(index * width / values.length), 0, Math.ceil(width / values.length) + 1, height);
+      ctx.fillRect(Math.floor(index * stripeWidth), 0, Math.ceil(stripeWidth) + 1, bandHeight);
     });
+    if (firstYear !== undefined) drawStripeYears(ctx, width, bandHeight, firstYear, values.length);
+  }
+
+  function drawStripeYears(ctx, width, bandHeight, firstYear, count) {
+    const lastYear = firstYear + count - 1;
+    const stepWidth = width / count;
+    const tickX = (year) => (year - firstYear + 0.5) * stepWidth;
+    ctx.font = '12px "IBM Plex Mono", monospace';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#a5b8c3";
+    ctx.strokeStyle = "#637986";
+    const labelWidth = ctx.measureText(String(lastYear)).width;
+    const labelGap = labelWidth + 8;
+    const inset = labelWidth / 2 + 1;
+    const labelX = (year) => Math.max(inset, Math.min(width - inset, tickX(year)));
+    const interval = [1, 2, 5, 10, 20, 50, 100].find((years) => years * stepWidth >= labelGap) ?? 100;
+    const years = [firstYear];
+    for (let year = Math.ceil((firstYear + 1) / interval) * interval; year < lastYear; year += interval) {
+      if (labelX(year) - labelX(years.at(-1)) >= labelGap && labelX(lastYear) - labelX(year) >= labelGap) years.push(year);
+    }
+    if (labelX(lastYear) - labelX(firstYear) >= labelGap) years.push(lastYear);
+    ctx.beginPath();
+    ctx.moveTo(0, bandHeight + 0.5);
+    ctx.lineTo(width, bandHeight + 0.5);
+    for (const year of years) {
+      ctx.moveTo(tickX(year), bandHeight + 0.5);
+      ctx.lineTo(tickX(year), bandHeight + 5);
+      ctx.fillText(String(year), labelX(year), bandHeight + 8);
+    }
+    ctx.stroke();
   }
 
   // "1 in N" phrasing reads more easily than a raw p-value.
@@ -816,8 +849,9 @@
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
       byId("variable-description").textContent = variable.description;
       const scale = stripeScales[variable.id] || stripeScales.T2M;
-      const { firstYear, lastYear } = analysis.series[variable.id];
-      byId("stripes-note").textContent = `Each stripe is one year from ${firstYear} to ${lastYear}. ${scale.note}`;
+      const { firstYear, lastYear, values } = analysis.series[variable.id];
+      showStripes(byId("result-stripes"), values, variable.id, firstYear);
+      byId("stripes-note").textContent = `Each stripe compares one year with the ${firstYear}–${lastYear} average. ${scale.note}`;
       const verdict = byId("trend-verdict");
       verdict.dataset.state = trend.verdict;
       verdict.textContent = verdictLabels[trend.verdict];
@@ -1056,7 +1090,6 @@
     const { ctx, width, height } = drawing;
     const variable = data.variables.find((item) => selectedIds.has(item.id));
     const series = analysis.series[variable.id];
-    drawStripes(byId("result-stripes"), series.values, variable.id);
     const values = series[chartViews[view].field];
     const { trend } = series;
     const annual = view === "annual";
@@ -1986,9 +2019,9 @@
   refreshGiovanni.addEventListener("click", refreshPoint);
 
   // ---- Examples in the welcome card ----
-  function showStripes(canvas, values, id) {
-    liveStripes.set(canvas, [values, id]);
-    drawStripes(canvas, values, id);
+  function showStripes(canvas, values, id, firstYear) {
+    liveStripes.set(canvas, [values, id, firstYear]);
+    drawStripes(canvas, values, id, firstYear);
     observer.observe(canvas);
   }
   for (const example of examples.filter(({ site }) => site())) {

@@ -275,7 +275,9 @@
     .answer h2 { font-size: clamp(1.45rem, 2.4vw, 1.9rem); letter-spacing: -0.025em; margin-top: 12px; }
     .why { margin: 10px 0 0; color: var(--muted); }
     .plain { margin: 14px 0 0; }
-    .answer-stripes { margin-top: 18px; height: 48px; border-radius: 10px; overflow: hidden; }
+    .answer-stripes { margin: 20px 0 0; }
+    .answer-stripes h3 { margin: 0 0 8px; font-size: 1rem; }
+    #result-stripes { height: 68px; }
     .stripes-note, .chart-note, .note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
     .chart { margin: 0; }
     .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 26px; }
@@ -550,8 +552,11 @@
                 <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
               </figcaption>
             </figure>
-            <div class="answer-stripes"><canvas id="result-stripes" aria-hidden="true"></canvas></div>
-            <p class="stripes-note" id="stripes-note"></p>
+            <figure class="answer-stripes" aria-labelledby="stripes-title">
+              <h3 id="stripes-title">Yearly differences from average</h3>
+              <canvas id="result-stripes" aria-hidden="true"></canvas>
+              <figcaption class="stripes-note" id="stripes-note"></figcaption>
+            </figure>
             <p class="why" id="variable-why"></p>
             <p class="plain" id="trend-chance" aria-live="polite"></p>
 
