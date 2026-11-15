@@ -68,7 +68,9 @@
 
   function showAreaAnswer(answer, question) {
     if (answer.status === "outside_coverage") {
-      reply.textContent = "No stored NASA grid point is close enough to that place. Try another place or use Magic select on the globe.";
+      reply.textContent = answer.region
+        ? `No stored NASA grid points in ${answer.region} cover the requested measurements. Try a different measurement or a broader area.`
+        : "No stored NASA grid point is close enough to that place. Try another place or use Magic select on the globe.";
       return;
     }
     if (answer.status === "unavailable") {

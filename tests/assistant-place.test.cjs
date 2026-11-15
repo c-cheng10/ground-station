@@ -5,7 +5,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 function loadAssistant(fetch, navigator = {}) {
-  const countries = ["Australia", "Austria", "Madagascar", "Niger", "Nigeria"].map((name) => ({ name }));
+  const countries = ["Australia", "Austria", "Georgia", "Madagascar", "Niger", "Nigeria"].map((name) => ({ name }));
   const window = { WORLD_MAP: { countries } };
   const nodes = new Map();
   const element = (id) => {
@@ -21,7 +21,7 @@ function loadAssistant(fetch, navigator = {}) {
   };
   const context = vm.createContext({ window, document: { getElementById: element }, fetch, navigator, URL, URLSearchParams, AbortController, AbortSignal });
   const load = (file) => vm.runInContext(readFileSync(resolve(__dirname, "..", file), "utf8"), context, { filename: file });
-  for (const file of ["trend-config.js", "assistant-place.js", "correlation-assistant.js"]) {
+  for (const file of ["trend-config.js", "selection-admin1.js", "assistant-place.js", "correlation-assistant.js"]) {
     load(file);
   }
   const ask = async (question) => {
@@ -45,11 +45,37 @@ test("saved sites accept close spelling and aliases but check country qualifiers
   assert.equal(find("Cerado, Canada").wrongCountry?.id, "cerrado");
   assert.equal(find("rainforest").entry, undefined);
   assert.equal(find("Sahel").entry, undefined);
-  for (const name of ["Ontario", "Ontario, Canada", "Ontario in Canada", "Onatrio, Canada"]) {
-    assert.equal(find(name).entry?.id, "southern-ontario");
+  assert.equal(find("Southern Ontario, Canada").entry?.id, "southern-ontario");
+  assert.equal(find("Ontario, Canada").entry, undefined);
+});
+
+test("province, state and qualified-city lookups stay distinct", async () => {
+  const city = (name, admin1, country, country_code) => ({ name, admin1, country, country_code,
+    feature_code: "PPL", latitude: 40, longitude: -80 });
+  const { window } = loadAssistant(async (url) => {
+    const name = url.searchParams.get("name");
+    return respond({ results: ({
+      "Ontario, California": [city("Ontario", "California", "United States", "US")],
+      "Paris, Texas": [city("Paris", "Texas", "United States", "US")],
+      "Québec": [city("Québec", "Québec", "Canada", "CA")],
+    })[name] ?? [] });
+  });
+  const { resolve: place } = window.AssistantPlace;
+  for (const name of ["Ontario", "Ontario, Canada", "Ontario in Canada", "Onatrio, Canada", "CA-ON"]) {
+    const match = await place(name);
+    assert.equal(match.region?.code, "CA-ON", name);
+    assert.ok(match.region.samples.some(([latitude]) => latitude > 50));
   }
-  assert.equal(find("Ontario, California").entry, undefined);
-  assert.equal(find("Ontario, California").wrongCountry, undefined);
+  assert.equal((await place("northern Ontario, Canada")).direction, "north");
+  assert.equal((await place("California state")).region?.code, "US-CA");
+  assert.equal((await place("Georgia")).kind, "country");
+  assert.equal((await place("Georgia, USA")).region?.code, "US-GA");
+  assert.equal((await place("Québec, Canada")).region?.code, "CA-QC");
+  assert.equal((await place("Quebec City")).kind, "city");
+  assert.equal((await place("Ontario, California")).kind, "city");
+  assert.equal((await place("Paris, Texas, USA")).kind, "city");
+  assert.match((await place("Punjab")).message, /include its country/i);
+  assert.equal((await place("New York State")).region?.code, "US-NY");
 });
 
 test("country typos preserve exact countries, directions and ambiguity", async () => {
@@ -118,7 +144,7 @@ test("Ask AI submits casual wording as written and uses the interpreted place ah
   assert.match(element("assistant-reply").textContent, /grid points in Madagascar/);
 });
 
-test("Ask AI resolves the Ontario soil question to the saved Southern Ontario sample", async () => {
+test("Ask AI resolves the Ontario soil question to the province's grid points", async () => {
   const question = "tell me about ontario, Canada and its soil levels";
   const { window, element, ask } = loadAssistant(async (url, options) => {
     assert.equal(url.pathname, "/functions/v1/climate-assistant-giovanni");
@@ -127,11 +153,13 @@ test("Ask AI resolves the Ontario soil question to the saved Southern Ontario sa
   });
   window.answerClimateArea = async (intent, place) => {
     assert.equal(intent.ids.join(","), "GWETROOT");
-    assert.equal(place.id, "southern-ontario");
-    return { status: "no_data", name: place.name };
+    assert.equal(place.kind, "region");
+    assert.equal(place.region.code, "CA-ON");
+    assert.ok(place.region.samples.length > 1);
+    return { status: "no_data", name: place.displayName };
   };
   await ask(question);
-  assert.match(element("assistant-reply").textContent, /grid points in Southern Ontario/);
+  assert.match(element("assistant-reply").textContent, /grid points in Ontario, Canada/);
 });
 
 test("Ask AI stops on invalid measurements, time windows or unclear intent", async () => {

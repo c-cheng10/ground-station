@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..800&family=Space+Mono:wght@400;700&display=swap">
   <script defer src="world-map.js"></script>
   <script defer src="selection-cities.js"></script>
+  <script defer src="selection-admin1.js"></script>
   <script defer src="selection-ecoregions.js"></script>
   <script defer src="trend-config.js"></script>
   <script defer src="points-index.js"></script>
@@ -24,10 +25,10 @@
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=7"></script>
   <script defer src="climate-news.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=22"></script>
+  <script defer src="trend-explorer.js?v=23"></script>
   <script defer src="research.js?v=3"></script>
-  <script defer src="assistant-place.js?v=3"></script>
-  <script defer src="correlation-assistant.js?v=4"></script>
+  <script defer src="assistant-place.js?v=4"></script>
+  <script defer src="correlation-assistant.js?v=5"></script>
   <script defer src="onboarding.js?v=2"></script>
   <style>
     :root {
@@ -924,8 +925,8 @@
           </div>
         </fieldset>
         <fieldset id="onboarding-place-step" hidden>
-          <label class="onboarding-label" for="onboarding-place">City, country or study area</label>
-          <input type="text" id="onboarding-place" name="place" placeholder="e.g. Southern Ontario or Kenya" maxlength="100">
+          <label class="onboarding-label" for="onboarding-place">City, state, province or country</label>
+          <input type="text" id="onboarding-place" name="place" placeholder="e.g. Ontario, Canada" maxlength="100">
           <div class="onboarding-location">
             <button type="button" class="button secondary small" id="onboarding-locate">Use my location</button>
             <small id="onboarding-location-note" role="status"></small>
@@ -953,7 +954,7 @@
       <button type="button" class="icon-button" id="close-assistant" aria-label="Close">×</button>
     </div>
     <div class="assistant" id="correlation-assistant">
-      <p class="description" id="assistant-help">Ask about a trend or correlation in a city, country or area you selected. Try “What is the precipitation trend in western Nigeria?”</p>
+      <p class="description" id="assistant-help">Ask about a trend or correlation in a city, state, province, country or selected area. Try “How has rainfall changed in Ontario, Canada?”</p>
       <form id="assistant-form">
         <fieldset>
           <label for="assistant-question">Your question</label>
@@ -1091,7 +1092,7 @@
         <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
         <p>Land samples are spaced about 3° apart and ocean samples about 5° apart. MERRA-2 provides total column ozone and tropopause temperature (since 1980). Daytime AIRS observations provide total column water vapour, cloud fraction, outgoing longwave radiation, and sea surface skin temperature (since September 2002).</p>
         <p>Use Magic select to sketch a ring around a place. The app selects the sampled points inside it. Each point counts equally, and the area chart uses months when every selected point has a value.</p>
-        <p>Selection names describe the sampled grid points. Nearby cities and country outlines come from <a href="https://www.naturalearthdata.com/downloads/50m-cultural-vectors/50m-populated-places/">Natural Earth</a>. Biome labels use sample centres within <a href="https://ecoregions2017.appspot.com/">RESOLVE Ecoregions 2017</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
+        <p>Selection names describe the sampled grid points. Nearby cities, country outlines and <a href="https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/">state and province boundaries</a> come from Natural Earth. Biome labels use sample centres within <a href="https://ecoregions2017.appspot.com/">RESOLVE Ecoregions 2017</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
         <div class="location-tools">
           <button type="button" class="button secondary small" id="locate">Use my location</button>
           <details class="goto">
