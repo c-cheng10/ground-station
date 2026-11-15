@@ -18,14 +18,14 @@
   let layer = "land";
   const layerEntries = new Map();
   // Hide the other surface's points so land and ocean heatmaps never draw together.
-  function mapEntry(id) {
+  function mapEntry(id, name = layer) {
     const entry = trendMap[id];
     if (!entry) return entry;
-    const key = `${layer}:${id}`;
-    if (layer === "air" && !layerEntries.has(key)) layerEntries.set(key, { ...entry, blend: true });
+    const key = `${name}:${id}`;
+    if (name === "air" && !layerEntries.has(key)) layerEntries.set(key, { ...entry, blend: true });
     if (!layerEntries.has(key)) {
       const oceanStart = entry.oceanStart ?? entry.slope.length;
-      const keep = (index) => (index >= oceanStart) === (layer === "water");
+      const keep = (index) => (index >= oceanStart) === (name === "water");
       layerEntries.set(key, { ...entry, slope: entry.slope.map((value, index) => keep(index) ? value : null) });
     }
     return layerEntries.get(key);
@@ -151,7 +151,28 @@
 
   const chart = byId("chart");
   const tooltip = byId("chart-tooltip");
-  const mapVariable = byId("map-variable");
+  const mapSelector = byId("map-selector");
+  const previousMap = byId("previous-map");
+  const nextMap = byId("next-map");
+  const currentMap = byId("current-map");
+  const mapVariables = new Map(data.variables.map((variable) => [variable.id, variable]));
+  const layerOptions = Object.fromEntries(Object.entries(layers).map(([name, ids]) => [
+    name, ids.filter((id) => trendMap[id] && mapVariables.has(id)),
+  ]));
+  const mapLabels = Object.fromEntries(Object.entries(layerOptions).map(([name, ids]) => {
+    // A short loop needs copies offscreen so a label never crosses the centre at the wrap.
+    const track = ids.length > 1 && ids.length < 5 ? [...ids, ...ids, ...ids] : ids;
+    const slides = track.map((id) => {
+      const slide = create("div", "", "map-label");
+      slide.hidden = true;
+      slide.append(create("span", mapVariables.get(id).name, "map-name"));
+      return slide;
+    });
+    byId("map-labels").append(...slides);
+    return [name, slides];
+  }));
+  let selectorLayer;
+  let selectorSlide = 0;
   const compareToggle = byId("compare-toggle");
   const compareVariable = byId("compare-variable");
   const viewButtons = new Map();
@@ -275,7 +296,11 @@
     }
   }
 
-  const pText = (p) => p < 0.001 ? "<0.001" : format(p, 3);
+  function pText(p) {
+    if (p < 0.001) return "<0.001";
+    const rounded = format(p, 3);
+    return p > 0.05 && rounded === "0.050" ? ">0.050" : rounded;
+  }
 
   // Monthly observations are stored in Supabase on the shared January 1948 axis.
   async function loadPoints(ids, signal) {
@@ -388,6 +413,7 @@
   async function selectSite(nextSite) {
     if (regionRequest && site.id === nextSite.id) {
       openDrawer();
+      renderTrendMap();
       if (nextSite.mapAnchor) {
         site.mapAnchor = nextSite.mapAnchor;
         flyTo(focusZoom(site));
@@ -427,8 +453,8 @@
     byId("point-tools").hidden = true;
     byId("point-tools").open = false;
     explorer.scrollTop = 0;
-    mapVariable.value = trendMapVariable().id;
     openDrawer();
+    renderTrendMap();
     if (nextSite.keepCamera) {
       // No flight, so swap the outlined selection in place; reuse the lifted countries when unchanged.
       const lifted = viewedSite?.platformCountries ?? [];
@@ -771,7 +797,8 @@
   }
 
   window.answerClimateArea = async (question, place) => {
-    const target = place ? (place.id ? place : assistantArea(place)) : (site?.areaIds || question.kind === "trend") && site;
+    const target = place?.kind === "point" ? pointSite(place.latitude, place.longitude) :
+      place ? (place.id ? place : assistantArea(place)) : (site?.areaIds || question.kind === "trend") && site;
     if (!target) return place ? { status: "outside_coverage" } : null;
     const { ids, lag } = question;
     compareMode = ids.length === 2;
@@ -811,25 +838,64 @@
     return data.variables.find((item) => item.id === [...selectedIds][0]) || data.variables[0];
   }
 
+  function neighbourMap(variable, direction) {
+    const ids = layerOptions[layer];
+    const id = ids[(ids.indexOf(variable.id) + ids.length + direction) % ids.length];
+    return mapVariables.get(id) ?? variable;
+  }
+
   function renderTrendMap() {
     const variable = trendMapVariable();
-    if (!layers[layer].includes(variable.id)) setLayer(Object.keys(layers).find((name) => layers[name].includes(variable.id)) ?? layer);
-    const entry = mapEntry(variable.id);
-    mapVariable.value = variable.id;
+    if (!layerOptions[layer].includes(variable.id)) {
+      setLayer(Object.keys(layerOptions).find((name) => layerOptions[name].includes(variable.id)) ?? layer);
+    }
+    if (currentMap.textContent !== variable.name || selectorLayer !== layer) {
+      currentMap.textContent = variable.name;
+      const ids = layerOptions[layer];
+      const slide = ids.indexOf(variable.id);
+      const slides = mapLabels[layer];
+      const count = slides.length;
+      if (selectorLayer === layer) {
+        const halfCycle = Math.floor(ids.length / 2);
+        const shift = (slide - selectorSlide % ids.length + ids.length + halfCycle) % ids.length - halfCycle;
+        selectorSlide = (selectorSlide + shift + count) % count;
+      } else {
+        if (selectorLayer) for (const label of mapLabels[selectorLayer]) label.hidden = true;
+        selectorSlide = slide;
+      }
+      selectorLayer = layer;
+      const half = Math.floor(count / 2);
+      slides.forEach((label, index) => {
+        label.hidden = false;
+        const slot = (index - selectorSlide + count + half) % count - half;
+        label.dataset.slot = slot;
+        label.style.setProperty("--map-slot", slot);
+        label.toggleAttribute("data-offscreen", Math.abs(slot) > 2);
+      });
+      const previous = neighbourMap(variable, -1).name;
+      const next = neighbourMap(variable, 1).name;
+      previousMap.setAttribute("aria-label", `Previous heatmap: ${previous}`);
+      nextMap.setAttribute("aria-label", `Next heatmap: ${next}`);
+    }
+    drawTrendMap();
+  }
+
+  function renderTrendLegend(variable, name, palette) {
+    const entry = mapEntry(variable.id, name);
     if (!entry) return;
-    const unit = `${trendUnit(variable)} per decade`;
+    const unit = trendUnit(variable);
+    byId("trend-map-title").textContent = `Change per decade (${unit})`;
     byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
-    byId("trend-ramp").parentElement.hidden = !heatVisible;
-    const note = byId("heatmap-note");
-    if (note) note.textContent = heatVisible ? "Fainter colour marks weaker evidence or the edge of coverage." : "Heatmap off. You can still select grid points.";
-    byId("trend-low").textContent = `${format(-entry.scale, variable.decimals + 1, true)}`;
-    byId("trend-high").textContent = `${format(entry.scale, variable.decimals + 1, true)} ${unit}`;
-    runLensChange();
+    const bandStops = palette.map((colour, i) =>
+      `rgb(${colour}) ${100 * i / palette.length}% ${100 * (i + 1) / palette.length}%`);
+    byId("trend-ramp").style.background = `linear-gradient(90deg, ${bandStops.join(", ")})`;
+    byId("trend-low").textContent = format(-entry.scale, variable.decimals + 1, true);
+    byId("trend-high").textContent = format(entry.scale, variable.decimals + 1, true);
     const ranked = points.map(([lat, lon], k) => ({ lat, lon, slope: entry.slope[k], significant: entry.significant[k] }))
       .filter((item) => item.significant && item.slope !== null);
     const list = (id, items) => byId(id).replaceChildren(...(items.length ? items.map((item) => {
       const button = create("button", "", "pick-variable");
-      button.textContent = `${sampleName(item.lat, item.lon)}: ${format(item.slope, variable.decimals + 1, true)} ${unit}`;
+      button.textContent = `${sampleName(item.lat, item.lon)}: ${format(item.slope, variable.decimals + 1, true)} ${unit} per decade`;
       button.addEventListener("click", () => choosePoint(item.lat, item.lon));
       const li = create("li");
       li.append(button);
@@ -837,7 +903,6 @@
     }) : [create("li", "No place passes the significance test.")]));
     list("rising-list", ranked.filter((item) => item.slope > 0).sort((a, b) => b.slope - a.slope).slice(0, 5));
     list("falling-list", ranked.filter((item) => item.slope < 0).sort((a, b) => a.slope - b.slope).slice(0, 5));
-    drawTrendMap();
   }
 
   function choosePoint(latitude, longitude, useGridCell = false) {
@@ -997,32 +1062,14 @@
       byId("trend-p").textContent = pText(trend.adjustedPValue);
       byId("trend-sen").textContent = `${format(trend.senSlope, variable.decimals, true)} ${unit}`;
       byId("trend-mk").textContent = pText(trend.mkAdjustedPValue);
-      // Hover notes: where each number comes from and how it was worked out.
-      const years = lastYear - firstYear + 1;
-      const tested = Object.keys(analysis.series).length;
-      const basis = `${years} yearly averages of ${variable.source} data (${firstYear}–${lastYear}), downloaded from NASA Giovanni`;
-      const tips = {
-        "trend-verdict": `Decided by the adjusted p-value: 0.05 or lower counts as a clear rise or fall. Based on ${basis}.` +
-          (trend.verdict === "inconclusive" ? " “No clear trend” doesn’t mean nothing changed. The change is small next to the normal ups and downs between years, so the direction isn’t certain yet." : ""),
-        "trend-slope": `The slope of a straight line fitted through ${basis} (least squares), times 10 to give the change per decade.`,
-        "trend-ci": `The slope ± about two standard errors (Student’s t with ${years - 2} degrees of freedom). The standard error uses the Newey–West method with 3 years of lag, so years that resemble their neighbours make the range wider.`,
-        "trend-p": `Raw p = ${pText(trend.pValue)}, from a t-test of whether the slope differs from zero. It is then raised with the Holm method because ${tested} measurements are tested at this place, so a lucky result is less likely to slip through.`,
-        "trend-sen": "The Theil–Sen slope: the median of the slopes between every pair of years, times 10. One extreme year barely moves it.",
-        "trend-mk": `The Mann–Kendall test counts how often later years are higher or lower than earlier ones. It is widened with the Hamed–Rao correction when years are clearly linked, then Holm-adjusted across ${tested} measurements. Raw p = ${pText(trend.mkPValue)}.`,
-      };
-      for (const [id, tip] of Object.entries(tips)) {
-        const row = id === "trend-verdict" ? byId(id) : byId(id).parentElement;
-        row.dataset.tip = tip;
-        row.tabIndex = 0;
-      }
       const mkSignificant = trend.mkAdjustedPValue <= 0.05;
-      byId("trend-agree").textContent = mkSignificant === (trend.verdict !== "inconclusive")
-        ? "The Mann–Kendall test agrees."
-        : "The Mann–Kendall test disagrees. Treat this result with caution.";
-      // The map judges each square against about 1,700 places; this panel against the measurements
-      // here. Both use the same test, but the bar differs, so say so when they land differently.
+      byId("trend-agree").textContent = mkSignificant
+        ? "Mann–Kendall found evidence of a trend."
+        : "The Mann–Kendall result was inconclusive.";
+      // The map adjusts for testing places; the panel adjusts for measurements at the selected place.
       const pointIndex = site.areaIds ? -1 : points.findIndex(([lat, lon]) => lat === site.latitude && lon === site.longitude);
-      const mapClear = pointIndex >= 0 ? trendMap[variable.id]?.significant[pointIndex] : undefined;
+      const mapped = mapEntry(variable.id);
+      const mapClear = Number.isFinite(mapped?.slope[pointIndex]) ? mapped.significant[pointIndex] : undefined;
       if (mapClear !== undefined && Boolean(mapClear) !== (trend.verdict !== "inconclusive")) {
         byId("trend-agree").textContent += " The map adjusts for testing many places at once. This panel adjusts for testing several measurements at one place.";
       }
@@ -1334,38 +1381,44 @@
     layer = name;
     for (const button of byId("layer-switch").querySelectorAll("button")) {
       button.setAttribute("aria-pressed", String(button.dataset.layer === name));
+      button.disabled = !layerOptions[button.dataset.layer].length;
     }
-    mapVariable.replaceChildren(...layers[name].map((id) => data.variables.find((item) => item.id === id))
-      .filter((variable) => variable && trendMap[variable.id]).map((variable) => new Option(variable.name, variable.id)));
   }
   setLayer(layer);
   byId("layer-switch").addEventListener("click", (event) => {
     const name = event.target.closest("[data-layer]")?.dataset.layer;
-    if (!name || name === layer) return;
+    if (!name || name === layer || !layerOptions[name].length) return;
     setLayer(name);
-    mapVariable.value = mapVariable.options[0].value;
-    mapVariable.dispatchEvent(new Event("change"));
+    chooseMeasurement(layerOptions[name][0]);
   });
-  for (const select of [compareVariable]) {
-    const groups = new Map();
-    for (const variable of data.variables) {
-      const group = variable.id === "OCEAN_SKIN_TEMP" ? "Ocean" :
-        extension?.variables.includes(variable) ? "Atmosphere" :
-          ["T2M", "PRECTOTCORR"].includes(variable.id) ? "Land and ocean" : "Land";
-      if (!groups.has(group)) {
-        const options = document.createElement("optgroup");
-        options.label = group;
-        groups.set(group, options);
-        select.append(options);
-      }
-      groups.get(group).append(new Option(variable.name, variable.id));
+  const compareGroups = new Map();
+  for (const variable of data.variables) {
+    const group = variable.id === "OCEAN_SKIN_TEMP" ? "Ocean" :
+      extension?.variables.includes(variable) ? "Atmosphere" :
+        ["T2M", "PRECTOTCORR"].includes(variable.id) ? "Land and ocean" : "Land";
+    if (!compareGroups.has(group)) {
+      const options = create("optgroup");
+      options.label = group;
+      compareGroups.set(group, options);
+      compareVariable.append(options);
     }
+    compareGroups.get(group).append(new Option(variable.name, variable.id));
   }
-  mapVariable.addEventListener("change", () => {
+  function chooseMeasurement(id) {
     compareMode = false;
-    selectedIds = new Set([mapVariable.value]);
+    selectedIds = new Set([id]);
     if (app.hasAttribute("data-drawer")) renderDetails();
     else renderTrendMap();
+  }
+  function cycleMap(direction) {
+    chooseMeasurement(neighbourMap(trendMapVariable(), direction).id);
+  }
+  previousMap.addEventListener("click", () => cycleMap(-1));
+  nextMap.addEventListener("click", () => cycleMap(1));
+  mapSelector.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    cycleMap(event.key === "ArrowLeft" ? -1 : 1);
   });
   for (const [id, label] of Object.entries(forecastViews)) {
     const button = create("button", label);
@@ -1440,6 +1493,8 @@
 
   // ---- Satellite globe and input ----
   const app = byId("app");
+  const welcome = byId("welcome");
+  const welcomeTab = byId("show-welcome");
   const stage = byId("trend-map-stage");
   const world = byId("trend-map");
   const effects = byId("globe-effects");
@@ -1447,34 +1502,52 @@
   const pin = byId("map-pin");
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
+  const filterEdge = byId("filter-edge");
   const deselectButton = byId("deselect-area");
   const grain = byId("camera-grain");
   const cameraCoordinates = byId("camera-coordinates");
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const countries = window.WORLD_MAP.countries;
-  const heatPalette = [
-    [45, 112, 174], [48, 144, 184], [60, 171, 179], [91, 182, 151], [131, 185, 111],
-    [176, 194, 98], [215, 190, 85], [230, 157, 76], [213, 101, 66],
-  ];
-  const bandStops = heatPalette.map((colour, i) =>
-    `rgb(${colour}) ${100 * i / heatPalette.length}% ${100 * (i + 1) / heatPalette.length}%`);
-  byId("trend-ramp").style.background = `linear-gradient(90deg, ${bandStops.join(", ")})`;
-  const fields = window.createGlobeFields({ countries, points });
-  const globe = window.createGlobeView(world, countries, heatPalette);
+  // Pair ColorBrewer-inspired sequential ramps around a shared near-zero band.
+  const ivory = [231, 232, 209];
+  const blue = [[33, 113, 181], [66, 146, 198], [107, 174, 214], [158, 202, 225]];
+  const tan = [[150, 93, 44], [184, 124, 68], [216, 157, 96], [239, 198, 147]];
+  const teal = [[20, 130, 124], [45, 164, 147], [102, 194, 177], [153, 216, 201]];
+  const makePalette = (falling, rising) => [...falling, ivory, ...rising.slice().reverse()];
+  const temperaturePalette = makePalette(blue, [[198, 80, 37], [235, 116, 50], [253, 157, 86], [253, 199, 147]]);
+  const humidityPalette = makePalette(tan, teal);
+  const heatPalettes = {
+    T2M: temperaturePalette,
+    TS: temperaturePalette,
+    PRECTOTCORR: makePalette(tan, [[36, 115, 162], [43, 140, 190], [78, 179, 211], [123, 204, 196]]),
+    QV2M: humidityPalette,
+    RH2M: humidityPalette,
+    GWETROOT: makePalette(tan, [[35, 139, 69], [65, 171, 93], [116, 196, 118], [161, 217, 155]]),
+    EVLAND: humidityPalette,
+    WS10M: makePalette(teal, [[117, 74, 170], [150, 111, 193], [176, 155, 209], [198, 187, 223]]),
+    SNOW: makePalette(tan, blue),
+    OCEAN_SKIN_TEMP: temperaturePalette,
+    TROPOPAUSE_TEMP: temperaturePalette,
+    COLUMN_WATER_VAPOUR: humidityPalette,
+    OZONE_COLUMN: humidityPalette,
+    CLOUD_FRACTION: humidityPalette,
+    OUTGOING_LONGWAVE: humidityPalette,
+  };
+  const globe = window.createGlobeView(world, countries);
   if (!globe) {
     byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
     byId("data-error").hidden = false;
     return;
   }
+  const fields = window.createGlobeFields({ countries, points, maxTextureSize: globe.maxTextureSize });
   const home = { lat: 17, lon: -18, zoom: 1 };
   const initialOrbitTilt = 0.9;
   const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, outlineOpacity: 0,
     cameraFocus: 0, cameraLift: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
-  let heatVisible = true;
-  let displayedVariable;
-  let lensStarted = 0;
-  let lensFrame = 0;
-  const sensorSweep = 620;
+  let displayedMap;
+  let filter;
+  let filterFrame = 0;
+  const filterDuration = 460;
   let flight = 0;
   let focusAnimation;
   let staticTimer = 0;
@@ -1505,7 +1578,7 @@
   ];
 
   function focusZoom(target) {
-    if (!target.areaIds && !target.platformCountries?.length) return Math.max(mapView.zoom, 3.1);
+    if (!target.areaIds && !target.platformCountries?.length) return 2.6;
     const angularDistance = (lat, lon) => distanceKm(target.latitude, target.longitude, lat, lon) / 111;
     const samples = (target.areaIds ?? []).map((id) => {
       const [lat, lon] = id.split(",").map(Number);
@@ -1523,7 +1596,8 @@
     const visibleWidth = mobile ? width : width - byId("drawer").offsetWidth;
     const visibleHeight = mobile ? height - byId("drawer").offsetHeight - byId("map-toolbar").offsetHeight - 38 : height;
     const available = Math.min(visibleWidth, visibleHeight);
-    return clampZoom(globe.zoomFor(spread + 1.25, Math.max(30, available * (mobile ? 0.54 : 0.58))));
+    const framing = Math.max(30, available * (mobile ? 0.44 : 0.46));
+    return Math.min(3.2, globe.zoomFor(spread + 1.25, framing));
   }
 
   function drawMagicEffects(now) {
@@ -1587,27 +1661,54 @@
     sparkleFrame = requestAnimationFrame(update);
   }
 
+  function mapLayer({ variable, layer: name }) {
+    return { ...fields.measurement(mapEntry(variable.id, name)), palette: heatPalettes[variable.id] ?? temperaturePalette,
+      blend: name !== "land" };
+  }
+
+  function drawFilterFrame(now) {
+    filterFrame = 0;
+    if (!flight) drawTrendMap(now);
+  }
+
   function drawTrendMap(now = performance.now()) {
-    const elapsed = lensStarted ? Math.max(0, now - lensStarted) : Infinity;
-    const lensProgress = Math.min(1, elapsed / sensorSweep);
-    const lens = 1 - 0.115 * Math.sin(Math.PI * lensProgress) ** 2;
-    const variableId = lensProgress < 0.42 && displayedVariable ? displayedVariable : trendMapVariable().id;
-    if (lensProgress >= 0.42) displayedVariable = variableId;
-    const texture = heatVisible && mapEntry(variableId)
-      ? fields.measurement(mapEntry(variableId)) : {};
-    // Water and Air: outline only, with no lifted country, relief or dimming around the selection.
+    const target = trendMapVariable();
+    const immediate = !displayedMap || motion.matches;
+    if (immediate || (filter && now - filter.started >= filterDuration)) {
+      const settled = immediate ? { variable: target, layer } : filter.target;
+      filter = null;
+      if (settled.variable !== displayedMap?.variable || settled.layer !== displayedMap?.layer) {
+        displayedMap = settled;
+        renderTrendLegend(settled.variable, settled.layer, heatPalettes[settled.variable.id] ?? temperaturePalette);
+      }
+    }
+    if (!filter && (target !== displayedMap.variable || layer !== displayedMap.layer)) {
+      const next = { variable: target, layer };
+      const previous = mapLayer(displayedMap);
+      const incoming = mapLayer(next);
+      filter = { target: next, previous, incoming, started: performance.now(), wipe: 0 };
+      mapTip.hidden = true;
+    }
+    if (filter) {
+      filter.wipe = ease(Math.max(0, (now - filter.started) / filterDuration));
+      filterEdge.style.transform = `translateY(${filter.wipe * world.clientHeight}px)`;
+      if (!filterFrame) filterFrame = requestAnimationFrame(drawFilterFrame);
+    }
+    filterEdge.hidden = !filter;
+    // Water and Air mark the sample outline without lifting or shading the selection.
     const plain = layer !== "land";
     const platformCountries = plain ? null : viewedSite?.platformCountries;
     const platform = fields.platform(platformCountries);
-    const hasRelief = Boolean(!plain && heatVisible && mapView.rise > 0 && (platform || viewedSite?.areaIds));
-    globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
+    const hasRelief = Boolean(!plain && mapView.rise > 0 && (platform || viewedSite?.areaIds));
+    globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
-      ...texture, platform, platformCountries, rise: mapView.rise,
+      ...(filter?.incoming ?? mapLayer(displayedMap)), previous: filter?.previous, wipe: filter?.wipe,
+      platform, platformCountries, rise: mapView.rise,
       tilt: mapView.orbitTilt * mapView.cameraFocus, orbitAzimuth: mapView.orbitAzimuth * mapView.cameraFocus,
       cameraLift: plain ? 0 : mapView.cameraLift,
       selectionSegments: plain ? viewedSite?.squareSegments : viewedSite?.selectionSegments,
       outlineSea: plain || Boolean(viewedSite?.squares?.length), outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
-      selection: plain ? null : platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
+      selection: plain || platform ? null : fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
     cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
@@ -1672,37 +1773,13 @@
 
   document.addEventListener("visibilitychange", syncStatic);
   motion.addEventListener("change", () => {
-    if (motion.matches) focusAnimation?.cancel();
+    if (motion.matches) {
+      focusAnimation?.cancel();
+      drawTrendMap();
+    }
     syncStatic();
   });
   syncStatic();
-
-  function runLensChange() {
-    if (!heatVisible || motion.matches || !displayedVariable || displayedVariable === trendMapVariable().id) {
-      if (lensStarted) {
-        lensStarted = 0;
-        cancelAnimationFrame(lensFrame);
-        stage.removeAttribute("data-lens-change");
-      }
-      return;
-    }
-    if (lensStarted && stage.dataset.lensChange === trendMapVariable().id) return;
-    cancelAnimationFrame(lensFrame);
-    stage.removeAttribute("data-lens-change");
-    void stage.offsetWidth;
-    stage.dataset.lensChange = trendMapVariable().id;
-    lensStarted = performance.now();
-    refocus(105);
-    const step = (now) => {
-      if (!flight) drawTrendMap(now);
-      if (now - lensStarted < sensorSweep) lensFrame = requestAnimationFrame(step);
-      else {
-        lensStarted = 0;
-        stage.removeAttribute("data-lens-change");
-      }
-    };
-    lensFrame = requestAnimationFrame(step);
-  }
 
   function viewCentre() {
     const [width, height] = mapSize();
@@ -1726,7 +1803,7 @@
     const panel = byId("drawer");
     const offsetX = open && width > 760 ? -panel.offsetWidth / 2 : 0;
     const toolbar = open && width <= 760 ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
-    const offsetY = toolbar ? (toolbar - panel.offsetHeight) / 2 : 0;
+    const offsetY = toolbar ? (toolbar - panel.offsetHeight - mapSelector.offsetHeight - 8) / 2 : 0;
     const from = { ...mapView };
     const previous = viewedSite;
     const changingSite = previous?.id !== selection?.id;
@@ -1829,8 +1906,9 @@
   }
 
   function showTip(x, y) {
-    const variable = trendMapVariable();
-    const entry = mapEntry(variable.id);
+    const active = filter && y < filter.wipe * world.clientHeight ? filter.target : displayedMap;
+    const variable = active?.variable ?? trendMapVariable();
+    const entry = mapEntry(variable.id, active?.layer);
     const coords = globe.invert(x, y);
     const index = coords ? gridPointIndex(coords[1], coords[0]) : -1;
     if (!entry || index < 0 || !Number.isFinite(entry.slope[index])) {
@@ -1852,7 +1930,7 @@
   function openDrawer() {
     if (drawingArea) setAreaMode(false);
     app.setAttribute("data-drawer", "");
-    byId("welcome").hidden = true;
+    setWelcomeOpen(false);
     byId("drawer-title").focus({ preventScroll: true });
   }
 
@@ -1878,7 +1956,7 @@
       stopFlight();
       app.removeAttribute("data-drawer");
       mapView.offsetX = mapView.offsetY = 0;
-      byId("welcome").hidden = true;
+      setWelcomeOpen(false);
       world.focus({ preventScroll: true });
     }
     drawTrendMap();
@@ -2178,17 +2256,45 @@
   deselectButton.addEventListener("click", () => clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 }));
 
   // ---- Panels: results, welcome, how it works ----
-  const hideWelcome = () => {
-    byId("welcome").hidden = true;
-    world.focus({ preventScroll: true });
-  };
-  byId("close-drawer").addEventListener("click", closeDrawer);
-  byId("close-welcome").addEventListener("click", hideWelcome);
-  byId("show-welcome").addEventListener("click", () => {
+  function setWelcomeOpen(open) {
+    welcome.inert = !open;
+    welcomeTab.inert = open;
+    welcomeTab.setAttribute("aria-expanded", String(open));
+  }
+
+  function hideWelcome() {
+    setWelcomeOpen(false);
+    welcomeTab.focus({ preventScroll: true });
+  }
+
+  function showWelcome() {
+    if (!welcome.inert) return;
     if (drawingArea) setAreaMode(false);
     closeDrawer();
-    byId("welcome").hidden = false;
-    byId("close-welcome").focus();
+    setWelcomeOpen(true);
+    byId("close-welcome").focus({ preventScroll: true });
+  }
+
+  byId("close-drawer").addEventListener("click", closeDrawer);
+  byId("close-welcome").addEventListener("click", hideWelcome);
+  let welcomeTouch;
+  let suppressWelcomeClick = false;
+  welcomeTab.addEventListener("pointerdown", (event) => {
+    if (!event.isPrimary) return;
+    suppressWelcomeClick = false;
+    if (event.pointerType !== "mouse") welcomeTouch = event;
+  });
+  welcomeTab.addEventListener("pointerup", (event) => {
+    if (welcomeTouch?.pointerId !== event.pointerId) return;
+    const dx = event.clientX - welcomeTouch.clientX;
+    const dy = Math.abs(event.clientY - welcomeTouch.clientY);
+    welcomeTouch = null;
+    suppressWelcomeClick = Math.hypot(dx, dy) > 12;
+    if (dx >= 40 && dx > dy) showWelcome();
+  });
+  welcomeTab.addEventListener("pointercancel", () => { welcomeTouch = null; });
+  welcomeTab.addEventListener("click", (event) => {
+    if (!suppressWelcomeClick || event.detail === 0) showWelcome();
   });
   const help = byId("help");
   const helpTabs = [...help.querySelectorAll('[role="tab"]')];
@@ -2258,7 +2364,7 @@
       setAreaMode(false);
       areaButton.focus();
     } else if (site || app.hasAttribute("data-drawer")) clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
-    else if (!byId("welcome").hidden) hideWelcome();
+    else if (!welcome.inert) hideWelcome();
   });
   byId("locate").addEventListener("click", () => {
     const button = byId("locate");

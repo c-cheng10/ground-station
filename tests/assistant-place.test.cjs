@@ -5,7 +5,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 function loadAssistant(fetch) {
-  const countries = ["Australia", "Austria", "Niger", "Nigeria"].map((name) => ({ name }));
+  const countries = ["Australia", "Austria", "Madagascar", "Niger", "Nigeria"].map((name) => ({ name }));
   const window = { WORLD_MAP: { countries } };
   const nodes = new Map();
   const element = (id) => {
@@ -19,11 +19,19 @@ function loadAssistant(fetch) {
     return nodes.get(id);
   };
   const context = vm.createContext({ window, document: { getElementById: element }, fetch, URL, URLSearchParams, AbortSignal });
-  for (const file of ["trend-config.js", "assistant-place.js", "assistant-question.js", "correlation-assistant.js"]) {
+  for (const file of ["trend-config.js", "assistant-place.js", "correlation-assistant.js"]) {
     vm.runInContext(readFileSync(resolve(__dirname, "..", file), "utf8"), context, { filename: file });
   }
-  return { window, element };
+  const ask = async (question) => {
+    element("assistant-question").value = question;
+    await element("assistant-form").submit({ preventDefault() {} });
+  };
+  return { window, element, ask };
 }
+
+const interpret = (details) => ({ intent: { kind: "trend", place: null, variable_ids: [], lag_months: 0,
+  start_year: null, end_year: null, reason: null, ...details } });
+const respond = (answer) => ({ ok: true, json: async () => answer });
 
 test("saved sites accept close spelling and aliases but check country qualifiers", () => {
   const { window } = loadAssistant();
@@ -50,21 +58,25 @@ test("country typos preserve exact countries, directions and ambiguity", async (
 
 test("Ask AI sends the resolved site for correlations and dated research", async () => {
   const requests = [];
-  const { window, element } = loadAssistant(async (url, options) => {
+  const turns = [
+    interpret({ kind: "correlation", place: "Cerado biome in Brazil", variable_ids: ["t2m", "rh2m"] }),
+    interpret({ kind: "research", place: "the Cerrdao", variable_ids: ["prectotcorr"], start_year: 2012, end_year: 2014 }),
+    interpret({ place: "the Cerado biome", variable_ids: ["t2m"] }),
+    interpret({ place: "the Cerado in Canada", variable_ids: ["t2m"] }),
+  ];
+  const { window, element, ask } = loadAssistant(async (url, options) => {
     assert.equal(url.pathname, "/functions/v1/climate-assistant-giovanni");
-    requests.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ reply: "OK" }) };
+    const body = JSON.parse(options.body);
+    if (body.mode === "interpret") return respond(turns.shift());
+    requests.push(body);
+    return respond({ reply: "OK" });
   });
   element("region-results").dataset = { site: "southern-ontario", point: "44.125,-80.625" };
-  const ask = async (question) => {
-    element("assistant-question").value = question;
-    await element("assistant-form").submit({ preventDefault() {} });
-  };
   await ask("What is the correlation between air temperature and relative humidity in the Cerado biome in Brazil?");
   await ask("Find research on rainfall in the Cerrdao from 2012 to 2014.");
   assert.deepEqual(requests, [
-    { question: "What is the correlation between air temperature and relative humidity in Cerrado?", region_id: "cerrado" },
-    { question: "Find research on rainfall in Cerrado from 2012 to 2014.", region_id: "cerrado" },
+    { mode: "lookup", tool: "get_correlation", region_id: "cerrado", variable_ids: ["t2m", "rh2m"], lag_months: 0 },
+    { mode: "lookup", tool: "find_research", region_id: "cerrado", variable_ids: ["prectotcorr"], start_year: 2012, end_year: 2014 },
   ]);
 
   window.answerClimateArea = async (question, place) => {
@@ -77,4 +89,41 @@ test("Ask AI sends the resolved site for correlations and dated research", async
   await ask("What is the air temperature trend in the Cerado in Canada?");
   assert.match(element("assistant-reply").textContent, /Cerrado study area is in Brazil/);
   assert.equal(requests.length, 2);
+});
+
+test("Ask AI submits casual wording as written and uses the interpreted place ahead of a selection", async () => {
+  const requests = [];
+  const { window, element, ask } = loadAssistant(async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return respond(interpret({ place: "Madagascar", variable_ids: ["prectotcorr"] }));
+  });
+  element("region-results").dataset = { site: "cerrado", point: "-15.625,-47.625" };
+  window.answerClimateArea = async (question, place) => {
+    assert.equal(question.kind, "trend");
+    assert.equal(question.ids.join(","), "PRECTOTCORR");
+    assert.equal(place.country?.name, "Madagascar");
+    return { status: "no_data", name: place.country.name };
+  };
+  await ask("tell me about madagascar's rain");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].mode, "interpret");
+  assert.equal(requests[0].question, "tell me about madagascar's rain");
+  assert.match(element("assistant-reply").textContent, /grid points in Madagascar/);
+});
+
+test("Ask AI stops on invalid measurements, time windows or unclear intent", async () => {
+  const intents = [interpret({ place: "Madagascar", variable_ids: ["unlisted"] }),
+    interpret({ place: "Madagascar", variable_ids: ["prectotcorr"], start_year: 2020, end_year: 2021 }),
+    interpret({ kind: "clarify", reason: "measurement" })];
+  const { window, element, ask } = loadAssistant(async (_url, options) => {
+    assert.equal(JSON.parse(options.body).mode, "interpret");
+    return respond(intents.shift());
+  });
+  window.answerClimateArea = async () => assert.fail("Invalid intent cannot load climate data");
+  await ask("Show Madagascar's oxidation");
+  assert.match(element("assistant-reply").textContent, /could not identify/);
+  await ask("Show Madagascar's rainfall trend from 2020 to 2021");
+  assert.match(element("assistant-reply").textContent, /could not identify/);
+  await ask("What about Madagascar's humidity?");
+  assert.match(element("assistant-reply").textContent, /Which measurement/);
 });
