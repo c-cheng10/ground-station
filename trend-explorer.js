@@ -21,7 +21,7 @@
   const verdictLabels = {
     rising: "Rising",
     falling: "Falling",
-    inconclusive: "Inconclusive",
+    inconclusive: "No clear trend",
   };
   const chartViews = {
     annual: { label: "Annual", legend: "Annual value", field: "values" },
@@ -120,7 +120,8 @@
   const chart = byId("chart");
   const tooltip = byId("chart-tooltip");
   const mapVariable = byId("map-variable");
-  const optionButtons = new Map();
+  const compareToggle = byId("compare-toggle");
+  const compareVariable = byId("compare-variable");
   const viewButtons = new Map();
   const numberFormats = new Map();
 
@@ -223,13 +224,6 @@
       ctx.fillText(String(year), labelX(year), bandHeight + 8);
     }
     ctx.stroke();
-  }
-
-  // "1 in N" phrasing reads more easily than a raw p-value.
-  function chanceText(p) {
-    if (p < 0.001) return "less than 1 in 1,000 times";
-    if (p >= 0.5) return "at least half the time";
-    return `about 1 in ${Number((1 / p).toPrecision(2)).toLocaleString("en-CA")} times`;
   }
 
   function holmAdjust(trends, key, adjustedKey) {
@@ -388,7 +382,10 @@
     byId("drawer-place").textContent = nextSite.name;
     byId("site-description").textContent = coordinates(nextSite);
     byId("story").hidden = true;
+    byId("point-tools").hidden = true;
+    byId("point-tools").open = false;
     explorer.scrollTop = 0;
+    mapVariable.value = trendMapVariable().id;
     openDrawer();
     flyTo(focusZoom(nextSite));
     regionResults.hidden = true;
@@ -407,8 +404,7 @@
       }
       regionResults.dataset.site = nextSite.id;
       if (!nextSite.areaIds) regionResults.dataset.point = row.id;
-      byId("point-actions").hidden = Boolean(nextSite.areaIds);
-      byId("research").hidden = Boolean(nextSite.areaIds);
+      byId("point-tools").hidden = Boolean(nextSite.areaIds);
       regionResults.hidden = false;
       setRegionStatus("");
       renderDetails();
@@ -718,6 +714,7 @@
     byId("site-description").textContent = "";
     regionResults.hidden = true;
     byId("story").hidden = true;
+    byId("point-tools").hidden = true;
     openDrawer();
     flyTo(mapView.zoom);
     setRegionStatus(useGridCell
@@ -745,35 +742,13 @@
     return variable.trendUnit === "pp" ? "percentage points" : variable.trendUnit || variable.unit;
   }
 
-  function updateOverview() {
-    byId("overview-title").textContent = `Every measurement in ${site.name}`;
-    const rows = data.variables.filter(({ id }) => analysis.series[id]).map((variable) => {
-      const trend = analysis.series[variable.id].trend;
-      const row = create("tr");
-      if (selectedIds.has(variable.id)) row.dataset.selected = "";
-      const label = create("th");
-      label.scope = "row";
-      const button = create("button", variable.name, "pick-variable");
-      button.addEventListener("click", () => {
-        compareMode = false;
-        selectedIds = new Set([variable.id]);
-        renderDetails();
-        optionButtons.get(variable.id).focus();
-      });
-      label.append(button);
-      row.append(label, create("td", `${format(trend.slope, variable.decimals, true)} ${trendUnit(variable)}`), create("td", verdictLabels[trend.verdict]));
-      return row;
-    });
-    byId("overview-rows").replaceChildren(...rows);
-  }
-
   function renderCorrelations(variables) {
     const lag = byId("lag").valueAsNumber;
     const correlations = TrendStatistics.monthlyCorrelations(analysis.residuals, variables.map(({ id }) => id), lag, analysis.starts);
     byId("lag-value").textContent = lag === 1 ? "1 month" : `${lag} months`;
     byId("lag-note").textContent = lag === 0
-      ? "Each cell compares the two variables in the same month."
-      : `Each cell compares the row variable with the column variable ${lag === 1 ? "1 month" : `${lag} months`} later. A strong value means the row variable tends to lead the column variable. The diagonal shows how much each variable persists over that gap.`;
+      ? "Rows and columns use the same month."
+      : `The row measurement comes ${monthsText(lag)} before the column measurement.`;
     const matrix = byId("matrix");
     const head = create("thead");
     const headingRow = create("tr");
@@ -812,39 +787,43 @@
     activeIndex = null;
     byId("chart-selection").textContent = "";
     byId("story").hidden = story?.siteId !== site.id;
-    const available = data.variables.filter(({ id }) => analysis.series[id]);
-    if (!available.length) return;
-    selectedIds = new Set([...selectedIds].filter((id) => analysis.series[id]));
-    if (!selectedIds.size) selectedIds.add(available[0].id);
-    if (app.hasAttribute("data-drawer")) {
-      for (const option of mapVariable.options) option.disabled = !analysis.series[option.value];
-    }
+    const variable = trendMapVariable();
+    const series = analysis.series[variable.id];
+    const [, otherId] = selectedIds;
+    const comparing = Boolean(series && analysis.series[otherId]);
+    if (!comparing) selectedIds = new Set([variable.id]);
+    regionResults.dataset.variables = series ? [...selectedIds].join(" ") : "";
     renderTrendMap();
-    if (available.length < 2) compareMode = false;
-    const variables = available.filter(({ id }) => selectedIds.has(id));
-    for (const [id, button] of optionButtons) {
-      button.disabled = !analysis.series[id];
-      button.setAttribute("aria-pressed", String(selectedIds.has(id)));
+
+    const empty = byId("trend-empty");
+    empty.hidden = Boolean(series);
+    if (!series) {
+      chartLayout = null;
+      empty.textContent = `No complete record for ${variable.name.toLowerCase()} here. Choose another heatmap measurement.`;
     }
-    const comparing = variables.length > 1;
-    byId("compare-toggle").setAttribute("aria-pressed", String(compareMode));
-    byId("compare-toggle").disabled = available.length < 2;
-    byId("variable-hint").hidden = !compareMode;
-    byId("variable-hint").textContent = "Select two or more measurements to compare.";
-    byId("single-report").hidden = comparing;
+    let canCompare = false;
+    for (const option of compareVariable.options) {
+      if (!option.value) continue;
+      option.hidden = option.disabled = option.value === variable.id || !analysis.series[option.value];
+      canCompare ||= !option.disabled;
+    }
+    if (!series || !canCompare) compareMode = false;
+    byId("compare-panel").hidden = !series;
+    compareToggle.disabled = !canCompare;
+    compareToggle.textContent = comparing ? "Done" : compareMode ? "Cancel" : "Compare";
+    compareToggle.setAttribute("aria-expanded", String(compareMode));
+    compareVariable.value = comparing ? otherId : "";
+    byId("compare-picker").hidden = !compareMode;
+    byId("single-report").hidden = !series || comparing;
     byId("correlations").hidden = !comparing;
     if (comparing) {
-      renderCorrelations(variables);
-    } else {
-      const variable = variables[0];
-      const trend = analysis.series[variable.id].trend;
+      renderCorrelations([variable, data.variables.find(({ id }) => id === otherId)]);
+    } else if (series) {
+      const { trend, firstYear, lastYear, values } = series;
       const unit = trendUnit(variable);
-      byId("chart-title").textContent = `${variable.name} over time (${variable.unit})`;
-      const location = site.drawn ? "in the selected area" :
-        site.outsideBorder ? site.name[0].toLowerCase() + site.name.slice(1) : `in ${site.name}`;
-      byId("result-headline").textContent = `${variable.name} ${location} ${{
-        rising: "is rising", falling: "is falling", inconclusive: "shows no clear trend yet",
-      }[trend.verdict]}`;
+      byId("chart-title").textContent = `${variable.name} (${variable.unit})`;
+      byId("chart-unit").textContent = variable.unit;
+      byId("result-headline").textContent = variable.name;
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
       // Say plainly whether a number was measured from space or comes from a model.
       const sourceKinds = {
@@ -855,7 +834,6 @@
       byId("variable-description").textContent = `${variable.description} Source: ${variable.source}` +
         (sourceKinds[variable.source] ? ` (${sourceKinds[variable.source]}).` : ".");
       const scale = stripeScales[variable.id] || stripeScales.T2M;
-      const { firstYear, lastYear, values } = analysis.series[variable.id];
       showStripes(byId("result-stripes"), values, variable.id, firstYear);
       byId("stripes-note").textContent = `Each stripe compares one year with the ${firstYear}–${lastYear} average. ${scale.note}`;
       const verdict = byId("trend-verdict");
@@ -868,39 +846,24 @@
       byId("trend-mk").textContent = pText(trend.mkAdjustedPValue);
       const mkSignificant = trend.mkAdjustedPValue <= 0.05;
       byId("trend-agree").textContent = mkSignificant === (trend.verdict !== "inconclusive")
-        ? "The second test (Mann-Kendall) agrees with this result."
-        : `The second test (Mann-Kendall) disagrees: it finds this trend ${mkSignificant ? "significant" : "not significant"}, so treat the result with caution.`;
+        ? "The Mann–Kendall test agrees."
+        : "The Mann–Kendall test disagrees. Treat this result with caution.";
       // The map judges each square against about 1,700 places; this panel against the 9 measurements
       // here. Both use the same test, but the bar differs, so say so when they land differently.
       const pointIndex = site.areaIds ? -1 : points.findIndex(([lat, lon]) => lat === site.latitude && lon === site.longitude);
       const mapClear = pointIndex >= 0 ? trendMap[variable.id]?.significant[pointIndex] : undefined;
       if (mapClear !== undefined && Boolean(mapClear) !== (trend.verdict !== "inconclusive")) {
-        byId("trend-agree").textContent += mapClear
-          ? " On the map this square counts as a clear trend: there it is compared with about 1,700 places, here with the 9 measurements at this place, so the bar is set differently."
-          : " On the map this square is faded: it is checked against about 1,700 places at once, which sets a higher bar than checking the 9 measurements here.";
+        byId("trend-agree").textContent += " The map adjusts for testing many places at once. This panel adjusts for testing several measurements at one place.";
       }
       const meaning = trend.verdict === "rising" ? risingMeans[variable.id] : fallingMeans[variable.id];
       const total = `${format(trend.endValue - trend.startValue, variable.decimals, true)} ${unit}`;
       byId("trend-meaning").textContent = trend.verdict === "inconclusive"
-        ? `No clear trend yet. The trend line moves ${total} from ${firstYear} to ${lastYear}, but the ups and downs between years are big enough to hide a steady change. ${yearsToSignificance(trend, lastYear - firstYear + 1)}`
+        ? `The fitted change from ${firstYear} to ${lastYear} is ${total}. Year-to-year variation makes the direction uncertain.`
         : `${meaning || `Annual ${variable.name.toLowerCase()} was ${trend.verdict === "rising" ? "higher" : "lower"} toward the end of the record.`} From ${firstYear} to ${lastYear} the trend line moves ${total}.`;
-      byId("trend-chance").textContent = `If nothing were really changing, a trend this strong would show up by chance ${chanceText(trend.adjustedPValue)}.`;
       renderAgreement(variable);
       updateView();
       renderForecast(variable);
     }
-    updateOverview();
-  }
-
-  // A trend's t-statistic grows with record length n as n^1.5 when the rate and the year-to-year
-  // scatter stay the same, so we can estimate the years needed to reach |t| = 2 (about p = 0.05).
-  // shortcut: ignores the stricter bar from adjusting for several measurements; say so in the text.
-  function yearsToSignificance(trend, years) {
-    const t = Math.abs(trend.slope) / ((trend.ciHigh - trend.ciLow) / (2 * 2));
-    if (!Number.isFinite(t) || t < 0.3) return "There’s barely any change to detect, so a longer record probably wouldn’t show a trend either.";
-    const more = Math.ceil(years * (2 / t) ** (2 / 3) - years);
-    if (more > 100) return "At this slow rate, it would take more than a century of extra data to tell it apart from chance.";
-    return `If it kept changing at this rate, about ${Math.max(1, more)} more ${more === 1 ? "year" : "years"} of data would likely make it significant on a standard test.`;
   }
 
   // Air temperature only: compare MERRA-2 with GLDAS 2.1 over the years both cover.
@@ -1100,11 +1063,12 @@
 
   function drawChart() {
     if (!analysis || selectedIds.size !== 1) return;
+    const variable = trendMapVariable();
+    const series = analysis.series[variable.id];
+    if (!series) return;
     const drawing = prepareCanvas(chart);
     if (!drawing) return;
     const { ctx, width, height } = drawing;
-    const variable = data.variables.find((item) => selectedIds.has(item.id));
-    const series = analysis.series[variable.id];
     const values = series[chartViews[view].field];
     const { trend } = series;
     const annual = view === "annual";
@@ -1197,19 +1161,7 @@
 
   for (const variable of data.variables) {
     mapVariable.add(new Option(variable.name, variable.id));
-    const button = create("button", variable.name);
-    button.dataset.variable = variable.id;
-    button.addEventListener("click", () => {
-      if (!compareMode) {
-        selectedIds = new Set([variable.id]);
-      } else if (selectedIds.has(variable.id)) {
-        if (selectedIds.size < 2) return;
-        selectedIds.delete(variable.id);
-      } else selectedIds.add(variable.id);
-      renderDetails();
-    });
-    optionButtons.set(variable.id, button);
-    byId("variable-options").append(button);
+    compareVariable.add(new Option(variable.name, variable.id));
   }
   mapVariable.addEventListener("change", () => {
     compareMode = false;
@@ -1239,9 +1191,15 @@
     byId("chart-options").append(button);
   }
   byId("lag").addEventListener("input", renderDetails);
-  byId("compare-toggle").addEventListener("click", () => {
+  compareToggle.addEventListener("click", () => {
     compareMode = !compareMode;
-    if (!compareMode) selectedIds = new Set([selectedIds.values().next().value]);
+    if (!compareMode) selectedIds = new Set([trendMapVariable().id]);
+    renderDetails();
+    if (compareMode) compareVariable.focus({ preventScroll: true });
+  });
+  compareVariable.addEventListener("change", () => {
+    if (!compareMode || !analysis?.series[compareVariable.value]) return;
+    selectedIds = new Set([trendMapVariable().id, compareVariable.value]);
     renderDetails();
   });
   function showValueAtPointer(event) {
@@ -1694,13 +1652,11 @@
     if (drawingArea) setAreaMode(false);
     app.setAttribute("data-drawer", "");
     byId("welcome").hidden = true;
-    for (const option of mapVariable.options) option.disabled = Boolean(analysis && !analysis.series[option.value]);
     byId("drawer-title").focus({ preventScroll: true });
   }
 
   function closeDrawer() {
     app.removeAttribute("data-drawer");
-    for (const option of mapVariable.options) option.disabled = false;
     if (flight || mapView.offsetX || mapView.offsetY) flyTo(mapView.zoom, { avoidPanel: false });
     world.focus({ preventScroll: true });
   }
@@ -1721,7 +1677,6 @@
       stopFlight();
       app.removeAttribute("data-drawer");
       mapView.offsetX = mapView.offsetY = 0;
-      for (const option of mapVariable.options) option.disabled = false;
       byId("welcome").hidden = true;
       world.focus({ preventScroll: true });
     }
@@ -2016,9 +1971,49 @@
   byId("show-how").addEventListener("click", () => how.showModal());
   byId("close-how").addEventListener("click", () => how.close());
   how.addEventListener("click", (event) => { if (event.target === how) how.close(); });
+  const drawerHead = byId("drawer-title").parentElement;
+  for (const summary of explorer.querySelectorAll(".info-icon, #point-tools > summary")) {
+    const details = summary.parentElement;
+    details.name = "drawer-info";
+    let previewing = false;
+    let dismissTimer;
+    details.addEventListener("toggle", () => {
+      if (!details.open) {
+        previewing = false;
+        return;
+      }
+      const content = summary.nextElementSibling;
+      const { top, bottom } = summary.getBoundingClientRect();
+      const below = explorer.getBoundingClientRect().bottom - bottom - 4;
+      const above = top - drawerHead.getBoundingClientRect().bottom - 4;
+      const openAbove = below < Math.min(content.scrollHeight, 140) && above > below;
+      details.toggleAttribute("data-info-above", openAbove);
+      content.style.setProperty("--info-room", `${Math.max(38, openAbove ? above : below)}px`);
+    });
+    if (!summary.classList.contains("info-icon")) continue;
+    details.addEventListener("pointerenter", () => clearTimeout(dismissTimer));
+    summary.addEventListener("pointerenter", (event) => {
+      if (event.pointerType !== "mouse" || details.open) return;
+      previewing = true;
+      details.open = true;
+    });
+    details.addEventListener("pointerleave", (event) => {
+      if (event.pointerType !== "mouse" || !previewing) return;
+      dismissTimer = setTimeout(() => { if (previewing) details.open = false; }, 160);
+    });
+    summary.addEventListener("click", (event) => {
+      if (!previewing) return;
+      previewing = false;
+      event.preventDefault();
+    });
+  }
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || how.open || assistantDialog.open) return;
-    if (drawingArea) {
+    const info = explorer.querySelector("details[open] > .info-icon, #point-tools[open] > summary");
+    if (info && app.hasAttribute("data-drawer")) {
+      info.parentElement.open = false;
+      info.focus({ preventScroll: true });
+    } else if (drawingArea) {
       setAreaMode(false);
       areaButton.focus();
     } else if (app.hasAttribute("data-drawer")) closeDrawer();

@@ -42,7 +42,6 @@
   if (!config || !form) return;
 
   const regionResults = document.getElementById("region-results");
-  const variableOptions = document.getElementById("variable-options");
   const scope = document.getElementById("research-scope");
   const from = document.getElementById("research-start");
   const to = document.getElementById("research-end");
@@ -64,9 +63,7 @@
 
   function currentSelection() {
     const region = siteById.get(regionResults.dataset.site);
-    const variables = Array.from(variableOptions.querySelectorAll("button[data-variable][aria-pressed='true']"), (button) =>
-      variableById.get(button.dataset.variable)
-    ).filter(Boolean);
+    const variables = (regionResults.dataset.variables ?? "").split(" ").map((id) => variableById.get(id)).filter(Boolean);
     return { region, variables };
   }
 
@@ -159,8 +156,7 @@
   });
 
   const observer = new MutationObserver(updateScope);
-  observer.observe(regionResults, { attributes: true, attributeFilter: ["data-site"] });
-  observer.observe(variableOptions, { attributes: true, attributeFilter: ["aria-pressed"], subtree: true });
+  observer.observe(regionResults, { attributes: true, attributeFilter: ["data-site", "data-variables"] });
   form.addEventListener("input", updateScope);
   updateScope();
 })();

@@ -20,8 +20,8 @@
   <script defer src="globe-fields.js"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js"></script>
-  <script defer src="trend-explorer.js"></script>
-  <script defer src="research.js"></script>
+  <script defer src="trend-explorer.js?v=3"></script>
+  <script defer src="research.js?v=2"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="assistant-question.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=2"></script>
@@ -177,14 +177,6 @@
       .hud-layout { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "brand actions" "tools tools"; }
       .brand { font-size: 0.87rem; }
     }
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-    .chips button {
-      flex: none; min-height: 38px; padding: 6px 14px; border: 1px solid var(--rule); background: var(--surface);
-      font-size: 0.9rem; font-weight: 500; transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
-    }
-    .chips button:hover { border-color: var(--control); background: var(--tint); }
-    .chips button[aria-pressed="true"] { background: var(--tint); border-color: var(--control); color: var(--control-hover); font-weight: 700; }
-    .chips button:disabled { color: var(--muted); background: var(--surface); cursor: default; opacity: 0.6; }
     .hud-actions .icon-button:hover, .map-tools .icon-button:hover { background: var(--tint); border-color: var(--control); }
     #show-assistant { color: var(--control-hover); }
     #draw-circle[aria-pressed="true"] { background: var(--ink); color: var(--space); border-color: var(--ink); }
@@ -269,9 +261,9 @@
       scrollbar-color: #405661 transparent; scroll-padding-block: 100px 18px;
     }
     .drawer-panel { min-width: 0; padding: 16px; background: var(--glass); border: 1px solid var(--rule); backdrop-filter: blur(14px); }
-    .drawer-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 16px; position: sticky; top: 0; z-index: 2; }
+    .drawer-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 16px; position: sticky; top: 0; z-index: 3; }
     .drawer-head h2 { flex: 1; min-width: 0; font-size: 1.2rem; }
-    .drawer-head small { display: block; margin-top: 3px; font-weight: 500; color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
+    .drawer-head details { flex: none; }
     .drawer-head .icon-button { flex: none; background: var(--sunken); }
     .drawer-head .icon-button:hover { background: var(--tint); }
     .region-status { padding: 30px 12px; text-align: center; }
@@ -282,73 +274,97 @@
       border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .story { background: rgb(39 35 28 / 0.92); border-color: #514127; }
-    .story h3 { font-size: 0.95rem; margin-bottom: 4px; }
-    .story p { margin: 0; font-size: 0.95rem; }
-    .measurements h3 { font-size: 1rem; }
-    #variable-hint { margin: 8px 0 0; }
+    .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 36px; }
+    .panel-heading h3 { font-size: 1.05rem; }
+    .info-panel { position: relative; }
+    .info-panel .panel-heading { padding-right: 46px; }
+    .drawer-panel:has(.panel-info[open]) { position: relative; z-index: 2; }
+    .panel-info { display: contents; }
+    .panel-info > summary { position: absolute; top: 16px; right: 16px; }
+    summary.icon-button { list-style: none; cursor: pointer; width: 36px; height: 36px; color: var(--muted); }
+    summary.icon-button::-webkit-details-marker { display: none; }
+    .info-icon:hover, details[open] > .info-icon { color: var(--control); border-color: var(--control); }
+    .info-icon svg { width: 17px; height: 17px; }
+    .info-content {
+      --info-top: 52px;
+      position: absolute; z-index: 1; top: var(--info-top); right: 16px; width: min(340px, calc(100% - 32px));
+      max-height: min(280px, 38dvh, var(--info-room, 280px)); overflow: auto; overscroll-behavior: contain; margin: 0; padding: 12px;
+      background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-2);
+    }
+    details[data-info-above] > .info-content { top: calc(var(--info-top) - 36px); transform: translateY(-100%); }
+    .drawer-head .info-content {
+      --info-top: calc(50% + 18px);
+      right: 14px; width: min(340px, calc(100% - 28px));
+    }
+    .info-content h3 { font-size: 0.95rem; }
+    .info-content > :first-child, #trend-empty { margin-top: 0; }
+    #trend-empty { margin-bottom: 0; }
+    #chart-unit { margin-left: 6px; color: var(--muted); font: 500 0.8rem var(--numbers); }
     .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 800; padding: 5px 13px 5px 10px; }
     .verdict::before { content: ""; width: 10px; height: 10px; background: currentColor; }
     .verdict[data-state="rising"] { background: #402720; color: #ffb19a; }
     .verdict[data-state="falling"] { background: #17313f; color: #a8def7; }
     .verdict[data-state="inconclusive"] { background: #26343c; color: #c3d4dd; }
-    .answer h2 { font-size: clamp(1.45rem, 2.4vw, 1.9rem); letter-spacing: -0.025em; margin-top: 12px; }
-    .why { margin: 0; color: var(--muted); }
+    .trend-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; margin: 2px 0 0; }
+    #result-headline { font-size: 1.32rem; font-weight: 700; letter-spacing: -0.025em; line-height: 1.2; margin: 0; }
     .plain { margin: 14px 0 0; }
-    .answer-stripes { margin: 20px 0 0; }
-    .answer-stripes h3 { margin: 0 0 8px; font-size: 1rem; }
+    .answer-stripes { margin: 12px 0 0; }
     #result-stripes { height: 68px; }
     .stripes-note, .chart-note, .note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
     .chart { margin: 0; }
     .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
-    .chart-head h3 { font-size: 1rem; }
     .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; background: var(--sunken); border: 1px solid var(--rule); }
     .segmented button { border: 0; background: transparent; padding: 4px 11px; color: var(--muted); font-size: 0.84rem; min-height: 32px; transition: background-color 160ms ease-out, color 160ms ease-out; }
     .segmented button:hover { color: var(--ink); }
     .segmented button[aria-pressed="true"] { background: var(--control); color: var(--space); }
-    .chart-stage { position: relative; height: 260px; margin-top: 12px; }
+    .chart-stage { position: relative; height: 220px; margin-top: 12px; }
     .chart-tooltip { position: absolute; z-index: 1; pointer-events: none; white-space: nowrap; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); padding: 6px 10px; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
     .legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.84rem; margin-top: 8px; }
     .legend-item { display: flex; align-items: center; gap: 8px; }
     .swatch { width: 24px; border-top: 2.5px solid var(--control); }
     .swatch.trend, .swatch.forecast { border-top: 2.5px dashed var(--warm); }
     .swatch.band { height: 12px; border: 0; background: #ff9c822e; }
-    .numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; margin: 18px 0 0; }
-    .numbers div { border-top: 1px solid var(--rule); padding-top: 8px; }
-    .numbers div:first-child { grid-column: 1 / -1; }
+    .numbers { margin: 12px 0 0; }
+    .numbers div { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; border-top: 1px solid var(--rule); padding: 6px 0; }
     .numbers dt { color: var(--muted); font-size: 0.82rem; }
-    .numbers dd { margin: 2px 0 0; font: 500 0.95rem var(--numbers); font-variant-numeric: tabular-nums; }
+    .numbers dd { margin: 0; font: 500 0.86rem var(--numbers); font-variant-numeric: tabular-nums; text-align: right; }
     .agree { margin-top: 16px; padding: 14px 16px; background: var(--sunken); }
-    .agree h3 { font-size: 0.95rem; margin-bottom: 4px; }
+    .agree h4 { font-size: 0.95rem; margin-bottom: 4px; }
     .agree p { margin: 0; color: var(--muted); font-size: 0.92rem; }
     .skill { display: inline-block; margin: 12px 0 0; padding: 8px 12px; background: #17332f; color: #a3eace; font-weight: 700; font-size: 0.92rem; }
     .skill[data-weak] { background: #3c3020; color: #f1d4a0; }
     .description { color: var(--muted); font-size: 0.9rem; margin: 8px 0 0; }
     .forecast-stage { height: 220px; }
-    .about { display: grid; gap: 12px; }
-    .about p { margin: 0; color: var(--muted); font-size: 0.9rem; }
-    .glossary summary { cursor: pointer; font-weight: 700; color: var(--control); }
-    .glossary dl { margin: 8px 0 0; }
+    .extra-details { border-top: 1px solid var(--rule); margin-top: 12px; padding-top: 8px; }
+    .extra-details > summary { cursor: pointer; color: var(--control); font-size: 0.9rem; font-weight: 700; }
+    .extra-details > summary:hover { color: var(--control-hover); }
+    .extra-details .chart-head, .tools #research { margin-top: 12px; }
+    .glossary { margin: 8px 0 0; }
     .glossary dt { font-weight: 700; font-size: 0.9rem; margin-top: 8px; }
     .glossary dd { margin: 2px 0 0; color: var(--muted); font-size: 0.88rem; }
     .section-card h3 { font-size: 1.05rem; }
-    .compare-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-    .compare-row p { margin: 0; color: var(--muted); font-size: 0.88rem; flex: 1 1 180px; }
+    .compare-picker { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-top: 10px; font-size: 0.9rem; }
+    .compare-picker select { flex: 1; min-width: 0; min-height: 36px; padding: 4px 8px; background: var(--sunken); border: 1px solid var(--rule); }
+    .compare-picker select:hover { border-color: var(--control); }
+    #correlations { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--rule); }
+    #correlations .panel-info > summary { top: 8px; right: 0; }
+    #correlations .info-content { --info-top: 44px; right: 0; }
     .table-wrap { margin-top: 12px; overflow: auto; box-shadow: inset 0 0 0 1px var(--rule); }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 9px 12px; font-size: 0.88rem; border-bottom: 1px solid var(--rule); }
     thead { background: var(--sunken); }
     thead th { color: var(--muted); font-size: 0.8rem; font-weight: 700; }
     tbody tr:last-child > * { border-bottom: 0; }
-    tbody tr[data-selected] { background: var(--tint); }
     td { font-variant-numeric: tabular-nums; }
     .pick-variable { padding: 2px 0; border: 0; color: var(--control); background: transparent; font-weight: 700; text-align: left; }
     .pick-variable:hover { text-decoration: underline; text-underline-offset: 0.2em; }
-    .lag-control { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-weight: 700; margin-top: 14px; }
-    .lag-control input { accent-color: var(--control); flex: 1; min-width: 140px; }
-    .lag-control output { font-variant-numeric: tabular-nums; min-width: 6em; }
-    .matrix td { text-align: center; font-weight: 700; min-width: 64px; }
-    .matrix tbody th { white-space: nowrap; }
+    .lag-control { display: grid; grid-template-columns: auto minmax(40px, 1fr) auto; align-items: center; gap: 10px; font-weight: 700; margin-top: 14px; }
+    .lag-control input { accent-color: var(--control); width: 100%; min-width: 0; }
+    .lag-control output { font-variant-numeric: tabular-nums; }
+    .matrix { table-layout: fixed; }
+    .matrix tr > :first-child { width: 38%; }
+    .matrix th { overflow-wrap: anywhere; }
+    .matrix td { text-align: center; font-weight: 700; }
 
     .research-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 14px; }
     .research-form label { display: grid; gap: 4px; font-size: 0.85rem; font-weight: 700; }
@@ -409,6 +425,8 @@
       .drawer { top: auto; height: min(61dvh, calc(100dvh - 134px)); transform: translateY(105%); }
       .drawer-body { padding: 0 var(--map-inset) max(12px, env(safe-area-inset-bottom)); }
       .drawer-panel { padding: 12px; }
+      .panel-info > summary { top: 12px; right: 12px; }
+      .info-panel .info-content { --info-top: 48px; right: 12px; }
       .dialog-body { grid-template-columns: 1fr; }
     }
     @media (max-width: 390px) {
@@ -507,38 +525,94 @@
     <aside class="drawer" id="drawer" aria-labelledby="drawer-title">
       <div class="drawer-body" id="explorer">
         <div class="drawer-panel drawer-head">
-          <h2 id="drawer-title" tabindex="-1"><span id="drawer-place">A place</span><small id="site-description"></small></h2>
+          <h2 id="drawer-title" tabindex="-1"><span id="drawer-place">A place</span></h2>
+          <details>
+            <summary class="icon-button info-icon" aria-label="About this selection">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg>
+            </summary>
+            <div class="info-content">
+              <p class="description" id="site-description"></p>
+              <div id="story" hidden aria-live="polite">
+                <h3 id="story-title"></h3>
+                <p class="description" id="story-text"></p>
+              </div>
+            </div>
+          </details>
+          <details class="tools" id="point-tools" name="drawer-info" hidden>
+            <summary class="icon-button" aria-label="Research and data tools">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+            </summary>
+            <div class="info-content">
+              <div class="refresh-actions" id="point-actions">
+                <button type="button" class="button secondary small" id="refresh-giovanni">Refresh from Giovanni</button>
+                <button type="button" class="button secondary small" id="ask-at-point">Ask AI about this point</button>
+                <p id="refresh-status" class="description refresh-status" role="status"></p>
+              </div>
+              <section class="section-card" id="research" aria-labelledby="research-title">
+                <h3 id="research-title">Research context</h3>
+                <p class="description" id="research-scope"></p>
+                <form class="research-form" id="research-form" aria-describedby="research-scope">
+                  <label for="research-start">From year<input type="number" id="research-start" step="1" required></label>
+                  <label for="research-end">To year<input type="number" id="research-end" step="1" required></label>
+                  <button class="button secondary small" id="research-submit" type="submit">Find research</button>
+                </form>
+                <p class="description research-status" id="research-status" role="status"></p>
+                <ol class="research-sources" id="research-sources" aria-label="Research sources" hidden></ol>
+              </section>
+            </div>
+          </details>
           <button type="button" class="icon-button" id="close-drawer" aria-label="Close the results">×</button>
         </div>
         <div id="region-status" class="drawer-panel region-status" hidden aria-live="polite">
           <p id="region-message"></p>
           <button type="button" class="button secondary small" id="retry-region" hidden>Try again</button>
         </div>
-        <div class="drawer-panel story" id="story" hidden aria-live="polite">
-          <h3 id="story-title"></h3>
-          <p id="story-text"></p>
-        </div>
-
         <div id="region-results" class="results" hidden>
-          <section class="drawer-panel measurements" aria-labelledby="measurement-title">
-            <div class="compare-row">
-              <h3 id="measurement-title">Measurements</h3>
-              <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false" aria-describedby="variable-hint">Compare</button>
-            </div>
-            <div class="chips" id="variable-options" role="group" aria-label="Measurements in the results"></div>
-            <p class="description" id="variable-hint" hidden></p>
-          </section>
+          <p class="drawer-panel description" id="trend-empty" role="status" hidden></p>
           <article class="answer" id="single-report" aria-labelledby="result-headline">
-            <div class="drawer-panel">
-              <span class="verdict" id="trend-verdict"></span>
-              <h2 id="result-headline"></h2>
-              <p class="plain" id="trend-meaning" aria-live="polite"></p>
-            </div>
+            <section class="drawer-panel info-panel" aria-labelledby="trend-title">
+              <div class="panel-heading"><h3 id="trend-title">Trend</h3></div>
+              <div class="trend-heading">
+                <p id="result-headline"></p>
+                <span class="verdict" id="trend-verdict"></span>
+              </div>
+              <dl class="numbers">
+                <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
+                <div><dt>95% interval</dt><dd id="trend-ci"></dd></div>
+                <div><dt>Adjusted p-value</dt><dd id="trend-p"></dd></div>
+              </dl>
+              <details class="panel-info">
+                <summary class="icon-button info-icon" aria-label="Explain this trend and its statistics">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg>
+                </summary>
+                <div class="info-content">
+                  <p class="plain" id="trend-meaning" aria-live="polite"></p>
+                  <p class="description" id="variable-why"></p>
+                  <p class="description" id="variable-description"></p>
+                  <dl class="numbers">
+                    <div><dt>Theil–Sen per decade</dt><dd id="trend-sen"></dd></div>
+                    <div><dt>Mann–Kendall p-value</dt><dd id="trend-mk"></dd></div>
+                  </dl>
+                  <p class="note" id="trend-agree"></p>
+                  <div class="agree" id="datasets-agree" hidden>
+                    <h4>Do the datasets agree?</h4>
+                    <p id="datasets-agree-text"></p>
+                  </div>
+                  <dl class="glossary">
+                    <dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd>
+                    <dt>95% interval</dt><dd>The estimated range for the rate of change. If it crosses zero, the data can’t tell rising from falling.</dd>
+                    <dt>Adjusted p-value</dt><dd>Measures how unusual a trend this strong would be if there were no change. The Holm method accounts for testing several measurements at once.</dd>
+                    <dt>Mann–Kendall and Theil–Sen</dt><dd>A second check based on whether later years tend to be higher or lower than earlier ones. It allows for one year’s weather leaning on the next.</dd>
+                  </dl>
+                </div>
+              </details>
+            </section>
 
-            <div class="drawer-panel">
+            <section class="drawer-panel info-panel" aria-labelledby="graph-title">
+              <div class="panel-heading"><h3 id="graph-title">Graph <span id="chart-unit"></span></h3></div>
               <figure class="chart" aria-labelledby="chart-title">
                 <div class="chart-head">
-                  <h3 id="chart-title"></h3>
+                  <p class="sr-only" id="chart-title"></p>
                   <div class="segmented" id="chart-options" role="group" aria-label="Chart view"></div>
                 </div>
                 <p class="chart-note" id="chart-note" hidden></p>
@@ -553,92 +627,58 @@
                   <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
                 </figcaption>
               </figure>
-              <figure class="answer-stripes" aria-labelledby="stripes-title">
-                <h3 id="stripes-title">Yearly differences from average</h3>
-                <canvas id="result-stripes" aria-hidden="true"></canvas>
-                <figcaption class="stripes-note" id="stripes-note"></figcaption>
-              </figure>
-            </div>
-            <div class="drawer-panel">
-              <p class="why" id="variable-why"></p>
-              <p class="plain" id="trend-chance" aria-live="polite"></p>
-
-              <dl class="numbers">
-                <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
-                <div><dt>Likely range (95%)</dt><dd id="trend-ci"></dd></div>
-                <div><dt>p-value</dt><dd id="trend-p"></dd></div>
-                <div><dt>Theil-Sen per decade</dt><dd id="trend-sen"></dd></div>
-                <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
-              </dl>
-              <p class="note" id="trend-agree"></p>
-              <div class="agree" id="datasets-agree" hidden>
-                <h3>Do the datasets agree?</h3>
-                <p id="datasets-agree-text"></p>
-              </div>
-            </div>
-
-            <section class="drawer-panel" id="forecast" aria-labelledby="forecast-title" hidden>
-              <div class="chart-head">
-                <h3 id="forecast-title">What happens next?</h3>
-                <div class="segmented" id="forecast-options" role="group" aria-label="Forecast view"></div>
-              </div>
-              <p class="skill" id="forecast-skill"></p>
-              <p class="description" id="forecast-text"></p>
-              <div class="chart-stage forecast-stage" id="forecast-stage">
-                <canvas id="forecast-chart" role="img" aria-labelledby="forecast-title" aria-describedby="forecast-text"></canvas>
-              </div>
-              <div class="legend" id="forecast-legend"></div>
-            </section>
-
-            <div class="drawer-panel about">
-              <p id="variable-description"></p>
-              <details class="glossary">
-                <summary>What do these numbers mean?</summary>
-                <dl>
-                  <dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd>
-                  <dt>Likely range (95%)</dt><dd>The real rate of change probably sits in this range. If it crosses zero, the data can’t tell rising from falling.</dd>
-                  <dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. It is not the chance that the trend is fake. Scientists usually call 0.05 (1 in 20) or smaller significant.</dd>
-                  <dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it. It is widened when one year’s weather clearly leans on the next (the Hamed–Rao correction).</dd>
-                  <dt>Why p-values are adjusted</dt><dd>Testing 9 measurements at once raises the odds that one looks significant by luck, so the tool raises the bar (the Holm method).</dd>
-                </dl>
+              <details class="panel-info">
+                <summary class="icon-button info-icon" aria-label="How to read the graph">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg>
+                </summary>
+                <p class="info-content description">The dashed line shows the trend in annual values. A monthly anomaly is the difference from that calendar month’s average.</p>
               </details>
-            </div>
+              <details class="extra-details">
+                <summary id="stripes-title">Climate stripes</summary>
+                <figure class="answer-stripes" aria-labelledby="stripes-title">
+                  <canvas id="result-stripes" aria-hidden="true"></canvas>
+                  <figcaption class="stripes-note" id="stripes-note"></figcaption>
+                </figure>
+              </details>
+              <details class="extra-details" id="forecast" hidden>
+                <summary id="forecast-title">Forecast</summary>
+                <div class="chart-head">
+                  <div class="segmented" id="forecast-options" role="group" aria-label="Forecast view"></div>
+                </div>
+                <p class="skill" id="forecast-skill"></p>
+                <p class="description" id="forecast-text"></p>
+                <div class="chart-stage forecast-stage" id="forecast-stage">
+                  <canvas id="forecast-chart" role="img" aria-labelledby="forecast-title" aria-describedby="forecast-text"></canvas>
+                </div>
+                <div class="legend" id="forecast-legend"></div>
+              </details>
+            </section>
           </article>
 
-          <section class="drawer-panel section-card" id="correlations" aria-labelledby="correlations-title" hidden>
-            <h3 id="correlations-title">How the measurements move together</h3>
-            <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, and each pair is compared over the years both records cover. A link is not proof that one causes the other.</p>
-            <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
-            <p class="description" id="lag-note"></p>
-            <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
-          </section>
-
-          <div class="drawer-panel refresh-actions" id="point-actions">
-            <button type="button" class="button secondary small" id="refresh-giovanni">Refresh from Giovanni</button>
-            <button type="button" class="button secondary small" id="ask-at-point">Ask AI about this point</button>
-            <p id="refresh-status" class="description refresh-status" role="status"></p>
-          </div>
-          <section class="drawer-panel section-card" id="research" aria-labelledby="research-title">
-            <h3 id="research-title">Research context</h3>
-            <p class="description" id="research-scope"></p>
-            <form class="research-form" id="research-form" aria-describedby="research-scope">
-              <label for="research-start">From year<input type="number" id="research-start" step="1" required></label>
-              <label for="research-end">To year<input type="number" id="research-end" step="1" required></label>
-              <button class="button secondary small" id="research-submit" type="submit">Find research</button>
-            </form>
-            <p class="description research-status" id="research-status" role="status"></p>
-            <ol class="research-sources" id="research-sources" aria-label="Research sources" hidden></ol>
-          </section>
-
-          <section class="drawer-panel section-card" aria-labelledby="overview-title">
-            <h3 id="overview-title"></h3>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th scope="col">Measurement</th><th scope="col">Change per decade</th><th scope="col">Result</th></tr></thead>
-                <tbody id="overview-rows"></tbody>
-              </table>
+          <section class="drawer-panel" id="compare-panel" aria-labelledby="compare-title">
+            <div class="panel-heading">
+              <h3 id="compare-title">Compare measurements</h3>
+              <button type="button" class="button secondary small" id="compare-toggle" aria-expanded="false" aria-controls="compare-picker correlations">Compare</button>
+            </div>
+            <label class="compare-picker" id="compare-picker" hidden>
+              Compare with <select id="compare-variable"></select>
+            </label>
+            <div class="info-panel" id="correlations" hidden>
+              <div class="panel-heading"><h4 id="correlations-title">Correlation</h4></div>
+              <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
+              <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
+              <details class="panel-info">
+                <summary class="icon-button info-icon" aria-label="Read correlation and time delay">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg>
+                </summary>
+                <div class="info-content">
+                  <p class="description">Near +1, the two measurements move together. Near −1, they move in opposite directions. Near 0, the link is weak. Correlation uses the months where both records overlap after removing seasonal and long-term trends.</p>
+                  <p class="description" id="lag-note"></p>
+                </div>
+              </details>
             </div>
           </section>
+
         </div>
       </div>
     </aside>
