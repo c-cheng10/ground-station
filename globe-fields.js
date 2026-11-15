@@ -72,7 +72,8 @@
       const confidence = entry.significant[index] ? 1 : 0;
       // Blend across the 3° sample spacing, with a soft cutoff before wider gaps.
       footprint(lon, lat, range, (pixel, distance) => {
-        if ((land[pixel * 4 + 3] < 128) !== ocean) return;
+        // Air measurements blend straight across coastlines; surface ones stay on their own side.
+        if (!entry.blend && (land[pixel * 4 + 3] < 128) !== ocean) return;
         const weight = Math.exp(-falloff * distance) * (1 - smooth(clamp01((distance - 0.60) / 0.40)));
         weights[pixel] += weight;
         slopes[pixel] += weight * slope;

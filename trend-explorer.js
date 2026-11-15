@@ -20,8 +20,9 @@
   // Hide the other surface's points so land and ocean heatmaps never draw together.
   function mapEntry(id) {
     const entry = trendMap[id];
-    if (!entry || layer === "air") return entry;
+    if (!entry) return entry;
     const key = `${layer}:${id}`;
+    if (layer === "air" && !layerEntries.has(key)) layerEntries.set(key, { ...entry, blend: true });
     if (!layerEntries.has(key)) {
       const oceanStart = entry.oceanStart ?? entry.slope.length;
       const keep = (index) => (index >= oceanStart) === (layer === "water");
@@ -408,6 +409,9 @@
       site.selectionSegments = [...(land.length ? window.selectionOutline(land, bounds, gridSpacing) : []),
         ...(sea.length ? window.selectionOutline(sea, wholeEarth, oceanSpacing) : [])];
       site.squares = sea.map(([lat, lon]) => [lat, lon, oceanSpacing / 2]);
+      // Water and Air show plain square outlines, never clipped to a coastline.
+      site.squareSegments = [...(land.length ? window.selectionOutline(land, wholeEarth, gridSpacing) : []),
+        ...(sea.length ? window.selectionOutline(sea, wholeEarth, oceanSpacing) : [])];
     }
     deselectButton.hidden = false;
     analysis = null;
@@ -1591,16 +1595,19 @@
     if (lensProgress >= 0.42) displayedVariable = variableId;
     const texture = heatVisible && mapEntry(variableId)
       ? fields.measurement(mapEntry(variableId)) : {};
-    const platformCountries = viewedSite?.platformCountries;
+    // Water and Air: outline only, with no lifted country, relief or dimming around the selection.
+    const plain = layer !== "land";
+    const platformCountries = plain ? null : viewedSite?.platformCountries;
     const platform = fields.platform(platformCountries);
-    const hasRelief = Boolean(heatVisible && mapView.rise > 0 && (platform || viewedSite?.areaIds));
+    const hasRelief = Boolean(!plain && heatVisible && mapView.rise > 0 && (platform || viewedSite?.areaIds));
     globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, platform, platformCountries, rise: mapView.rise,
       tilt: mapView.orbitTilt * mapView.cameraFocus, orbitAzimuth: mapView.orbitAzimuth * mapView.cameraFocus,
-      cameraLift: mapView.cameraLift,
-      selectionSegments: viewedSite?.selectionSegments, outlineSea: Boolean(viewedSite?.squares?.length), outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
-      selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
+      cameraLift: plain ? 0 : mapView.cameraLift,
+      selectionSegments: plain ? viewedSite?.squareSegments : viewedSite?.selectionSegments,
+      outlineSea: plain || Boolean(viewedSite?.squares?.length), outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
+      selection: plain ? null : platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
     cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
