@@ -405,7 +405,7 @@
     }
 
     return ({ frame, surface, heat, selection, platform, rise }) => {
-      const { width, height, cx, cy, focal, distance, front, right, north } = frame;
+      const { width, height, cx, cy, focal, eye, front, right, north } = frame;
       const scale = Math.min(1, 500 / Math.max(width, height));
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const screenWidth = Math.round(width * dpr);
@@ -425,18 +425,25 @@
       const textureIndex = (texture, u, v) =>
         4 * (Math.min(texture.width - 1, Math.floor(u * texture.width)) +
           texture.width * Math.min(texture.height - 1, Math.floor(v * texture.height)));
+      const eyeRight = dot(eye, right);
+      const eyeUp = dot(eye, north);
+      const eyeForward = dot(eye, front);
+      const eyeRadiusSquared = dot(eye, eye);
       const pxs = Array.from({ length: w }, (_, x) => ((x + 0.5) / scale - cx) / focal);
       for (let y = 0; y < h; y += 1) {
         const py = (cy - (y + 0.5) / scale) / focal;
         for (let x = 0; x < w; x += 1) {
           const px = pxs[x];
-          const t = surfaceDistance(px, py, distance);
-          if (t === null) continue;
-          const z = distance - t;
-          const localX = t * px;
-          const localY = t * py;
+          const rayLengthSquared = 1 + px * px + py * py;
+          const towardsCentre = eyeForward - px * eyeRight - py * eyeUp;
+          const discriminant = towardsCentre ** 2 - rayLengthSquared * (eyeRadiusSquared - 1);
+          if (discriminant < 0 || towardsCentre <= 0) continue;
+          const t = (towardsCentre - Math.sqrt(discriminant)) / rayLengthSquared;
+          const z = eyeForward - t;
+          const localX = eyeRight + t * px;
+          const localY = eyeUp + t * py;
           const worldX = front[0] * z + right[0] * localX + north[0] * localY;
-          const worldY = front[1] * z + north[1] * localY;
+          const worldY = front[1] * z + right[1] * localX + north[1] * localY;
           const worldZ = front[2] * z + right[2] * localX + north[2] * localY;
           const u = 0.5 + Math.atan2(worldZ, worldX) / turn;
           const v = 0.5 - Math.asin(Math.max(-1, Math.min(1, worldY))) / Math.PI;
@@ -452,7 +459,7 @@
           const band = Math.min(palette.length - 1, Math.floor(value * palette.length));
           const heatColour = palette[band];
           const blend = land * coverage / 255;
-          const facing = Math.max(0, (distance * z - 1) / (Math.sqrt(1 + px * px + py * py) * t));
+          const facing = Math.sqrt(discriminant / rayLengthSquared);
           const rim = Math.max(0, 1 - facing) ** 5;
           for (let channel = 0; channel < 3; channel += 1) {
             const base = (ocean[channel] + (ground[channel] - ocean[channel]) * land) * light;
@@ -467,18 +474,18 @@
       ctx.clearRect(0, 0, width, height);
       ctx.drawImage(raster, 0, 0, width, height);
       const paths = [new Path2D(), new Path2D(), new Path2D(), new Path2D()];
-      const horizon = 1 / distance;
-      const project = ([x, y, z]) => {
-        const perspective = focal / (distance - z);
+      const project = ([x, y, depth]) => {
+        const perspective = focal / depth;
         return [cx + x * perspective, cy - y * perspective];
       };
-      const visible = (first, second) => first[2] >= horizon ? first : first.map((value, index) =>
-        value + (second[index] - value) * (horizon - first[2]) / (second[2] - first[2]));
+      const visible = (first, second) => first[3] >= 0 ? first : first.map((value, index) =>
+        value + (second[index] - value) * -first[3] / (second[3] - first[3]));
       for (let i = 0; i < borders.length; i += 10) {
         const endpoints = [borders.subarray(i, i + 3), borders.subarray(i + 5, i + 8)];
-        const points = endpoints.map((point) => [dot(point, right), dot(point, north), dot(point, front)]);
+        const points = endpoints.map((point) => [dot(point, right) - eyeRight, dot(point, north) - eyeUp,
+          eyeForward - dot(point, front), dot(point, eye) - 1]);
         const [a, b] = points;
-        if (a[2] < horizon && b[2] < horizon) continue;
+        if (a[3] < 0 && b[3] < 0) continue;
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
         const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
@@ -497,12 +504,6 @@
         ctx.stroke(path);
       });
     };
-  }
-
-  function surfaceDistance(px, py, distance, radius = 1) {
-    const a = 1 + px * px + py * py;
-    const discriminant = distance * distance - a * (distance * distance - radius * radius);
-    return discriminant < 0 ? null : (distance - Math.sqrt(discriminant)) / a;
   }
 
   window.createGlobeView = (canvas, countries, palette) => {
@@ -556,16 +557,17 @@
       const lift = gl && platform ? platformLift * rise : 0;
       const reliefHeight = reliefAvailable && heat && heightMap ? platformRelief * Math.min(rise, relief) : 0;
       const distance = Math.hypot(1, nominalFocal / nominalRadius) + lift;
-      const aimRadius = 1 + lift + (lift && readTexture(platform, longitude, latitude) >= 0.46
-        ? reliefHeight * readTexture(heightMap, longitude, latitude) : 0);
+      const aimRadius = 1 + (lift && readTexture(platform, longitude, latitude) >= 0.46
+        ? lift + reliefHeight * readTexture(heightMap, longitude, latitude) : 0);
       // Solve for the orbit angle that produces the requested viewing angle at the target.
-      const sightAngle = lift ? 68 * rad * Math.max(0, Math.min(1, tilt)) : 0;
+      const sightAngle = 68 * rad * Math.max(0, Math.min(1, tilt));
       const pitch = sightAngle - Math.asin(aimRadius / distance * Math.sin(sightAngle));
-      const azimuth = orbitAzimuth * rad;
+      const azimuth = orbitAzimuth * rise * rad;
       const eye = aim.map((value, i) => distance * (value * Math.cos(pitch) - Math.sin(pitch) *
         (aimNorth[i] * Math.cos(azimuth) + aimRight[i] * Math.sin(azimuth))));
       const front = unit(eye.map((value, i) => value - aim[i] * aimRadius));
-      const right = unit(cross(front, aimNorth));
+      // Keep the local horizon level as the camera moves around the surface normal.
+      const right = aimRight.map((value, i) => value * Math.cos(azimuth) - aimNorth[i] * Math.sin(azimuth));
       const north = cross(right, front);
       const platformLight = gl && platform ? rise : 0;
       const key = [-0.48 - 0.15 * platformLight, 0.48 + 0.15 * platformLight, 0.73 - 0.27 * platformLight];
