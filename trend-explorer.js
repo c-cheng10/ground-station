@@ -13,6 +13,8 @@
   }
   const pointId = ({ latitude, longitude }) => `${latitude},${longitude}`;
   const gridSpacing = 3;
+  const sourceCellHalfSize = 0.125;
+  const sampleCountries = new Map();
   const pointIds = new Set(points.map(([lat, lon]) => `${lat},${lon}`));
   const storedSites = data.sites.filter((item) => pointIds.has(pointId(item)));
 
@@ -173,22 +175,55 @@
     retryRegion.hidden = !canRetry;
   }
 
-  function drawStripes(canvas, values, variableId, shown = values.length) {
+  function drawStripes(canvas, values, variableId, firstYear) {
     const drawing = prepareCanvas(canvas);
     if (!drawing) return;
     const { ctx, width, height } = drawing;
+    const bandHeight = firstYear === undefined ? height : height - 24;
+    const stripeWidth = width / values.length;
     const scale = stripeScales[variableId] || stripeScales.T2M;
     const mean = values.reduce((total, value) => total + value, 0) / values.length;
     // Saturate at 2.2 standard deviations, close to the published warming-stripes scale.
     const spread = 2.2 * Math.sqrt(values.reduce((total, value) => total + (value - mean) ** 2, 0) / values.length) || 1;
-    values.slice(0, shown).forEach((value, index) => {
+    values.forEach((value, index) => {
       const t = Math.max(-1, Math.min(1, (value - mean) / spread));
       const end = t < 0 ? scale.low : scale.high;
       const rgb = end.map((channel) => Math.round(247 + (channel - 247) * Math.abs(t)));
       ctx.fillStyle = `rgb(${rgb})`;
       // Overlap by a pixel so no hairline gaps show between stripes.
-      ctx.fillRect(Math.floor(index * width / values.length), 0, Math.ceil(width / values.length) + 1, height);
+      ctx.fillRect(Math.floor(index * stripeWidth), 0, Math.ceil(stripeWidth) + 1, bandHeight);
     });
+    if (firstYear !== undefined) drawStripeYears(ctx, width, bandHeight, firstYear, values.length);
+  }
+
+  function drawStripeYears(ctx, width, bandHeight, firstYear, count) {
+    const lastYear = firstYear + count - 1;
+    const stepWidth = width / count;
+    const tickX = (year) => (year - firstYear + 0.5) * stepWidth;
+    ctx.font = '12px "Space Mono", monospace';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillStyle = "#a5b8c3";
+    ctx.strokeStyle = "#637986";
+    const labelWidth = ctx.measureText(String(lastYear)).width;
+    const labelGap = labelWidth + 8;
+    const inset = labelWidth / 2 + 1;
+    const labelX = (year) => Math.max(inset, Math.min(width - inset, tickX(year)));
+    const interval = [1, 2, 5, 10, 20, 50, 100].find((years) => years * stepWidth >= labelGap) ?? 100;
+    const years = [firstYear];
+    for (let year = Math.ceil((firstYear + 1) / interval) * interval; year < lastYear; year += interval) {
+      if (labelX(year) - labelX(years.at(-1)) >= labelGap && labelX(lastYear) - labelX(year) >= labelGap) years.push(year);
+    }
+    if (labelX(lastYear) - labelX(firstYear) >= labelGap) years.push(lastYear);
+    ctx.beginPath();
+    ctx.moveTo(0, bandHeight + 0.5);
+    ctx.lineTo(width, bandHeight + 0.5);
+    for (const year of years) {
+      ctx.moveTo(tickX(year), bandHeight + 0.5);
+      ctx.lineTo(tickX(year), bandHeight + 5);
+      ctx.fillText(String(year), labelX(year), bandHeight + 8);
+    }
+    ctx.stroke();
   }
 
   // "1 in N" phrasing reads more easily than a raw p-value.
@@ -328,6 +363,10 @@
   async function selectSite(nextSite) {
     if (regionRequest && site.id === nextSite.id) {
       openDrawer();
+      if (nextSite.mapAnchor) {
+        site.mapAnchor = nextSite.mapAnchor;
+        flyTo(focusZoom(site));
+      }
       return;
     }
     regionRequest?.abort();
@@ -335,6 +374,11 @@
     regionRequest = request;
     site = nextSite;
     if (!site.platformCountries) site.platformCountries = selectedCountries(site);
+    if (!site.selectionSegments) {
+      const cells = site.areaIds?.map((id) => id.split(",").map(Number)) ?? [[site.latitude, site.longitude]];
+      const bounds = site.platformCountries.length ? site.platformCountries : countries;
+      site.selectionSegments = window.selectionOutline(cells, bounds, gridSpacing);
+    }
     deselectButton.hidden = false;
     analysis = null;
     delete regionResults.dataset.site;
@@ -347,7 +391,7 @@
     byId("story").hidden = true;
     explorer.scrollTop = 0;
     openDrawer();
-    flyTo(nextSite.latitude, nextSite.longitude, focusZoom(nextSite), { selection: nextSite });
+    flyTo(focusZoom(nextSite));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
@@ -453,7 +497,8 @@
       id: `point:${best[0]},${best[1]}`,
       name: countryAt(best[0], best[1]) || latLon(item),
       region: "Nearest NASA grid point",
-      bounds: { south: best[0] - 0.125, north: best[0] + 0.125, west: best[1] - 0.125, east: best[1] + 0.125 },
+      bounds: { south: best[0] - sourceCellHalfSize, north: best[0] + sourceCellHalfSize,
+        west: best[1] - sourceCellHalfSize, east: best[1] + sourceCellHalfSize },
     };
   }
 
@@ -475,15 +520,34 @@
     return country.polygons.some(([outline, ...holes]) => containsPoint(outline) && !holes.some(containsPoint));
   }
 
+  function countryForSample(latitude, longitude) {
+    const id = `${latitude},${longitude}`;
+    if (sampleCountries.has(id)) return sampleCountries.get(id);
+    let match = countries.find((country) => inCountry(country, latitude, longitude));
+    if (!match && pointIds.has(id)) {
+      // A simplified coastline can miss a land sample. Limit the fallback to half a source cell diagonal.
+      let closest = sourceCellHalfSize * Math.hypot(1, Math.cos(latitude * radians));
+      for (const country of countries) {
+        const offset = nearestBorderOffset(country, latitude, longitude, closest);
+        if (!offset) continue;
+        match = country;
+        closest = Math.hypot(...offset);
+      }
+    }
+    sampleCountries.set(id, match ?? null);
+    return match ?? null;
+  }
+
   function countryAt(latitude, longitude) {
-    return window.WORLD_MAP?.countries.find((country) => inCountry(country, latitude, longitude))?.name ?? null;
+    return countryForSample(latitude, longitude)?.name ?? null;
   }
 
   function selectedCountries(target) {
     const coordinates = target.areaIds ? target.areaIds.map((id) => id.split(",").map(Number)) :
       [[target.latitude, target.longitude]];
-    if (target.outline) coordinates.push(...target.outline.map(([lon, lat]) => [lat, lon]));
-    return countries.filter((country) => coordinates.some(([lat, lon]) => inCountry(country, lat, lon)));
+    const sampled = new Set(coordinates.map(([lat, lon]) => countryForSample(lat, lon)));
+    return countries.filter((country) => sampled.has(country) ||
+      target.outline?.some(([lon, lat]) => inCountry(country, lat, lon)));
   }
 
   function distanceKm(latitude, longitude, lat, lon) {
@@ -500,10 +564,8 @@
     return axis > 0 && axis >= Math.abs(direction === "north" || direction === "south" ? east : north);
   }
 
-  function outsideCountryInDirection(country, direction, lat, lon) {
-    // Relative directions use the nearest border segment, not the country's centre.
+  function nearestBorderOffset(country, lat, lon, closest) {
     const longitudeScale = Math.cos(lat * Math.PI / 180);
-    let closest = 500 / 111;
     let delta = null;
     for (const [outline] of country.polygons) {
       for (let index = 0; index < outline.length; index += 1) {
@@ -523,6 +585,11 @@
         }
       }
     }
+    return delta;
+  }
+
+  function outsideCountryInDirection(country, direction, lat, lon) {
+    const delta = nearestBorderOffset(country, lat, lon, 500 / 111);
     return delta && isInDirection(direction, ...delta);
   }
 
@@ -637,7 +704,7 @@
     const sample = useGridCell ? points[gridPointIndex(latitude, longitude)] : [latitude, longitude];
     const target = sample && pointSite(...sample);
     if (target) {
-      selectSite(target);
+      selectSite(useGridCell ? { ...target, mapAnchor: [longitude, latitude] } : target);
       return;
     }
     regionRequest?.abort();
@@ -653,7 +720,7 @@
     regionResults.hidden = true;
     byId("story").hidden = true;
     openDrawer();
-    flyTo(mapView.lat, mapView.lon, mapView.zoom, { selection: null });
+    flyTo(mapView.zoom);
     setRegionStatus(useGridCell
       ? "There’s no stored NASA point for this 3° cell. Select a nearby cell or use Magic select to cover more ground."
       : "No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
@@ -789,8 +856,9 @@
       byId("variable-description").textContent = `${variable.description} Source: ${variable.source}` +
         (sourceKinds[variable.source] ? ` (${sourceKinds[variable.source]}).` : ".");
       const scale = stripeScales[variable.id] || stripeScales.T2M;
-      const { firstYear, lastYear } = analysis.series[variable.id];
-      byId("stripes-note").textContent = `Each stripe is one year from ${firstYear} to ${lastYear}. ${scale.note}`;
+      const { firstYear, lastYear, values } = analysis.series[variable.id];
+      showStripes(byId("result-stripes"), values, variable.id, firstYear);
+      byId("stripes-note").textContent = `Each stripe compares one year with the ${firstYear}–${lastYear} average. ${scale.note}`;
       const verdict = byId("trend-verdict");
       verdict.dataset.state = trend.verdict;
       verdict.textContent = verdictLabels[trend.verdict];
@@ -943,7 +1011,7 @@
     const band = ahead ? model.rmse.map((row) => 1.645 * row[index]) : [];
     const bandValues = band.flatMap((spread, k) => [predicted[k] + spread, predicted[k] - spread]);
     const { floor, ceiling, decimals, ticks } = axisScale([...actual, ...predicted, ...bandValues], [0]);
-    ctx.font = '13px "Atkinson Hyperlegible Next", system-ui, sans-serif';
+    ctx.font = '13px "Geist", system-ui, sans-serif';
     const left = Math.max(29, ...ticks.map((tick) => ctx.measureText(format(tick, decimals)).width + 12));
     const right = width - 18;
     const top = 16;
@@ -1038,13 +1106,12 @@
     const { ctx, width, height } = drawing;
     const variable = data.variables.find((item) => selectedIds.has(item.id));
     const series = analysis.series[variable.id];
-    drawStripes(byId("result-stripes"), series.values, variable.id);
     const values = series[chartViews[view].field];
     const { trend } = series;
     const annual = view === "annual";
     const endpoints = annual ? [trend.startValue, trend.endValue] : view === "anomaly" ? [0] : [];
     const { floor, ceiling, decimals, ticks } = axisScale(values.filter(Number.isFinite), endpoints);
-    ctx.font = '13px "Atkinson Hyperlegible Next", system-ui, sans-serif';
+    ctx.font = '13px "Geist", system-ui, sans-serif';
     const left = Math.max(29, ...ticks.map((tick) => ctx.measureText(format(tick, decimals)).width + 12));
     const right = width - 18;
     const top = 12;
@@ -1227,7 +1294,6 @@
   const areaHint = byId("circle-hint");
   const heatButton = byId("toggle-heat");
   const deselectButton = byId("deselect-area");
-  const staticButton = byId("camera-static");
   const grain = byId("camera-grain");
   const cameraCoordinates = byId("camera-coordinates");
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -1248,7 +1314,8 @@
   }
   const home = { lat: 17, lon: -18, zoom: 1 };
   const initialOrbitTilt = 0.9;
-  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
+  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, outlineOpacity: 0,
+    cameraFocus: 0, cameraLift: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
   let heatVisible = true;
   let displayedVariable;
   let lensStarted = 0;
@@ -1270,7 +1337,8 @@
   let sparkleSeed = 0;
   const pointers = new Map();
   let drag = null;
-  const magicInstructions = "Draw most of a circle, then release. Or tap its centre and edge. Keyboard: move with arrows, Enter marks the centre, + or − changes the radius, Enter selects, Esc cancels.";
+  const magicDragThreshold = 6;
+  const magicInstructions = "Draw at least three quarters of a circle, then release. Or tap its centre and edge. Keyboard: move with arrows, Enter marks the centre, + or − changes the radius, Enter selects, Esc cancels.";
   const mapSize = () => [world.clientWidth, world.clientHeight];
   const radians = Math.PI / 180;
   const ease = (value) => value * value * (3 - 2 * value);
@@ -1379,25 +1447,20 @@
     globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, platform, platformCountries, rise: mapView.rise,
-      tilt: platform ? mapView.orbitTilt * mapView.rise : 0, orbitAzimuth: mapView.orbitAzimuth,
+      tilt: mapView.orbitTilt * mapView.cameraFocus, orbitAzimuth: mapView.orbitAzimuth * mapView.cameraFocus,
+      cameraLift: mapView.cameraLift,
+      selectionSegments: viewedSite?.selectionSegments, outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
       selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
-    updateViewfinder();
+    cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
     drawMagicEffects(now);
-    const anchor = !drawingArea && viewedSite === site && site && !site.areaIds && globe.project(site.longitude, site.latitude);
+    const anchor = !drawingArea && site && !site.areaIds && globe.project(...(site.mapAnchor ?? [site.longitude, site.latitude]));
     pin.hidden = !anchor;
     if (anchor) {
       pin.style.left = `${anchor[0]}px`;
       pin.style.top = `${anchor[1]}px`;
     }
-  }
-
-  function updateViewfinder() {
-    const [x, y] = viewCentre();
-    stage.style.setProperty("--camera-target-x", `${x}px`);
-    stage.style.setProperty("--camera-target-y", `${y}px`);
-    cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
   }
 
   function refocus(delay = 0) {
@@ -1445,16 +1508,11 @@
 
   function syncStatic() {
     clearInterval(staticTimer);
-    if (grain.hidden || document.hidden) return;
+    if (document.hidden) return;
     paintStatic();
     if (!motion.matches) staticTimer = setInterval(paintStatic, 125);
   }
 
-  staticButton.addEventListener("click", () => {
-    grain.hidden = !grain.hidden;
-    staticButton.setAttribute("aria-pressed", String(!grain.hidden));
-    syncStatic();
-  });
   document.addEventListener("visibilitychange", syncStatic);
   motion.addEventListener("change", () => {
     if (motion.matches) focusAnimation?.cancel();
@@ -1502,7 +1560,10 @@
     }
   }
 
-  function flyTo(lat, lon, zoom, { avoidPanel = true, selection = viewedSite } = {}) {
+  function flyTo(zoom, { avoidPanel = true,
+    lat = site?.mapAnchor?.[1] ?? site?.latitude ?? mapView.lat,
+    lon = site?.mapAnchor?.[0] ?? site?.longitude ?? mapView.lon } = {}) {
+    const selection = site;
     const [width] = mapSize();
     const open = avoidPanel && app.hasAttribute("data-drawer");
     const panel = byId("drawer");
@@ -1517,17 +1578,19 @@
     const keepPlatform = previousCountries.length > 0 && previousCountries.length === nextCountries.length &&
       previousCountries.every((country) => nextCountries.includes(country));
     if (keepPlatform) selection.platformCountries = previousCountries;
-    const swapAt = changingSite && !keepPlatform && from.rise > 0 && selection ? 0.34 : 0;
+    const swapAt = changingSite && from.rise > 0 && selection ? 0.34 : 0;
     const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY,
-      rise: selection ? 1 : 0, orbitAzimuth: changingSite ? 0 : from.orbitAzimuth,
-      orbitTilt: changingSite ? initialOrbitTilt : from.orbitTilt };
+      rise: selection ? 1 : 0, outlineOpacity: selection ? 1 : 0, orbitAzimuth: changingSite ? 0 : from.orbitAzimuth,
+      orbitTilt: changingSite ? initialOrbitTilt : from.orbitTilt,
+      cameraFocus: selection ? 1 : 0, cameraLift: nextCountries.length ? 1 : 0 };
     const startVector = toVector(from.lat, from.lon);
     const endVector = toVector(target.lat, target.lon);
     const dot = Math.max(-1, Math.min(1, startVector.reduce((sum, n, i) => sum + n * endVector[i], 0)));
     const angle = Math.acos(dot);
     const side = [-Math.sin(from.lon * radians), 0, Math.cos(from.lon * radians)];
     const tangent = Math.sin(angle) > 1e-5 ? endVector.map((n, i) => (n - startVector[i] * dot) / Math.sin(angle)) : side;
-    const orbitFirst = angle > Math.PI * 0.42;
+    const longFlight = angle > Math.PI * 0.42;
+    const viaOverview = longFlight && (!previous || !selection);
     stopFlight();
     mapTip.hidden = true;
     if (motion.matches) {
@@ -1537,35 +1600,45 @@
       return;
     }
     const start = performance.now();
-    const duration = orbitFirst ? 1420 : 710;
-    if (orbitFirst || Math.abs(Math.log(target.zoom / from.zoom)) > 0.06) {
+    const duration = longFlight ? 1420 : 710;
+    if (viaOverview || Math.abs(Math.log(target.zoom / from.zoom)) > 0.06) {
       focusAnimation?.cancel();
-      refocus(orbitFirst ? 920 : 245);
+      refocus(viaOverview ? 920 : 245);
     }
     const step = (now) => {
       const t = Math.min(1, Math.max(0, (now - start) / duration));
       const progress = ease(t);
-      const turn = angle * (orbitFirst ? ease(Math.min(1, t / 0.66)) : progress);
+      const turn = angle * (viaOverview ? ease(Math.min(1, t / 0.66)) : progress);
       const [x, y, z] = startVector.map((n, i) => Math.cos(turn) * n + Math.sin(turn) * tangent[i]);
       mapView.lat = clampLatitude(Math.atan2(y, Math.hypot(x, z)) / radians);
       mapView.lon = Math.atan2(z, x) / radians;
       const zoomed = (a, b, fraction) => a * (b / a) ** ease(fraction);
-      mapView.zoom = orbitFirst && t < 0.66 ? zoomed(from.zoom, 1, Math.min(1, t / 0.36)) :
-        zoomed(orbitFirst ? 1 : from.zoom, target.zoom, orbitFirst ? (t - 0.66) / 0.34 : t);
+      mapView.zoom = viaOverview && t < 0.66 ? zoomed(from.zoom, 1, Math.min(1, t / 0.36)) :
+        zoomed(viaOverview ? 1 : from.zoom, target.zoom, viaOverview ? (t - 0.66) / 0.34 : t);
       mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * progress;
       mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * progress;
-      mapView.orbitAzimuth = signedLongitude(from.orbitAzimuth + signedLongitude(target.orbitAzimuth - from.orbitAzimuth) * progress);
+      mapView.orbitAzimuth = from.orbitAzimuth + (target.orbitAzimuth - from.orbitAzimuth) * progress;
       mapView.orbitTilt = from.orbitTilt + (target.orbitTilt - from.orbitTilt) * progress;
-      const liftStart = Math.max(swapAt, orbitFirst ? 0.6 : 0.14);
+      const liftStart = Math.max(swapAt, viaOverview ? 0.6 : 0.14);
       const lift = ease(Math.max(0, (t - liftStart) / (1 - liftStart)));
+      const lowering = ease(Math.min(1, t / 0.5));
+      const cameraProgress = selection ? lift : lowering;
+      mapView.cameraFocus = from.cameraFocus + (target.cameraFocus - from.cameraFocus) * cameraProgress;
+      mapView.cameraLift = from.cameraLift + (target.cameraLift - from.cameraLift) * cameraProgress;
       if (t < swapAt) {
-        mapView.rise = from.rise * (1 - ease(t / swapAt));
+        const remaining = 1 - ease(t / swapAt);
+        mapView.rise = keepPlatform ? from.rise : from.rise * remaining;
+        mapView.outlineOpacity = from.outlineOpacity * remaining;
       } else if (selection) {
         viewedSite = selection;
-        const startRise = swapAt ? 0 : from.rise;
+        const startRise = swapAt && !keepPlatform ? 0 : from.rise;
         mapView.rise = startRise + (1 - startRise) * lift;
+        const startOpacity = changingSite ? 0 : from.outlineOpacity;
+        mapView.outlineOpacity = startOpacity + (1 - startOpacity) * ease(Math.max(0, (t - 0.6) / 0.4));
       } else {
-        mapView.rise = from.rise * (1 - ease(Math.min(1, t / 0.5)));
+        const remaining = 1 - lowering;
+        mapView.rise = from.rise * remaining;
+        mapView.outlineOpacity = from.outlineOpacity * remaining;
         if (!mapView.rise) viewedSite = null;
       }
       if (t === 1) {
@@ -1579,6 +1652,7 @@
   }
 
   function zoomBy(factor) {
+    if (selectionLanding()) return;
     stopFlight();
     const zoom = clampZoom(mapView.zoom * factor);
     if (zoom !== mapView.zoom) refocus();
@@ -1628,7 +1702,7 @@
   function closeDrawer() {
     app.removeAttribute("data-drawer");
     for (const option of mapVariable.options) option.disabled = false;
-    if (mapView.offsetX || mapView.offsetY) flyTo(mapView.lat, mapView.lon, mapView.zoom, { avoidPanel: false });
+    if (flight || mapView.offsetX || mapView.offsetY) flyTo(mapView.zoom, { avoidPanel: false });
     world.focus({ preventScroll: true });
   }
 
@@ -1677,6 +1751,13 @@
     const radius = distances[Math.floor(distances.length / 2)];
     if (!Number.isFinite(radius) || radius < 9 || radius > Math.min(...mapSize()) * 0.49) return null;
     if (distances[Math.floor(distances.length * 0.9)] - distances[Math.floor(distances.length * 0.1)] > radius * 0.7) return null;
+    // Measure the undrawn gap so retracing a short arc cannot count as closure.
+    const angles = path.map(([px, py]) => Math.atan2(py - y, px - x)).sort((a, b) => a - b);
+    let previous = angles.at(-1) - 2 * Math.PI;
+    for (const angle of angles) {
+      if (angle - previous > Math.PI / 2 + 1e-6) return null;
+      previous = angle;
+    }
     return [x, y, radius];
   }
 
@@ -1684,7 +1765,7 @@
     magicPath = [];
     magicCentre = null;
     if (!circle) {
-      areaHint.textContent = "Draw a rounder arc, or tap its centre and edge.";
+      areaHint.textContent = "Draw at least three quarters of a circle, or tap its centre and edge.";
       drawTrendMap();
       return;
     }
@@ -1731,10 +1812,25 @@
     } else completeMagicCircle([...magicCentre, Math.max(9, Math.hypot(x - magicCentre[0], y - magicCentre[1]))]);
   }
 
+  function selectionCentred() {
+    const [lon, lat] = site.mapAnchor ?? [site.longitude, site.latitude];
+    return viewedSite === site && mapView.rise === 1 &&
+      Math.abs(mapView.lat - clampLatitude(lat)) < 1e-7 &&
+      Math.abs(signedLongitude(mapView.lon - lon)) < 1e-7;
+  }
+
+  function selectionLanding() {
+    return flight && site && !drawingArea && !selectionCentred();
+  }
+
   function orbitRegion(dx, dy) {
-    if (drawingArea || !viewedSite?.platformCountries?.length ||
-        Math.abs(mapView.lat - viewedSite.latitude) > 0.1 || Math.abs(signedLongitude(mapView.lon - viewedSite.longitude)) > 0.1) return false;
-    mapView.orbitAzimuth = signedLongitude(mapView.orbitAzimuth - dx * 0.75);
+    if (drawingArea || !site) return false;
+    if (!selectionCentred()) {
+      if (!flight) flyTo(mapView.zoom);
+      return true;
+    }
+    stopFlight();
+    mapView.orbitAzimuth = signedLongitude(mapView.orbitAzimuth + dx * 0.25);
     mapView.orbitTilt = Math.max(0.15, Math.min(1, mapView.orbitTilt - dy * 0.005));
     return true;
   }
@@ -1759,7 +1855,6 @@
     pointers.set(event.pointerId, point);
     const [a, b] = [...pointers.values()];
     if (b) {
-      stopFlight();
       drag.pinch = Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1]));
       drag.zoom = mapView.zoom;
       drag.moved = true;
@@ -1770,7 +1865,7 @@
     const point = [event.offsetX, event.offsetY];
     if (drawingArea) {
       if (magicPointer?.id === event.pointerId) {
-        if (!magicPointer.tracing && Math.hypot(point[0] - magicPointer.start[0], point[1] - magicPointer.start[1]) >= 6) {
+        if (!magicPointer.tracing && Math.hypot(point[0] - magicPointer.start[0], point[1] - magicPointer.start[1]) >= magicDragThreshold) {
           magicPointer.tracing = true;
           magicCentre = null;
           magicPath = [magicPointer.start];
@@ -1791,17 +1886,24 @@
     pointers.set(event.pointerId, point);
     const [a, b] = [...pointers.values()];
     if (drag.pinch && b) {
-      const zoom = clampZoom(drag.zoom * Math.hypot(a[0] - b[0], a[1] - b[1]) / drag.pinch);
+      const span = Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1]));
+      if (selectionLanding()) {
+        drag.pinch = span;
+        drag.zoom = mapView.zoom;
+        return;
+      }
+      stopFlight();
+      const zoom = clampZoom(drag.zoom * span / drag.pinch);
       if (Math.abs(Math.log(zoom / mapView.zoom)) > 0.012) refocus();
       mapView.zoom = zoom;
     } else {
       if (!drag.moved && Math.hypot(point[0] - drag.point[0], point[1] - drag.point[1]) < 5) return;
-      if (!drag.moved) stopFlight();
       drag.moved = true;
       stage.classList.add("dragging");
       const dx = point[0] - drag.last[0];
       const dy = point[1] - drag.last[1];
       if (!orbitRegion(dx, dy)) {
+        stopFlight();
         const scale = 70 / Math.max(50, globe.radius);
         const latitudeScale = Math.max(0.32, Math.cos(mapView.lat * radians));
         mapView.lon = signedLongitude(mapView.lon - dx * scale / latitudeScale);
@@ -1814,13 +1916,16 @@
   const endPointer = (event) => {
     if (drawingArea) {
       if (magicPointer?.id !== event.pointerId) return;
-      const { tracing } = magicPointer;
+      const { tracing, start } = magicPointer;
       magicPointer = null;
       if (event.type === "pointercancel") {
         magicPath = [];
         drawMagicEffects(performance.now());
-      } else if (tracing) completeMagicCircle(fitMagicCircle(magicPath));
-      else magicTap(event.offsetX, event.offsetY);
+      } else if (tracing) {
+        completeMagicCircle(fitMagicCircle([...magicPath, [event.offsetX, event.offsetY]]));
+      } else if (Math.hypot(event.offsetX - start[0], event.offsetY - start[1]) < magicDragThreshold) {
+        magicTap(event.offsetX, event.offsetY);
+      } else completeMagicCircle(null);
       return;
     }
     if (!pointers.delete(event.pointerId) || !drag) return;
@@ -1851,9 +1956,9 @@
   world.addEventListener("keydown", (event) => {
     const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
     if (moves[event.key]) {
-      stopFlight();
       const [dx, dy] = moves[event.key];
       if (!orbitRegion(dx * 40, dy * 22)) {
+        stopFlight();
         mapView.lon = signedLongitude(mapView.lon + dx * 15 / Math.sqrt(mapView.zoom));
         mapView.lat = clampLatitude(mapView.lat + dy * 12 / Math.sqrt(mapView.zoom));
       }
@@ -1871,8 +1976,8 @@
     } else return;
     event.preventDefault();
   });
-  byId("zoom-in").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom * 1.6));
-  byId("zoom-out").addEventListener("click", () => flyTo(mapView.lat, mapView.lon, mapView.zoom / 1.6));
+  byId("zoom-in").addEventListener("click", () => flyTo(mapView.zoom * 1.6));
+  byId("zoom-out").addEventListener("click", () => flyTo(mapView.zoom / 1.6));
   function clearSelection(view) {
     if (drawingArea) setAreaMode(false);
     if (app.hasAttribute("data-drawer")) closeDrawer();
@@ -1884,7 +1989,7 @@
     regionResults.hidden = true;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
-    flyTo(view.lat, view.lon, view.zoom, { avoidPanel: false, selection: null });
+    flyTo(view.zoom, { avoidPanel: false, lat: view.lat, lon: view.lon });
     world.focus({ preventScroll: true });
   }
   byId("zoom-reset").addEventListener("click", () => clearSelection(home));
@@ -1949,9 +2054,9 @@
   refreshGiovanni.addEventListener("click", refreshPoint);
 
   // ---- Examples in the welcome card ----
-  function showStripes(canvas, values, id) {
-    liveStripes.set(canvas, [values, id]);
-    drawStripes(canvas, values, id);
+  function showStripes(canvas, values, id, firstYear) {
+    liveStripes.set(canvas, [values, id, firstYear]);
+    drawStripes(canvas, values, id, firstYear);
     observer.observe(canvas);
   }
   for (const example of examples.filter(({ site }) => site())) {

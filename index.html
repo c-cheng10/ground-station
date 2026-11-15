@@ -9,7 +9,7 @@
   <title>Climate Trend Explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400..800&family=Space+Mono:wght@400;700&display=swap">
   <script defer src="world-map.js"></script>
   <script defer src="trend-config.js"></script>
   <script defer src="points-index.js"></script>
@@ -18,6 +18,7 @@
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
   <script defer src="globe-fields.js"></script>
+  <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js"></script>
   <script defer src="trend-explorer.js"></script>
   <script defer src="research.js"></script>
@@ -41,8 +42,8 @@
       --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
       --drawer: min(510px, 43vw);
       --map-inset: 16px;
-      --numbers: "IBM Plex Mono", ui-monospace, monospace;
-      font-family: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+      --numbers: "Space Mono", ui-monospace, monospace;
+      font-family: "Geist", system-ui, sans-serif;
       color: var(--ink);
       background: var(--space);
       line-height: 1.5;
@@ -57,16 +58,17 @@
     p { text-wrap: pretty; }
     a { color: var(--control); text-underline-offset: 0.2em; }
     button, input, select { font: inherit; touch-action: manipulation; color: inherit; }
+    button, input, select, textarea, dialog { border-radius: 0; }
     button { cursor: pointer; }
     :focus-visible { outline: 2px solid var(--control-hover); outline-offset: 3px; }
     canvas { display: block; width: 100%; height: 100%; }
     .sr-only { position: absolute; overflow: hidden; clip-path: inset(50%); width: 1px; height: 1px; white-space: nowrap; }
-    .skip { position: absolute; left: 16px; top: -60px; z-index: 50; padding: 10px 14px; background: var(--surface); border-radius: 8px; }
+    .skip { position: absolute; left: 16px; top: -60px; z-index: 50; padding: 10px 14px; background: var(--surface); }
     .skip:focus { top: 12px; }
 
     .button {
       display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 9px 18px;
-      border-radius: 8px; border: 1px solid transparent; font-weight: 700; text-decoration: none; white-space: nowrap;
+      border: 1px solid transparent; font-weight: 700; text-decoration: none; white-space: nowrap;
       transition: background-color 160ms ease-out, transform 120ms ease-out, border-color 160ms ease-out;
     }
     .button:active { transform: scale(0.97); }
@@ -76,14 +78,14 @@
     .button.secondary:hover { background: var(--tint); border-color: var(--control); }
     .button.small { min-height: 36px; padding: 5px 14px; font-size: 0.9rem; }
     .icon-button {
-      display: grid; place-items: center; width: 44px; height: 44px; border-radius: 9px; border: 1px solid var(--rule);
+      display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--rule);
       background: var(--surface); color: var(--ink); font-size: 1.3rem; font-weight: 700;
       transition: background-color 160ms ease-out, transform 120ms ease-out;
     }
     .icon-button:hover { background: var(--tint); }
     .icon-button:active { transform: scale(0.94); }
     .icon-button svg { width: 20px; height: 20px; }
-    .float { position: absolute; z-index: 5; background: var(--glass); border: 1px solid var(--rule); border-radius: 12px; backdrop-filter: blur(16px); }
+    .float { position: absolute; z-index: 5; background: var(--glass); border: 1px solid var(--rule); backdrop-filter: blur(16px); }
 
     /* The map is the page */
     .app { position: fixed; inset: 0; }
@@ -106,9 +108,8 @@
     #camera-grain, .camera-scanlines { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
     #camera-grain { opacity: 0.14; image-rendering: pixelated; }
     .camera-scanlines { background: repeating-linear-gradient(transparent 0 3px, rgb(0 0 0 / 0.03) 3px 4px); }
-    #camera-grain[hidden] + .camera-scanlines { display: none; }
-    .camera-frame, .camera-reticle { position: absolute; z-index: 2; pointer-events: none; }
     .camera-frame {
+      position: absolute; z-index: 2; pointer-events: none;
       inset: 154px clamp(30px, 6vw, 100px) clamp(74px, 12vh, 126px);
       color: rgb(219 249 253 / 0.65);
     }
@@ -125,18 +126,6 @@
       position: absolute; top: 5px; left: 30px; color: #dbf9fd; white-space: nowrap;
       font: 0.72rem/1.2 var(--numbers); text-shadow: 0 1px 3px #080b0e, 0 0 5px #080b0e;
     }
-    .camera-reticle {
-      left: var(--camera-target-x, 50%); top: var(--camera-target-y, 50%);
-      width: 36px; height: 36px; transform: translate(-50%, -50%);
-      background:
-        linear-gradient(currentColor, currentColor) center top / 1px 8px,
-        linear-gradient(currentColor, currentColor) center bottom / 1px 8px,
-        linear-gradient(currentColor, currentColor) left center / 8px 1px,
-        linear-gradient(currentColor, currentColor) right center / 8px 1px,
-        radial-gradient(circle closest-side, currentColor 55%, transparent) center / 3px 3px;
-      background-repeat: no-repeat; color: rgb(219 249 253 / 0.72); filter: drop-shadow(0 0 2px #080b0e);
-    }
-    .stage[data-drawing] .camera-reticle, .stage:has(.pin:not([hidden])) .camera-reticle { visibility: hidden; }
     #globe-effects { z-index: 3; pointer-events: none; }
     #lens-transition { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; }
     #lens-transition::before {
@@ -150,76 +139,85 @@
       12%, 64% { opacity: 1; }
       100% { opacity: 0; transform: translateY(290%); }
     }
-    .pin { position: absolute; z-index: 4; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--space); border: 2px solid var(--ink); box-shadow: 0 2px 8px rgb(0 0 0 / 0.5); pointer-events: none; }
-    .pin::after { content: ""; position: absolute; inset: -7px; border-radius: 50%; border: 1px solid var(--control); animation: pulse 1.8s var(--ease-out) infinite; }
-    @keyframes pulse { from { transform: scale(0.5); opacity: 0.9; } to { transform: scale(2.2); opacity: 0; } }
+    .pin { position: absolute; z-index: 4; width: 6px; height: 6px; margin: -3px 0 0 -3px; background: #fff; box-shadow: 0 0 0 1px rgb(8 16 24 / 0.7), 0 0 7px rgb(246 251 255 / 0.72); pointer-events: none; }
     .tip {
-      position: absolute; z-index: 6; pointer-events: none; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+      position: absolute; z-index: 6; pointer-events: none; padding: 8px 12px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
       font-size: 0.88rem; line-height: 1.35; white-space: nowrap; box-shadow: var(--shadow-2); font-variant-numeric: tabular-nums;
       transform: translate(14px, -50%); transition: opacity 120ms ease-out;
     }
     .tip strong { display: block; }
     .tip small { color: var(--muted); }
 
-    .topbar { top: max(var(--map-inset), env(safe-area-inset-top)); left: max(var(--map-inset), env(safe-area-inset-left)); right: max(var(--map-inset), env(safe-area-inset-right)); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 12px 8px 16px; }
-    .topbar.float { backdrop-filter: none; }
-    .app[data-drawer] .topbar { right: calc(var(--drawer) + var(--map-inset)); }
-    .brand { display: flex; align-items: center; gap: 9px; font-weight: 800; font-size: 1.02rem; line-height: 1.2; letter-spacing: -0.02em; }
-    .brand::before {
-      content: ""; flex: 0 0 19px; height: 19px; border: 1px solid var(--control); border-radius: 50%;
-      background: linear-gradient(143deg, transparent 43%, var(--control) 46% 53%, transparent 56%);
+    .map-hud {
+      position: absolute; z-index: 8; pointer-events: none; container-type: inline-size;
+      top: max(var(--map-inset), env(safe-area-inset-top)); left: max(var(--map-inset), env(safe-area-inset-left));
+      right: max(var(--map-inset), env(safe-area-inset-right));
     }
-    .map-tools { display: flex; gap: 8px; min-width: 0; }
-    .map-field { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 0.9rem; font-weight: 700; color: var(--muted); }
-    .map-field select { min-width: 0; min-height: 44px; padding: 5px 8px; border: 1px solid var(--rule); border-radius: 8px; background: var(--sunken); color: var(--ink); }
+    .app[data-drawer] .map-hud { right: calc(var(--drawer) + var(--map-inset)); }
+    .hud-layout {
+      display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      grid-template-areas: "brand tools actions"; align-items: center; gap: 8px 12px;
+    }
+    .brand {
+      grid-area: brand; font: 700 0.98rem/1.2 var(--numbers); text-wrap: wrap;
+      letter-spacing: -0.04em; text-shadow: 0 2px 6px var(--space);
+    }
+    .map-tools, .hud-actions { display: flex; gap: 6px; pointer-events: auto; }
+    .map-tools { grid-area: tools; justify-self: center; }
+    .hud-actions { grid-area: actions; justify-self: end; }
+    .map-tools :is(.button, .icon-button, select), .hud-actions :is(.button, .icon-button) {
+      min-height: 44px; background: var(--glass); backdrop-filter: blur(12px);
+    }
+    .map-field select {
+      max-width: min(41vw, 13.5rem); min-height: 44px; padding: 5px 8px; border: 1px solid var(--rule);
+      color: var(--ink); font-size: 0.9rem; font-weight: 600;
+    }
     .map-field select:hover { border-color: var(--control); }
-    @media (min-width: 761px) {
-      .app[data-drawer] .map-field span { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
-    }
-    @media (min-width: 1024px) {
-      .app[data-drawer] .topbar { flex-wrap: nowrap; }
-      .app[data-drawer] .brand { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
+    @container (max-width: 730px) {
+      .hud-layout { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "brand actions" "tools tools"; }
+      .brand { font-size: 0.87rem; }
     }
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
     .chips button {
-      flex: none; min-height: 38px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface);
+      flex: none; min-height: 38px; padding: 6px 14px; border: 1px solid var(--rule); background: var(--surface);
       font-size: 0.9rem; font-weight: 500; transition: background-color 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
     }
     .chips button:hover { border-color: var(--control); background: var(--tint); }
     .chips button[aria-pressed="true"] { background: var(--tint); border-color: var(--control); color: var(--control-hover); font-weight: 700; }
     .chips button:disabled { color: var(--muted); background: var(--surface); cursor: default; opacity: 0.6; }
-    .topbar-actions { display: flex; gap: 4px; margin-inline-start: auto; }
-    .topbar-actions .icon-button { background: transparent; border-color: transparent; }
-    .topbar-actions .icon-button:hover { background: var(--tint); }
-    .topbar-actions .button, #draw-circle, #toggle-heat { min-height: 44px; }
+    .hud-actions .icon-button:hover, .map-tools .icon-button:hover { background: var(--tint); border-color: var(--control); }
     #show-assistant { color: var(--control-hover); }
     #draw-circle[aria-pressed="true"] { background: var(--ink); color: var(--space); border-color: var(--ink); }
     #toggle-heat::before {
-      content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--muted);
+      content: ""; flex: none; width: 7px; height: 7px; border: 1px solid var(--muted);
     }
     #toggle-heat[aria-pressed="true"]::before { background: var(--control); border-color: var(--control); }
-    .circle-hint { flex: 1 0 100%; margin: 0; padding: 7px 0 2px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.875rem; }
+    .circle-hint {
+      position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+      width: max-content; max-width: min(100%, 34rem); margin: 0; padding: 9px 12px;
+      border: 1px solid var(--rule); background: var(--glass); color: var(--ink); font-size: 0.85rem;
+      text-align: center;
+    }
     .camera-actions {
       position: absolute; inset-block-start: calc(100% + 8px); inset-inline-end: 0;
-      display: flex; gap: 6px;
+      display: flex; pointer-events: auto;
     }
     .camera-actions .button {
       min-height: 44px; padding: 4px 11px;
       background: var(--glass); backdrop-filter: blur(12px);
-      font: 500 0.74rem var(--numbers); letter-spacing: 0.02em;
+      font: 400 0.74rem var(--numbers); letter-spacing: 0.02em;
     }
-    #camera-static[aria-pressed="true"] { color: var(--control-hover); border-color: #577c88; background: var(--tint); }
-    .stage[data-drawing] ~ .topbar .camera-actions { visibility: hidden; }
+    .stage[data-drawing] ~ .map-hud .camera-actions { visibility: hidden; }
 
     /* Welcome card */
-    .welcome { top: 92px; left: var(--map-inset); width: min(305px, calc(100vw - 32px)); max-height: calc(100dvh - 284px); overflow: auto; overscroll-behavior: contain; padding: 18px; }
+    .welcome { top: 92px; left: var(--map-inset); width: min(305px, calc(100vw - 32px)); max-height: calc(100dvh - 328px); overflow: auto; overscroll-behavior: contain; padding: 18px; }
     .welcome h2 { font-size: 1.4rem; letter-spacing: -0.025em; padding-right: 30px; }
     .welcome > p { color: var(--muted); margin: 10px 0 0; }
     .welcome .close { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; border-color: transparent; background: transparent; }
     .welcome h3 { font-size: 0.95rem; margin-top: 16px; }
     .examples { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
     .examples button {
-      width: 100%; text-align: left; border: 1px solid var(--rule); background: var(--surface); border-radius: 8px; padding: 0; overflow: hidden;
+      width: 100%; text-align: left; border: 1px solid var(--rule); background: var(--surface); padding: 0; overflow: hidden;
       transition: transform 160ms ease-out, border-color 160ms ease-out;
     }
     .examples button:hover { transform: translateY(-2px); border-color: var(--control); }
@@ -230,7 +228,7 @@
     .goto summary { cursor: pointer; color: var(--control); font-weight: 700; }
     .goto form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
     .goto label { display: grid; gap: 4px; font-weight: 700; font-size: 0.85rem; }
-    .goto input { width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+    .goto input { width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid var(--rule); background: var(--surface); }
     .goto button { grid-column: 1 / -1; }
     @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 
@@ -239,7 +237,7 @@
     .legend-card h2 { font-size: 0.98rem; }
     .legend-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
     .trend-key { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; font: 0.74rem var(--numbers); color: var(--muted); font-variant-numeric: tabular-nums; }
-    .trend-key .ramp { flex: 1; min-width: 24px; height: 7px; border-radius: 2px; }
+    .trend-key .ramp { flex: 1; min-width: 24px; height: 7px; }
     .changes { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; }
     .changes summary { cursor: pointer; font-weight: 700; color: var(--control); font-size: 0.9rem; min-height: 28px; }
     .extremes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 6px; }
@@ -253,83 +251,85 @@
     .zoom { position: absolute; z-index: 5; right: 14px; bottom: max(14px, env(safe-area-inset-bottom)); display: grid; gap: 6px; transition: right 380ms var(--ease-out); }
     .app[data-drawer] .zoom { right: calc(var(--drawer) + 28px); }
 
-    /* The answer panel */
+    /* Floating results */
     .drawer {
-      position: absolute; z-index: 10; top: 0; right: 0; bottom: 0; width: var(--drawer); background: rgb(14 20 25 / 0.94);
-      border-inline-start: 1px solid var(--rule); backdrop-filter: blur(16px); display: flex; flex-direction: column;
+      position: absolute; z-index: 10; top: 0; right: 0; bottom: 0; width: var(--drawer);
+      padding-top: var(--map-inset);
       transform: translateX(105%); visibility: hidden; transition: transform 420ms var(--ease-out), visibility 0s linear 420ms;
     }
     .app[data-drawer] .drawer { transform: none; visibility: visible; transition: transform 420ms var(--ease-out); }
-    .drawer-head { display: flex; align-items: center; gap: 10px; padding: 14px 14px 12px 22px; border-bottom: 1px solid var(--rule); }
+    .drawer-body, .results, .answer { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 10px; }
+    .drawer-body {
+      height: 100%; overflow: auto; overscroll-behavior: contain; padding: 0 var(--map-inset) 18px 6px;
+      scrollbar-color: #405661 transparent; scroll-padding-block: 100px 18px;
+    }
+    .drawer-panel { min-width: 0; padding: 16px; background: var(--glass); border: 1px solid var(--rule); backdrop-filter: blur(14px); }
+    .drawer-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 12px 16px; position: sticky; top: 0; z-index: 2; }
     .drawer-head h2 { flex: 1; min-width: 0; font-size: 1.2rem; }
     .drawer-head small { display: block; margin-top: 3px; font-weight: 500; color: var(--muted); font-size: 0.85rem; line-height: 1.35; }
     .drawer-head .icon-button { flex: none; background: var(--sunken); }
     .drawer-head .icon-button:hover { background: var(--tint); }
-    .drawer-body { flex: 1; overflow: auto; overscroll-behavior: contain; padding: 0 22px 32px; }
-
-    .region-status { padding: 40px 6px; text-align: center; }
+    .region-status { padding: 30px 12px; text-align: center; }
     .region-status p { margin: 0 auto; max-width: 40ch; color: var(--muted); }
     .region-status button { margin-top: 14px; }
     .region-status[data-loading] p::before {
       content: ""; display: block; width: 28px; height: 28px; margin: 0 auto 14px;
-      border-radius: 50%; border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
+      border: 3px solid var(--rule); border-top-color: var(--control); animation: spin 800ms linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .story { margin-top: 18px; padding: 14px 16px; background: #27231c; border: 1px solid #514127; border-radius: 8px; }
+    .story { background: rgb(39 35 28 / 0.92); border-color: #514127; }
     .story h3 { font-size: 0.95rem; margin-bottom: 4px; }
     .story p { margin: 0; font-size: 0.95rem; }
-    .measurements { padding: 16px 0; border-bottom: 1px solid var(--rule); }
     .measurements h3 { font-size: 1rem; }
     #variable-hint { margin: 8px 0 0; }
-    .answer { padding-top: 16px; }
-    .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 800; border-radius: 999px; padding: 5px 13px 5px 10px; }
-    .verdict::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+    .verdict { display: inline-flex; align-items: center; gap: 8px; font-size: 0.92rem; font-weight: 800; padding: 5px 13px 5px 10px; }
+    .verdict::before { content: ""; width: 10px; height: 10px; background: currentColor; }
     .verdict[data-state="rising"] { background: #402720; color: #ffb19a; }
     .verdict[data-state="falling"] { background: #17313f; color: #a8def7; }
     .verdict[data-state="inconclusive"] { background: #26343c; color: #c3d4dd; }
     .answer h2 { font-size: clamp(1.45rem, 2.4vw, 1.9rem); letter-spacing: -0.025em; margin-top: 12px; }
-    .why { margin: 10px 0 0; color: var(--muted); }
+    .why { margin: 0; color: var(--muted); }
     .plain { margin: 14px 0 0; }
-    .answer-stripes { margin-top: 18px; height: 48px; border-radius: 10px; overflow: hidden; }
+    .answer-stripes { margin: 20px 0 0; }
+    .answer-stripes h3 { margin: 0 0 8px; font-size: 1rem; }
+    #result-stripes { height: 68px; }
     .stripes-note, .chart-note, .note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
     .chart { margin: 0; }
-    .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 26px; }
+    .chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
     .chart-head h3 { font-size: 1rem; }
-    .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--rule); }
-    .segmented button { border: 0; background: transparent; border-radius: 5px; padding: 4px 11px; color: var(--muted); font-size: 0.84rem; min-height: 32px; transition: background-color 160ms ease-out, color 160ms ease-out; }
+    .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; background: var(--sunken); border: 1px solid var(--rule); }
+    .segmented button { border: 0; background: transparent; padding: 4px 11px; color: var(--muted); font-size: 0.84rem; min-height: 32px; transition: background-color 160ms ease-out, color 160ms ease-out; }
     .segmented button:hover { color: var(--ink); }
     .segmented button[aria-pressed="true"] { background: var(--control); color: var(--space); }
     .chart-stage { position: relative; height: 260px; margin-top: 12px; }
-    .chart-tooltip { position: absolute; z-index: 1; pointer-events: none; white-space: nowrap; border-radius: 8px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); padding: 6px 10px; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+    .chart-tooltip { position: absolute; z-index: 1; pointer-events: none; white-space: nowrap; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); padding: 6px 10px; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
     .legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.84rem; margin-top: 8px; }
     .legend-item { display: flex; align-items: center; gap: 8px; }
     .swatch { width: 24px; border-top: 2.5px solid var(--control); }
     .swatch.trend, .swatch.forecast { border-top: 2.5px dashed var(--warm); }
-    .swatch.band { height: 12px; border: 0; border-radius: 3px; background: #ff9c822e; }
-    .numbers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 22px 0 0; }
-    .numbers div { background: var(--sunken); border-radius: 8px; padding: 10px 12px; }
+    .swatch.band { height: 12px; border: 0; background: #ff9c822e; }
+    .numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; margin: 18px 0 0; }
+    .numbers div { border-top: 1px solid var(--rule); padding-top: 8px; }
     .numbers div:first-child { grid-column: 1 / -1; }
     .numbers dt { color: var(--muted); font-size: 0.82rem; }
     .numbers dd { margin: 2px 0 0; font: 500 0.95rem var(--numbers); font-variant-numeric: tabular-nums; }
-    .agree { margin-top: 16px; padding: 14px 16px; border-radius: 8px; background: var(--sunken); }
+    .agree { margin-top: 16px; padding: 14px 16px; background: var(--sunken); }
     .agree h3 { font-size: 0.95rem; margin-bottom: 4px; }
     .agree p { margin: 0; color: var(--muted); font-size: 0.92rem; }
-    .forecast { margin-top: 26px; padding-top: 4px; border-top: 1px solid var(--rule); }
-    .skill { display: inline-block; margin: 12px 0 0; padding: 8px 12px; border-radius: 8px; background: #17332f; color: #a3eace; font-weight: 700; font-size: 0.92rem; }
+    .skill { display: inline-block; margin: 12px 0 0; padding: 8px 12px; background: #17332f; color: #a3eace; font-weight: 700; font-size: 0.92rem; }
     .skill[data-weak] { background: #3c3020; color: #f1d4a0; }
     .description { color: var(--muted); font-size: 0.9rem; margin: 8px 0 0; }
     .forecast-stage { height: 220px; }
-    .about { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--rule); display: grid; gap: 12px; }
+    .about { display: grid; gap: 12px; }
     .about p { margin: 0; color: var(--muted); font-size: 0.9rem; }
     .glossary summary { cursor: pointer; font-weight: 700; color: var(--control); }
     .glossary dl { margin: 8px 0 0; }
     .glossary dt { font-weight: 700; font-size: 0.9rem; margin-top: 8px; }
     .glossary dd { margin: 2px 0 0; color: var(--muted); font-size: 0.88rem; }
-    .section-card { margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--rule); }
     .section-card h3 { font-size: 1.05rem; }
     .compare-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
     .compare-row p { margin: 0; color: var(--muted); font-size: 0.88rem; flex: 1 1 180px; }
-    .table-wrap { margin-top: 12px; border-radius: 12px; overflow: auto; box-shadow: inset 0 0 0 1px var(--rule); }
+    .table-wrap { margin-top: 12px; overflow: auto; box-shadow: inset 0 0 0 1px var(--rule); }
     table { border-collapse: collapse; width: 100%; }
     th, td { text-align: left; padding: 9px 12px; font-size: 0.88rem; border-bottom: 1px solid var(--rule); }
     thead { background: var(--sunken); }
@@ -347,7 +347,7 @@
 
     .research-form { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-top: 14px; }
     .research-form label { display: grid; gap: 4px; font-size: 0.85rem; font-weight: 700; }
-    .research-form input { width: 7em; min-height: 38px; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+    .research-form input { width: 7em; min-height: 38px; padding: 6px 10px; border: 1px solid var(--rule); background: var(--surface); }
     .research-form button:disabled { cursor: default; opacity: 0.65; }
     .research-status:empty { margin: 0; }
     .research-sources { margin: 14px 0 0; padding-inline-start: 24px; overflow-wrap: anywhere; }
@@ -360,22 +360,22 @@
     .assistant label { display: block; font-weight: 700; margin-bottom: 6px; }
     .assistant textarea {
       display: block; width: 100%; padding: 10px 12px; resize: vertical; background: var(--surface);
-      color: var(--ink); border: 1px solid var(--rule); border-radius: 8px; font: inherit;
+      color: var(--ink); border: 1px solid var(--rule); font: inherit;
     }
     .assistant-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .assistant button:disabled { cursor: wait; opacity: 0.65; }
     .assistant-reply { white-space: pre-line; margin: 14px 0 0; overflow-wrap: anywhere; }
     .assistant-reply:empty { margin: 0; }
-    .assistant-result { background: var(--sunken); border-radius: 8px; padding: 12px 14px; margin-top: 12px; }
+    .assistant-result { background: var(--sunken); padding: 12px 14px; margin-top: 12px; }
     .assistant-result p { margin: 0; }
     .assistant-result .description { margin-top: 4px; }
     #assistant-view-area { margin-top: 12px; }
-    .refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+    .refresh-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .refresh-status:empty { display: none; }
     .refresh-actions button:disabled { cursor: wait; opacity: 0.65; }
 
     /* How it works dialog */
-    dialog { width: min(760px, calc(100vw - 28px)); max-height: calc(100dvh - 40px); border: 1px solid var(--rule); border-radius: 14px; padding: 0; box-shadow: var(--shadow-2); background: var(--glass); backdrop-filter: blur(16px); color: var(--ink); }
+    dialog { width: min(760px, calc(100vw - 28px)); max-height: calc(100dvh - 40px); border: 1px solid var(--rule); padding: 0; box-shadow: var(--shadow-2); background: var(--glass); backdrop-filter: blur(16px); color: var(--ink); }
     dialog::backdrop { background: rgb(0 0 0 / 0.55); backdrop-filter: blur(3px); }
     dialog[open] { animation: rise 380ms var(--ease-out); }
     .dialog-head { position: sticky; z-index: 2; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 20px 14px 26px; background: var(--surface); border-bottom: 1px solid var(--rule); }
@@ -385,25 +385,13 @@
     .dialog-body p { color: var(--muted); margin: 6px 0 0; font-size: 0.94rem; }
     .dialog-body .credits { grid-column: 1 / -1; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 0.86rem; }
 
-    .error { position: absolute; z-index: 30; top: 90px; left: 14px; right: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--warm); border-radius: 12px; }
+    .error { position: absolute; z-index: 30; top: 90px; left: 14px; right: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--warm); }
 
     @media (max-width: 760px) {
       :root { --drawer: 100%; --map-inset: 8px; }
-      .topbar, .app[data-drawer] .topbar {
-        right: max(8px, env(safe-area-inset-right)); padding: 6px 8px 8px 12px; gap: 4px 8px;
-        display: grid; grid-template-columns: minmax(0, 1fr) auto;
-        grid-template-areas: "brand actions" "tools tools" "hint hint";
-      }
-      .brand { grid-area: brand; font-size: 0.94rem; }
-      .topbar-actions { grid-area: actions; }
-      .map-tools { grid-area: tools; gap: 5px; }
-      .map-field { flex: 1; }
-      .map-field span { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
-      .map-field select { width: 100%; }
-      #draw-circle, #toggle-heat { padding-inline: 9px; font-size: 0.82rem; }
-      #toggle-heat { gap: 5px; }
-      .circle-hint { grid-area: hint; }
-      .camera-frame, .app[data-drawer] .camera-frame { inset: 184px 16px 39px; }
+      .app[data-drawer] .map-hud { right: max(var(--map-inset), env(safe-area-inset-right)); }
+      #toggle-heat { gap: 5px; padding-inline: 9px; font-size: 0.85rem; }
+      .camera-frame, .app[data-drawer] .camera-frame { inset: 156px 16px 39px; }
       .app[data-drawer] .camera-frame { bottom: calc(min(61dvh, 100dvh - 134px) + 17px); }
       .camera-frame > span { width: 15px; height: 12px; }
       #camera-coordinates { left: 21px; top: 4px; font-size: 0.68rem; }
@@ -412,21 +400,20 @@
       .extremes { max-height: 22dvh; overflow: auto; }
       .zoom { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
       .app[data-drawer] :is(.zoom, .legend-card), .app:has(.welcome:not([hidden])) .legend-card { visibility: hidden; }
-      .drawer { top: auto; height: min(61dvh, calc(100dvh - 134px)); border: 1px solid var(--rule); border-radius: 12px 12px 0 0; transform: translateY(105%); }
-      .drawer-head { padding: 10px 12px 10px 16px; }
-      .drawer-body { padding: 0 16px max(24px, env(safe-area-inset-bottom)); }
+      .drawer { top: auto; height: min(61dvh, calc(100dvh - 134px)); transform: translateY(105%); }
+      .drawer-body { padding: 0 var(--map-inset) max(12px, env(safe-area-inset-bottom)); }
+      .drawer-panel { padding: 12px; }
       .dialog-body { grid-template-columns: 1fr; }
     }
     @media (max-width: 390px) {
-      .brand::before { display: none; }
-      .topbar-actions { gap: 0; }
+      .hud-actions { gap: 4px; }
+      #show-assistant { padding-inline: 9px; }
       .map-field select { padding-inline: 5px; font-size: 0.82rem; }
     }
     @media (max-width: 760px) and (max-height: 500px) {
       .camera-frame { display: none; }
       .drawer { height: min(61dvh, max(95px, 100dvh - 184px)); }
     }
-    .drawer-body { min-height: 0; }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
     }
@@ -443,7 +430,6 @@
         <span></span><span></span><span></span><span></span>
         <output id="camera-coordinates"></output>
       </div>
-      <div class="camera-reticle" aria-hidden="true"></div>
       <canvas id="globe-effects" aria-hidden="true"></canvas>
       <div id="lens-transition" aria-hidden="true"></div>
       <div class="pin" id="map-pin" hidden></div>
@@ -451,26 +437,31 @@
     </div>
     <p class="sr-only" id="map-help">Drag or use the arrow keys to rotate the globe or orbit the selected area. Plus and minus zoom. Select a place or press Enter for the centre of the view.</p>
 
-    <header class="float topbar" id="map-toolbar">
-      <h1 class="brand">Climate Trend Explorer</h1>
-      <div class="map-tools">
-        <label class="map-field" for="map-variable"><span>Measurement</span> <select id="map-variable" name="measurement"></select></label>
-        <button type="button" class="button secondary small" id="toggle-heat" aria-pressed="true" aria-controls="trend-map">Heatmap</button>
-        <button type="button" class="button secondary small" id="draw-circle" aria-pressed="false" aria-controls="trend-map">Magic select</button>
-      </div>
-      <div class="topbar-actions">
-        <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
-        <button type="button" class="icon-button" id="show-welcome" aria-label="Start here: examples and tips">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
-        </button>
-        <button type="button" class="icon-button" id="show-how" aria-label="How it works">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg>
-        </button>
+    <header class="map-hud" id="map-toolbar">
+      <div class="hud-layout">
+        <h1 class="brand">Climate Trend Explorer</h1>
+        <div class="map-tools" role="group" aria-label="Map controls">
+          <label class="map-field" for="map-variable"><span class="sr-only">Measurement</span><select id="map-variable" name="measurement"></select></label>
+          <button type="button" class="button secondary small" id="toggle-heat" aria-pressed="true" aria-controls="trend-map">Heatmap</button>
+          <button type="button" class="icon-button" id="draw-circle" aria-label="Magic select" title="Magic select" aria-pressed="false" aria-controls="trend-map">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+              <path d="M13.5 8.5a7 7 0 1 0 4 6.5" stroke-dasharray="2.2 2.8"/><path d="M18 3v8m-4-4h8"/>
+            </svg>
+          </button>
+        </div>
+        <div class="hud-actions">
+          <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
+          <button type="button" class="icon-button" id="show-welcome" aria-label="Start here: examples and tips">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+          </button>
+          <button type="button" class="icon-button" id="show-how" aria-label="How it works">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg>
+          </button>
+        </div>
       </div>
       <p class="circle-hint" id="circle-hint" role="status" hidden></p>
       <div class="camera-actions">
         <button type="button" class="button secondary small" id="deselect-area" aria-controls="trend-map drawer" hidden>Deselect</button>
-        <button type="button" class="button secondary small" id="camera-static" aria-pressed="true" aria-controls="camera-grain">Static</button>
       </div>
     </header>
 
@@ -520,22 +511,22 @@
     </div>
 
     <aside class="drawer" id="drawer" aria-labelledby="drawer-title">
-      <div class="drawer-head">
-        <h2 id="drawer-title" tabindex="-1"><span id="drawer-place">A place</span><small id="site-description"></small></h2>
-        <button type="button" class="icon-button" id="close-drawer" aria-label="Close the results">×</button>
-      </div>
       <div class="drawer-body" id="explorer">
-        <div id="region-status" class="region-status" hidden aria-live="polite">
+        <div class="drawer-panel drawer-head">
+          <h2 id="drawer-title" tabindex="-1"><span id="drawer-place">A place</span><small id="site-description"></small></h2>
+          <button type="button" class="icon-button" id="close-drawer" aria-label="Close the results">×</button>
+        </div>
+        <div id="region-status" class="drawer-panel region-status" hidden aria-live="polite">
           <p id="region-message"></p>
           <button type="button" class="button secondary small" id="retry-region" hidden>Try again</button>
         </div>
-        <div class="story" id="story" hidden aria-live="polite">
+        <div class="drawer-panel story" id="story" hidden aria-live="polite">
           <h3 id="story-title"></h3>
           <p id="story-text"></p>
         </div>
 
         <div id="region-results" class="results" hidden>
-          <section class="measurements" aria-labelledby="measurement-title">
+          <section class="drawer-panel measurements" aria-labelledby="measurement-title">
             <div class="compare-row">
               <h3 id="measurement-title">Measurements</h3>
               <button type="button" class="button secondary small" id="compare-toggle" aria-pressed="false" aria-describedby="variable-hint">Compare</button>
@@ -544,48 +535,55 @@
             <p class="description" id="variable-hint" hidden></p>
           </section>
           <article class="answer" id="single-report" aria-labelledby="result-headline">
-            <span class="verdict" id="trend-verdict"></span>
-            <h2 id="result-headline"></h2>
-            <div aria-live="polite">
-              <p class="plain" id="trend-meaning"></p>
+            <div class="drawer-panel">
+              <span class="verdict" id="trend-verdict"></span>
+              <h2 id="result-headline"></h2>
+              <p class="plain" id="trend-meaning" aria-live="polite"></p>
             </div>
 
-            <figure class="chart" aria-labelledby="chart-title">
-              <div class="chart-head">
-                <h3 id="chart-title"></h3>
-                <div class="segmented" id="chart-options" role="group" aria-label="Chart view"></div>
-              </div>
-              <p class="chart-note" id="chart-note" hidden></p>
-              <div class="chart-stage" id="chart-stage">
-                <canvas id="chart" tabindex="0" role="img" aria-labelledby="chart-title" aria-describedby="chart-instructions chart-selection"></canvas>
-                <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
-              </div>
-              <p class="sr-only" id="chart-instructions">Use the left and right arrow keys to read values.</p>
-              <p class="sr-only" id="chart-selection" aria-live="polite"></p>
-              <figcaption class="legend">
-                <span class="legend-item"><span class="swatch" aria-hidden="true"></span><span id="legend-value">Annual value</span></span>
-                <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
-              </figcaption>
-            </figure>
-            <div class="answer-stripes"><canvas id="result-stripes" aria-hidden="true"></canvas></div>
-            <p class="stripes-note" id="stripes-note"></p>
-            <p class="why" id="variable-why"></p>
-            <p class="plain" id="trend-chance" aria-live="polite"></p>
+            <div class="drawer-panel">
+              <figure class="chart" aria-labelledby="chart-title">
+                <div class="chart-head">
+                  <h3 id="chart-title"></h3>
+                  <div class="segmented" id="chart-options" role="group" aria-label="Chart view"></div>
+                </div>
+                <p class="chart-note" id="chart-note" hidden></p>
+                <div class="chart-stage" id="chart-stage">
+                  <canvas id="chart" tabindex="0" role="img" aria-labelledby="chart-title" aria-describedby="chart-instructions chart-selection"></canvas>
+                  <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true" hidden></div>
+                </div>
+                <p class="sr-only" id="chart-instructions">Use the left and right arrow keys to read values.</p>
+                <p class="sr-only" id="chart-selection" aria-live="polite"></p>
+                <figcaption class="legend">
+                  <span class="legend-item"><span class="swatch" aria-hidden="true"></span><span id="legend-value">Annual value</span></span>
+                  <span class="legend-item" id="trend-legend"><span class="swatch trend" aria-hidden="true"></span>Trend line</span>
+                </figcaption>
+              </figure>
+              <figure class="answer-stripes" aria-labelledby="stripes-title">
+                <h3 id="stripes-title">Yearly differences from average</h3>
+                <canvas id="result-stripes" aria-hidden="true"></canvas>
+                <figcaption class="stripes-note" id="stripes-note"></figcaption>
+              </figure>
+            </div>
+            <div class="drawer-panel">
+              <p class="why" id="variable-why"></p>
+              <p class="plain" id="trend-chance" aria-live="polite"></p>
 
-            <dl class="numbers">
-              <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
-              <div><dt>Likely range (95%)</dt><dd id="trend-ci"></dd></div>
-              <div><dt>p-value</dt><dd id="trend-p"></dd></div>
-              <div><dt>Theil-Sen per decade</dt><dd id="trend-sen"></dd></div>
-              <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
-            </dl>
-            <p class="note" id="trend-agree"></p>
-            <div class="agree" id="datasets-agree" hidden>
-              <h3>Do the datasets agree?</h3>
-              <p id="datasets-agree-text"></p>
+              <dl class="numbers">
+                <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
+                <div><dt>Likely range (95%)</dt><dd id="trend-ci"></dd></div>
+                <div><dt>p-value</dt><dd id="trend-p"></dd></div>
+                <div><dt>Theil-Sen per decade</dt><dd id="trend-sen"></dd></div>
+                <div><dt>Mann-Kendall p-value</dt><dd id="trend-mk"></dd></div>
+              </dl>
+              <p class="note" id="trend-agree"></p>
+              <div class="agree" id="datasets-agree" hidden>
+                <h3>Do the datasets agree?</h3>
+                <p id="datasets-agree-text"></p>
+              </div>
             </div>
 
-            <section class="forecast" id="forecast" aria-labelledby="forecast-title" hidden>
+            <section class="drawer-panel" id="forecast" aria-labelledby="forecast-title" hidden>
               <div class="chart-head">
                 <h3 id="forecast-title">What happens next?</h3>
                 <div class="segmented" id="forecast-options" role="group" aria-label="Forecast view"></div>
@@ -598,7 +596,7 @@
               <div class="legend" id="forecast-legend"></div>
             </section>
 
-            <div class="about">
+            <div class="drawer-panel about">
               <p id="variable-description"></p>
               <details class="glossary">
                 <summary>What do these numbers mean?</summary>
@@ -613,7 +611,7 @@
             </div>
           </article>
 
-          <section class="section-card" id="correlations" aria-labelledby="correlations-title" hidden>
+          <section class="drawer-panel section-card" id="correlations" aria-labelledby="correlations-title" hidden>
             <h3 id="correlations-title">How the measurements move together</h3>
             <p class="description">Each number runs from −1 to +1. Near +1, the two rise and fall together. Near −1, one rises when the other falls. Near 0, there’s no clear link. Seasons and the long-term trend are removed first, and each pair is compared over the years both records cover. A link is not proof that one causes the other.</p>
             <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
@@ -621,12 +619,12 @@
             <div class="table-wrap"><table class="matrix" id="matrix" aria-labelledby="correlations-title"></table></div>
           </section>
 
-          <div class="refresh-actions" id="point-actions">
+          <div class="drawer-panel refresh-actions" id="point-actions">
             <button type="button" class="button secondary small" id="refresh-giovanni">Refresh from Giovanni</button>
             <button type="button" class="button secondary small" id="ask-at-point">Ask AI about this point</button>
             <p id="refresh-status" class="description refresh-status" role="status"></p>
           </div>
-          <section class="section-card" id="research" aria-labelledby="research-title">
+          <section class="drawer-panel section-card" id="research" aria-labelledby="research-title">
             <h3 id="research-title">Research context</h3>
             <p class="description" id="research-scope"></p>
             <form class="research-form" id="research-form" aria-describedby="research-scope">
@@ -638,7 +636,7 @@
             <ol class="research-sources" id="research-sources" aria-label="Research sources" hidden></ol>
           </section>
 
-          <section class="section-card" aria-labelledby="overview-title">
+          <section class="drawer-panel section-card" aria-labelledby="overview-title">
             <h3 id="overview-title"></h3>
             <div class="table-wrap">
               <table>
