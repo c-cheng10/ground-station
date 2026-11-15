@@ -25,22 +25,26 @@
     attribute vec3 aPoint;
     attribute vec2 aUv;
     attribute float aWallTop;
+    attribute vec3 aOutline;
     uniform vec3 uRight, uNorth, uFront, uEye;
-    uniform vec2 uScale, uShift;
+    uniform vec2 uScale, uShift, uOutlineScale;
     uniform float uRelief, uLift;
     uniform mediump int uLayer;
     uniform sampler2D uHeight, uSelection, uSurface;
     varying vec2 vUv;
     varying vec3 vPoint;
     varying float vWallTop;
+    bool raisedLayer() {
+      return uLayer == 2 || uLayer == 3 || uLayer == 4 || uLayer == 6;
+    }
     float elevation(vec2 uv) {
       float height = 0.0;
       if (uRelief > 0.0) {
         float land = smoothstep(0.5, 1.0, texture2D(uSurface, uv).r);
-        float selected = uLayer >= 2 ? 1.0 : texture2D(uSelection, uv).r;
+        float selected = raisedLayer() ? 1.0 : texture2D(uSelection, uv).r;
         height = texture2D(uHeight, uv).r * selected * land * uRelief;
       }
-      return height + (uLayer >= 2 ? uLift : 0.0);
+      return height + (raisedLayer() ? uLift : 0.0);
     }
     const vec2 mesh = vec2(${columns}.0, ${rows}.0);
     vec3 meshVertex(vec2 cell) {
@@ -62,14 +66,24 @@
     }
     void main() {
       bool border = uLayer == 1 || uLayer == 3;
-      vec3 displaced = border || uLayer == 4 ? borderVertex(aUv) : aPoint * (1.0 + elevation(aUv));
+      bool outline = uLayer == 5 || uLayer == 6;
+      vec3 displaced = border || outline || uLayer == 4 ? borderVertex(aUv) : aPoint * (1.0 + elevation(aUv));
       if (uLayer == 4 && aWallTop < 0.5) displaced = normalize(displaced) * 0.998;
       vec3 sightline = displaced - uEye;
       float w = -dot(sightline, uFront);
       vec2 xy = vec2(dot(sightline, uRight), dot(sightline, uNorth));
+      vec2 clipXY = xy * uScale + w * uShift;
+      if (outline) {
+        // Expand in screen space so the width and glow stay steady as the camera moves.
+        vec3 other = borderVertex(aOutline.xy) - uEye;
+        vec2 otherXY = vec2(dot(other, uRight), dot(other, uNorth));
+        vec2 direction = (otherXY * w + xy * dot(other, uFront)) * aOutline.z;
+        vec2 normal = vec2(-direction.y, direction.x) / max(length(direction), 0.00000001);
+        clipXY += normal * aWallTop * uOutlineScale * w;
+      }
       // Perspective depth with near 0.012 and far 16 in units of Earth radii.
-      float depth = w * 1.001501 - 0.024018 - (border ? 0.00012 * w : 0.0);
-      gl_Position = vec4(xy * uScale + w * uShift, depth, w);
+      float depth = w * 1.001501 - 0.024018 - (border ? 0.00012 * w : outline ? 0.00004 * w : 0.0);
+      gl_Position = vec4(clipXY, depth, w);
       vUv = aUv;
       vPoint = displaced;
       vWallTop = aWallTop;
@@ -79,7 +93,7 @@
   const fragmentShader = (palette) => `
     precision highp float;
     uniform vec3 uEye, uLight;
-    uniform float uRelief, uRise;
+    uniform float uRelief, uRise, uOutlineOpacity;
     uniform bool uHeatVisible, uFocused, uHasPlatform;
     uniform mediump int uLayer;
     uniform vec2 uTexel;
@@ -103,6 +117,15 @@
       float facing = clamp(dot(bodyNormal, toEye), 0.0, 1.0);
       float lambert = max(0.0, dot(bodyNormal, uLight));
       vec4 surface = texture2D(uSurface, vUv);
+      if (uLayer == 5 || uLayer == 6) {
+        bool cap = uHasPlatform && uRise >= 0.001 && texture2D(uPlatform, vUv).r >= 0.46;
+        if (cap != (uLayer == 6) || surface.r < 0.48 || facing <= 0.0) discard;
+        float edge = abs(vWallTop);
+        float core = 1.0 - smoothstep(0.16, 0.34, edge);
+        float glow = 0.24 * (1.0 - smoothstep(0.20, 1.0, edge));
+        gl_FragColor = vec4(mix(vec3(0.79, 0.91, 1.0), vec3(1.0), core), max(core, glow) * uOutlineOpacity);
+        return;
+      }
       float land = smoothstep(0.48, 0.62, surface.r);
       float selected = uFocused ? texture2D(uSelection, vUv).r : 1.0;
       if (uLayer == 4) {
@@ -168,6 +191,31 @@
     return program;
   }
 
+  function appendBorderSegment(vertices, start, end) {
+    const x = (start[0] + 180) * columns / 360;
+    const y = (90 - start[1]) * rows / 180;
+    const dx = ((end[0] - start[0] + 540) % 360 - 180) * columns / 360;
+    const dy = (start[1] - end[1]) * rows / 180;
+    if (!dx && !dy) return;
+    const cuts = [0, 1];
+    // Split the path at each grid and triangle edge so it sits flush on the raised mesh.
+    for (const [origin, delta] of [[x, dx], [y, dy], [x + y, dx + dy]]) {
+      const lower = Math.min(origin, origin + delta);
+      const upper = Math.max(origin, origin + delta);
+      for (let edge = Math.floor(lower) + 1; edge < upper; edge += 1) cuts.push((edge - origin) / delta);
+    }
+    cuts.sort((a, b) => a - b);
+    for (let i = 1; i < cuts.length; i += 1) {
+      if (cuts[i] - cuts[i - 1] < 1e-7) continue;
+      const wrap = Math.floor((x + (cuts[i] + cuts[i - 1]) * dx / 2) / columns);
+      for (const t of [cuts[i - 1], cuts[i]]) {
+        const u = (x + t * dx) / columns - wrap;
+        const v = (y + t * dy) / rows;
+        vertices.push(...point((u - 0.5) * turn, (0.5 - v) * Math.PI), u, v);
+      }
+    }
+  }
+
   function borderSegments(countries) {
     const vertices = [];
     const unique = new Set();
@@ -181,27 +229,7 @@
         const key = first < last ? first + "|" + last : last + "|" + first;
         if (unique.has(key)) continue;
         unique.add(key);
-        const x = (start[0] + 180) * columns / 360;
-        const y = (90 - start[1]) * rows / 180;
-        const dx = ((end[0] - start[0] + 540) % 360 - 180) * columns / 360;
-        const dy = (start[1] - end[1]) * rows / 180;
-        const cuts = [0, 1];
-        // Split the path at each grid and triangle edge so it sits flush on the raised mesh.
-        for (const [origin, delta] of [[x, dx], [y, dy], [x + y, dx + dy]]) {
-          const lower = Math.min(origin, origin + delta);
-          const upper = Math.max(origin, origin + delta);
-          for (let edge = Math.floor(lower) + 1; edge < upper; edge += 1) cuts.push((edge - origin) / delta);
-        }
-        cuts.sort((a, b) => a - b);
-        for (let i = 1; i < cuts.length; i += 1) {
-          if (cuts[i] - cuts[i - 1] < 1e-7) continue;
-          const wrap = Math.floor((x + (cuts[i] + cuts[i - 1]) * dx / 2) / columns);
-          for (const t of [cuts[i - 1], cuts[i]]) {
-            const u = (x + t * dx) / columns - wrap;
-            const v = (y + t * dy) / rows;
-            vertices.push(...point((u - 0.5) * turn, (0.5 - v) * Math.PI), u, v);
-          }
-        }
+        appendBorderSegment(vertices, start, end);
       }
     }
     return new Float32Array(vertices);
@@ -226,6 +254,28 @@
       }
     }
     return walls;
+  }
+
+  function outlineLines(segments) {
+    const vertices = [];
+    for (const [start, end] of segments) appendBorderSegment(vertices, start, end);
+    return new Float32Array(vertices);
+  }
+
+  function outlineRibbon(lines) {
+    const stride = 9;
+    const vertices = new Float32Array(lines.length / 10 * 6 * stride);
+    const corners = [[0, -1], [5, -1], [0, 1], [0, 1], [5, -1], [5, 1]];
+    let offset = 0;
+    for (let i = 0; i < lines.length; i += 10) {
+      for (const [from, side] of corners) {
+        const to = i + 5 - from;
+        vertices.set(lines.subarray(i + from, i + from + 5), offset);
+        vertices.set([side, lines[to + 3], lines[to + 4], from === 0 ? 1 : -1], offset + 5);
+        offset += stride;
+      }
+    }
+    return vertices;
   }
 
   function sphere(gl) {
@@ -262,21 +312,26 @@
     const position = gl.getAttribLocation(program, "aPoint");
     const uv = gl.getAttribLocation(program, "aUv");
     const wallTop = gl.getAttribLocation(program, "aWallTop");
+    const outlineEnd = gl.getAttribLocation(program, "aOutline");
     const lineWidth = gl.getParameter(gl.ALIASED_LINE_WIDTH_RANGE)[1];
     gl.enableVertexAttribArray(position);
     gl.enableVertexAttribArray(uv);
-    function bindVertices(buffer, walls = false) {
-      const stride = walls ? 24 : 20;
+    function bindVertices(buffer, walls = false, outline = false) {
+      const stride = outline ? 36 : walls ? 24 : 20;
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       gl.vertexAttribPointer(position, 3, gl.FLOAT, false, stride, 0);
       gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, stride, 12);
-      if (walls) {
+      if (walls || outline) {
         gl.enableVertexAttribArray(wallTop);
         gl.vertexAttribPointer(wallTop, 1, gl.FLOAT, false, stride, 20);
       } else {
         gl.disableVertexAttribArray(wallTop);
         gl.vertexAttrib1f(wallTop, 0);
       }
+      if (outline) {
+        gl.enableVertexAttribArray(outlineEnd);
+        gl.vertexAttribPointer(outlineEnd, 3, gl.FLOAT, false, stride, 24);
+      } else gl.disableVertexAttribArray(outlineEnd);
     }
     const locations = new Map();
     const uniform = (name) => {
@@ -314,12 +369,13 @@
 
     function drawBorders(buffer, count, layer, dpr) {
       if (!count) return;
-      bindVertices(buffer);
+      const outline = layer >= 5;
+      bindVertices(buffer, false, outline);
       gl.uniform1i(uniform("uLayer"), layer);
       gl.enable(gl.BLEND);
       gl.depthMask(false);
-      gl.lineWidth(Math.min(lineWidth, dpr));
-      gl.drawArrays(gl.LINES, 0, count);
+      if (!outline) gl.lineWidth(Math.min(lineWidth, dpr));
+      gl.drawArrays(outline ? gl.TRIANGLES : gl.LINES, 0, count);
       gl.depthMask(true);
       gl.disable(gl.BLEND);
     }
@@ -328,7 +384,11 @@
     let platformBorder;
     let platformWall;
     let borderVertexCount = 0;
-    return ({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise }) => {
+    let previousSegments;
+    let outlineBuffer;
+    let outlineVertexCount = 0;
+    return ({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise,
+      selectionSegments, outlineOpacity }) => {
       if (gl.isContextLost()) return;
       const { width, height, front, right, north, eye, light, focal, offsetX, offsetY, reliefHeight } = frame;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -351,38 +411,55 @@
       gl.uniform1i(uniform("uFocused"), selection !== null);
       gl.uniform2f(uniform("uTexel"), 1 / (heightMap?.width || 1), 1 / (heightMap?.height || 1));
       const hasPlatform = platform !== null;
+      const hasCap = hasPlatform && rise >= 0.001;
+      const baseRelief = !hasPlatform && heat && selection && heightMap ? 0.030 * Math.min(rise, relief) : 0;
       gl.uniform1i(uniform("uHasPlatform"), hasPlatform);
       gl.uniform1f(uniform("uRise"), rise);
       gl.uniform1f(uniform("uLift"), hasPlatform ? platformLift * rise : 0);
-      gl.uniform1f(uniform("uRelief"), !hasPlatform && heat && selection && heightMap ? 0.030 * Math.min(rise, relief) : 0);
+      gl.uniform1f(uniform("uRelief"), baseRelief);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       bindVertices(mesh.buffer);
       gl.uniform1i(uniform("uLayer"), 0);
       gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
       drawBorders(borderBuffer, borders.length / 5, 1, dpr);
-      if (!hasPlatform || rise < 0.001) return;
-      if (liftedCountries !== platformCountries) {
-        if (platformBorder) gl.deleteBuffer(platformBorder);
-        if (platformWall) gl.deleteBuffer(platformWall);
-        const lines = borderSegments(platformCountries);
-        borderVertexCount = lines.length / 5;
-        platformBorder = borderVertexCount ? vertexBuffer(gl, lines) : null;
-        platformWall = borderVertexCount ? vertexBuffer(gl, platformWalls(lines)) : null;
-        liftedCountries = platformCountries;
-      }
+      if (hasCap) {
+        if (liftedCountries !== platformCountries) {
+          if (platformBorder) gl.deleteBuffer(platformBorder);
+          if (platformWall) gl.deleteBuffer(platformWall);
+          const lines = borderSegments(platformCountries);
+          borderVertexCount = lines.length / 5;
+          platformBorder = borderVertexCount ? vertexBuffer(gl, lines) : null;
+          platformWall = borderVertexCount ? vertexBuffer(gl, platformWalls(lines)) : null;
+          liftedCountries = platformCountries;
+        }
 
-      gl.uniform1f(uniform("uRelief"), reliefHeight);
-      if (platformWall) {
-        bindVertices(platformWall, true);
-        gl.uniform1i(uniform("uLayer"), 4);
-        gl.disable(gl.CULL_FACE);
-        gl.drawArrays(gl.TRIANGLES, 0, borderVertexCount * 3);
-        gl.enable(gl.CULL_FACE);
+        gl.uniform1f(uniform("uRelief"), reliefHeight);
+        if (platformWall) {
+          bindVertices(platformWall, true);
+          gl.uniform1i(uniform("uLayer"), 4);
+          gl.disable(gl.CULL_FACE);
+          gl.drawArrays(gl.TRIANGLES, 0, borderVertexCount * 3);
+          gl.enable(gl.CULL_FACE);
+        }
+        bindVertices(mesh.buffer);
+        gl.uniform1i(uniform("uLayer"), 2);
+        gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
+        drawBorders(platformBorder, borderVertexCount, 3, dpr);
       }
-      bindVertices(mesh.buffer);
-      gl.uniform1i(uniform("uLayer"), 2);
-      gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
-      drawBorders(platformBorder, borderVertexCount, 3, dpr);
+      if (selectionSegments?.length && outlineOpacity > 0) {
+        if (selectionSegments !== previousSegments) {
+          if (outlineBuffer) gl.deleteBuffer(outlineBuffer);
+          const vertices = outlineRibbon(outlineLines(selectionSegments));
+          outlineVertexCount = vertices.length / 9;
+          outlineBuffer = outlineVertexCount ? vertexBuffer(gl, vertices) : null;
+          previousSegments = selectionSegments;
+        }
+        gl.uniform1f(uniform("uOutlineOpacity"), outlineOpacity);
+        gl.uniform2f(uniform("uOutlineScale"), 4.8 / width, 4.8 / height);
+        if (hasCap) drawBorders(outlineBuffer, outlineVertexCount, 6, dpr);
+        gl.uniform1f(uniform("uRelief"), baseRelief);
+        drawBorders(outlineBuffer, outlineVertexCount, 5, dpr);
+      }
     };
   }
 
@@ -394,6 +471,8 @@
     const raster = document.createElement("canvas");
     const rasterContext = raster.getContext("2d");
     const textures = new WeakMap();
+    let previousSegments;
+    let selectionLines;
     function pixels(source) {
       if (!source) return null;
       if (source.data) return source;
@@ -404,7 +483,7 @@
       return textures.get(source);
     }
 
-    return ({ frame, surface, heat, selection, platform, rise }) => {
+    return ({ frame, surface, heat, selection, platform, rise, selectionSegments, outlineOpacity }) => {
       const { width, height, cx, cy, focal, eye, front, right, north } = frame;
       const scale = Math.min(1, 500 / Math.max(width, height));
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -480,19 +559,21 @@
       };
       const visible = (first, second) => first[3] >= 0 ? first : first.map((value, index) =>
         value + (second[index] - value) * -first[3] / (second[3] - first[3]));
+      const cameraPoint = (point) => [dot(point, right) - eyeRight, dot(point, north) - eyeUp,
+        eyeForward - dot(point, front), dot(point, eye) - 1];
+      const trace = (path, a, b) => {
+        path.moveTo(...project(visible(a, b)));
+        path.lineTo(...project(visible(b, a)));
+      };
       for (let i = 0; i < borders.length; i += 10) {
-        const endpoints = [borders.subarray(i, i + 3), borders.subarray(i + 5, i + 8)];
-        const points = endpoints.map((point) => [dot(point, right) - eyeRight, dot(point, north) - eyeUp,
-          eyeForward - dot(point, front), dot(point, eye) - 1]);
-        const [a, b] = points;
+        const a = cameraPoint(borders.subarray(i, i + 3));
+        const b = cameraPoint(borders.subarray(i + 5, i + 8));
         if (a[3] < 0 && b[3] < 0) continue;
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
         const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
         const dim = focusTexture && focusTexture.data[textureIndex(focusTexture, u, v)] < 128;
-        const path = paths[(dim ? 2 : 0) + (dark ? 1 : 0)];
-        path.moveTo(...project(visible(a, b)));
-        path.lineTo(...project(visible(b, a)));
+        trace(paths[(dim ? 2 : 0) + (dark ? 1 : 0)], a, b);
       }
       ctx.lineWidth = 1;
       ctx.lineCap = "round";
@@ -503,6 +584,26 @@
         ctx.strokeStyle = inks[index];
         ctx.stroke(path);
       });
+      if (selectionSegments?.length && outlineOpacity > 0) {
+        if (selectionSegments !== previousSegments) {
+          selectionLines = outlineLines(selectionSegments);
+          previousSegments = selectionSegments;
+        }
+        const path = new Path2D();
+        for (let i = 0; i < selectionLines.length; i += 10) {
+          const a = cameraPoint(selectionLines.subarray(i, i + 3));
+          const b = cameraPoint(selectionLines.subarray(i + 5, i + 8));
+          if (a[3] >= 0 || b[3] >= 0) trace(path, a, b);
+        }
+        ctx.save();
+        ctx.globalAlpha = outlineOpacity;
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 1.25;
+        ctx.shadowBlur = 4 * dpr;
+        ctx.shadowColor = "rgba(182,227,255,0.55)";
+        ctx.stroke(path);
+        ctx.restore();
+      }
     };
   }
 
@@ -541,7 +642,8 @@
 
     function render({ longitude, latitude, zoom = 1, lens = 1, offsetX = 0, offsetY = 0,
       surface = null, heat = null, selection = null, heightMap = null, relief = 0,
-      platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0 }) {
+      platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0,
+      selectionSegments = null, outlineOpacity = 0 }) {
       const { clientWidth: width, clientHeight: height } = canvas;
       if (!width || !height) return;
       const lon = longitude * rad;
@@ -574,7 +676,8 @@
       const light = unit(aim.map((value, i) => key[0] * aimRight[i] + key[1] * aimNorth[i] + key[2] * value));
       frame = { front, right, north, eye, light, distance, focal, cx: width / 2 + offsetX, cy: height / 2 + offsetY,
         width, height, offsetX, offsetY, lift, platform, reliefHeight, heightMap };
-      draw({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise });
+      draw({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise,
+        selectionSegments, outlineOpacity });
     }
 
     function project(longitude, latitude) {

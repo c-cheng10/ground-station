@@ -328,6 +328,10 @@
   async function selectSite(nextSite) {
     if (regionRequest && site.id === nextSite.id) {
       openDrawer();
+      if (nextSite.mapAnchor) {
+        site.mapAnchor = nextSite.mapAnchor;
+        flyTo(focusZoom(site));
+      }
       return;
     }
     regionRequest?.abort();
@@ -335,6 +339,11 @@
     regionRequest = request;
     site = nextSite;
     if (!site.platformCountries) site.platformCountries = selectedCountries(site);
+    if (!site.selectionSegments) {
+      const cells = site.areaIds?.map((id) => id.split(",").map(Number)) ?? [[site.latitude, site.longitude]];
+      const bounds = site.platformCountries.length ? site.platformCountries : countries;
+      site.selectionSegments = window.selectionOutline(cells, bounds, gridSpacing);
+    }
     deselectButton.hidden = false;
     analysis = null;
     delete regionResults.dataset.site;
@@ -637,7 +646,7 @@
     const sample = useGridCell ? points[gridPointIndex(latitude, longitude)] : [latitude, longitude];
     const target = sample && pointSite(...sample);
     if (target) {
-      selectSite(target);
+      selectSite(useGridCell ? { ...target, mapAnchor: [longitude, latitude] } : target);
       return;
     }
     regionRequest?.abort();
@@ -1232,7 +1241,7 @@
   }
   const home = { lat: 17, lon: -18, zoom: 1 };
   const initialOrbitTilt = 0.9;
-  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
+  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, outlineOpacity: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
   let heatVisible = true;
   let displayedVariable;
   let lensStarted = 0;
@@ -1364,12 +1373,13 @@
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, platform, platformCountries, rise: mapView.rise,
       tilt: mapView.orbitTilt * mapView.rise, orbitAzimuth: mapView.orbitAzimuth,
+      selectionSegments: viewedSite?.selectionSegments, outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
       selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
     updateViewfinder();
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
     drawMagicEffects(now);
-    const anchor = !drawingArea && viewedSite === site && site && !site.areaIds && globe.project(site.longitude, site.latitude);
+    const anchor = !drawingArea && site && !site.areaIds && globe.project(...(site.mapAnchor ?? [site.longitude, site.latitude]));
     pin.hidden = !anchor;
     if (anchor) {
       pin.style.left = `${anchor[0]}px`;
@@ -1487,7 +1497,8 @@
   }
 
   function flyTo(zoom, { avoidPanel = true,
-    lat = site?.latitude ?? mapView.lat, lon = site?.longitude ?? mapView.lon } = {}) {
+    lat = site?.mapAnchor?.[1] ?? site?.latitude ?? mapView.lat,
+    lon = site?.mapAnchor?.[0] ?? site?.longitude ?? mapView.lon } = {}) {
     const selection = site;
     const [width] = mapSize();
     const open = avoidPanel && app.hasAttribute("data-drawer");
@@ -1503,9 +1514,9 @@
     const keepPlatform = previousCountries.length > 0 && previousCountries.length === nextCountries.length &&
       previousCountries.every((country) => nextCountries.includes(country));
     if (keepPlatform) selection.platformCountries = previousCountries;
-    const swapAt = changingSite && !keepPlatform && from.rise > 0 && selection ? 0.34 : 0;
+    const swapAt = changingSite && from.rise > 0 && selection ? 0.34 : 0;
     const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY,
-      rise: selection ? 1 : 0, orbitAzimuth: changingSite ? 0 : from.orbitAzimuth,
+      rise: selection ? 1 : 0, outlineOpacity: selection ? 1 : 0, orbitAzimuth: changingSite ? 0 : from.orbitAzimuth,
       orbitTilt: changingSite ? initialOrbitTilt : from.orbitTilt };
     const startVector = toVector(from.lat, from.lon);
     const endVector = toVector(target.lat, target.lon);
@@ -1545,13 +1556,19 @@
       const liftStart = Math.max(swapAt, orbitFirst ? 0.6 : 0.14);
       const lift = ease(Math.max(0, (t - liftStart) / (1 - liftStart)));
       if (t < swapAt) {
-        mapView.rise = from.rise * (1 - ease(t / swapAt));
+        const remaining = 1 - ease(t / swapAt);
+        mapView.rise = keepPlatform ? from.rise : from.rise * remaining;
+        mapView.outlineOpacity = from.outlineOpacity * remaining;
       } else if (selection) {
         viewedSite = selection;
-        const startRise = swapAt ? 0 : from.rise;
+        const startRise = swapAt && !keepPlatform ? 0 : from.rise;
         mapView.rise = startRise + (1 - startRise) * lift;
+        const startOpacity = changingSite ? 0 : from.outlineOpacity;
+        mapView.outlineOpacity = startOpacity + (1 - startOpacity) * ease(Math.max(0, (t - 0.6) / 0.4));
       } else {
-        mapView.rise = from.rise * (1 - ease(Math.min(1, t / 0.5)));
+        const remaining = 1 - ease(Math.min(1, t / 0.5));
+        mapView.rise = from.rise * remaining;
+        mapView.outlineOpacity = from.outlineOpacity * remaining;
         if (!mapView.rise) viewedSite = null;
       }
       if (t === 1) {
@@ -1719,9 +1736,10 @@
   }
 
   function selectionCentred() {
+    const [lon, lat] = site.mapAnchor ?? [site.longitude, site.latitude];
     return viewedSite === site && mapView.rise === 1 &&
-      Math.abs(mapView.lat - clampLatitude(site.latitude)) < 1e-7 &&
-      Math.abs(signedLongitude(mapView.lon - site.longitude)) < 1e-7;
+      Math.abs(mapView.lat - clampLatitude(lat)) < 1e-7 &&
+      Math.abs(signedLongitude(mapView.lon - lon)) < 1e-7;
   }
 
   function selectionLanding() {
@@ -1735,7 +1753,7 @@
       return true;
     }
     stopFlight();
-    mapView.orbitAzimuth = signedLongitude(mapView.orbitAzimuth - dx * 0.25);
+    mapView.orbitAzimuth = signedLongitude(mapView.orbitAzimuth + dx * 0.25);
     mapView.orbitTilt = Math.max(0.15, Math.min(1, mapView.orbitTilt - dy * 0.005));
     return true;
   }
