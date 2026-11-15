@@ -98,7 +98,8 @@
   }
 
   function makeMeasurement(entry, points, land) {
-    const fullRelief = (3.25 / 3.6) ** 2;
+    const fullRelief = (2.25 / 3.6) ** 2;
+    const water = Boolean(entry.water);
     const weights = new Float32Array(size);
     const slopes = new Float32Array(size);
     const distances = new Float32Array(size);
@@ -110,8 +111,6 @@
       const range = ocean ? 6 : 3.6;
       const falloff = range ** 2 / (2 * (ocean ? 2.75 : 1.65) ** 2);
       footprint(lon, lat, range, (pixel, distance) => {
-        // Air measurements blend straight across coastlines; surface ones stay on their own side.
-        if (!entry.blend && (land[pixel * 4] < 128) !== ocean) return;
         const weight = Math.exp(-falloff * distance) * (1 - smooth(clamp01((distance - 0.60) / 0.40)));
         weights[pixel] += weight;
         slopes[pixel] += weight * slope;
@@ -131,9 +130,12 @@
       if (!weights[pixel]) continue;
       const trend = slopes[pixel] / weights[pixel] / scale;
       const magnitude = clamp01(Math.abs(trend));
-      values.data[i] = 255 * clamp01((trend + 1) / 2);
-      values.data[i + 1] = 255;
-      // Taper height at coverage boundaries so the mesh does not form a cliff there.
+      // Clip colour at the shore while letting mesh vertices sample continuous heights across it.
+      if (entry.blend || (land[i] < 128) === water) {
+        values.data[i] = 255 * clamp01((trend + 1) / 2);
+        values.data[i + 1] = 255;
+      }
+      // Start tapering more than one mesh cell before the edge of the land footprint.
       const heightWeight = 1 - smooth(clamp01((distances[pixel] - fullRelief) / (1 - fullRelief)));
       relief.data[i] = 255 * heightWeight * magnitude;
     }
