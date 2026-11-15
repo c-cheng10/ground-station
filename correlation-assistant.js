@@ -19,8 +19,12 @@
   const regionNames = new Map(config.sites.map(({ id, name }) => [id, name]));
   const variables = new Map(config.variables.map((variable) => [variable.id, variable]));
   const monthFormat = new Intl.DateTimeFormat("en-CA", { month: "short", year: "numeric", timeZone: "UTC" });
-  const findStudyArea = (place) => place && config.sites.find(({ name, id }) =>
-    [name, id].some((label) => label.toLowerCase() === place.toLowerCase()));
+  const studyAreaKey = (label) => window.AssistantPlace.normalize(label).replace(/^the /, "").replace(/[-\s]+/g, " ");
+  function findStudyArea(place) {
+    if (!place) return null;
+    const key = studyAreaKey(place);
+    return config.sites.find(({ name, id }) => [name, id].some((label) => studyAreaKey(label) === key));
+  }
   const quantity = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 3, signDisplay: "exceptZero" });
 
   function validMonth(yyyymm) {
@@ -154,7 +158,7 @@
           "Content-Type": "application/json",
           Authorization: `Bearer ${config.supabaseAnonKey}`,
         },
-        body: JSON.stringify({ question, region_id, point_id }),
+        body: JSON.stringify({ question, region_id: namedSite?.id ?? region_id, point_id: namedSite ? undefined : point_id }),
         signal: AbortSignal.timeout(45_000),
       });
       const answer = await response.json();
