@@ -401,7 +401,13 @@
     if (!site.selectionSegments) {
       const cells = site.areaIds?.map((id) => id.split(",").map(Number)) ?? [[site.latitude, site.longitude]];
       const bounds = site.platformCountries.length ? site.platformCountries : countries;
-      site.selectionSegments = window.selectionOutline(cells, bounds, gridSpacing);
+      const sea = cells.filter(([lat, lon]) => oceanIds.has(`${lat},${lon}`));
+      const land = cells.filter((cell) => !sea.includes(cell));
+      // Ocean cells have no coastline to trace, so outline their whole box against one Earth-sized "country".
+      const wholeEarth = [{ polygons: [[[[-180, -90], [180, -90], [180, 90], [-180, 90]]]] }];
+      site.selectionSegments = [...(land.length ? window.selectionOutline(land, bounds, gridSpacing) : []),
+        ...(sea.length ? window.selectionOutline(sea, wholeEarth, oceanSpacing) : [])];
+      site.squares = sea.map(([lat, lon]) => [lat, lon, oceanSpacing / 2]);
     }
     deselectButton.hidden = false;
     analysis = null;
@@ -1593,7 +1599,7 @@
       ...texture, platform, platformCountries, rise: mapView.rise,
       tilt: mapView.orbitTilt * mapView.cameraFocus, orbitAzimuth: mapView.orbitAzimuth * mapView.cameraFocus,
       cameraLift: mapView.cameraLift,
-      selectionSegments: viewedSite?.selectionSegments, outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
+      selectionSegments: viewedSite?.selectionSegments, outlineSea: Boolean(viewedSite?.squares?.length), outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
       selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
     cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
@@ -2090,7 +2096,7 @@
     const latitudes = cells.map(([lat]) => lat);
     const longitudes = cells.map(([, lon]) => lon);
     selectSite({ id: `area:${ids.join(";")}`, areaIds: ids,
-      name: name ?? selectionName(cells),
+      name: name ?? (ids.every((id) => oceanIds.has(id)) ? "Ocean area" : selectionName(cells)),
       latitude: (Math.min(...latitudes) + Math.max(...latitudes)) / 2,
       longitude: (Math.min(...longitudes) + Math.max(...longitudes)) / 2, keepCamera });
   }

@@ -173,9 +173,20 @@
     const ctx = texture();
     const mask = ctx.createImageData(width, height);
     if (site.outline?.length >= 3) featherOutline(ctx, site.outline, mask.data);
-    else softenCentres(site, pointsById, mask.data);
+    else if (!site.squares?.length) softenCentres(site, pointsById, mask.data);
     for (let pixel = 0; pixel < size; pixel += 1) mask.data[4 * pixel + 3] = 255;
     ctx.putImageData(mask, 0, 0);
+    // Ocean cells light up as soft-edged squares that match their outline, not round spotlights.
+    if (site.squares?.length) {
+      ctx.filter = "blur(2px)";
+      ctx.fillStyle = "#f00";
+      for (const [lat, lon, half] of site.squares) {
+        for (const shift of [-width, 0, width]) {
+          ctx.fillRect(toX(lon - half) + shift, toY(lat + half), toX(lon + half) - toX(lon - half), toY(lat - half) - toY(lat + half));
+        }
+      }
+      ctx.filter = "none";
+    }
     return ctx.canvas;
   }
 

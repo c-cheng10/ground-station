@@ -96,7 +96,7 @@
     precision highp float;
     uniform vec3 uEye, uLight;
     uniform float uRelief, uRise, uOutlineOpacity;
-    uniform bool uHeatVisible, uFocused, uHasPlatform;
+    uniform bool uHeatVisible, uFocused, uHasPlatform, uOutlineSea;
     uniform mediump int uLayer;
     uniform vec2 uTexel;
     uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform;
@@ -121,7 +121,7 @@
       vec4 surface = texture2D(uSurface, vUv);
       if (uLayer == 5 || uLayer == 6) {
         bool cap = uHasPlatform && uRise >= 0.001 && texture2D(uPlatform, vUv).r >= 0.46;
-        if (cap != (uLayer == 6) || surface.r < 0.48 || facing <= 0.0) discard;
+        if (cap != (uLayer == 6) || (!uOutlineSea && surface.r < 0.48) || facing <= 0.0) discard;
         float edge = abs(vWallTop);
         float core = 1.0 - smoothstep(0.16, 0.34, edge);
         float glow = 0.24 * (1.0 - smoothstep(0.20, 1.0, edge));
@@ -390,7 +390,7 @@
     let outlineBuffer;
     let outlineVertexCount = 0;
     return ({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise,
-      selectionSegments, outlineOpacity }) => {
+      selectionSegments, outlineOpacity, outlineSea }) => {
       if (gl.isContextLost()) return;
       const { width, height, front, right, north, eye, light, focal, offsetX, offsetY, reliefHeight } = frame;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -457,6 +457,7 @@
           previousSegments = selectionSegments;
         }
         gl.uniform1f(uniform("uOutlineOpacity"), outlineOpacity);
+        gl.uniform1i(uniform("uOutlineSea"), Boolean(outlineSea));
         gl.uniform2f(uniform("uOutlineScale"), 4.8 / width, 4.8 / height);
         if (hasCap) drawBorders(outlineBuffer, outlineVertexCount, 6, dpr);
         gl.uniform1f(uniform("uRelief"), baseRelief);
@@ -645,7 +646,7 @@
     function render({ longitude, latitude, zoom = 1, lens = 1, offsetX = 0, offsetY = 0,
       surface = null, heat = null, selection = null, heightMap = null, relief = 0,
       platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0, cameraLift = platform ? rise : 0,
-      selectionSegments = null, outlineOpacity = 0 }) {
+      selectionSegments = null, outlineOpacity = 0, outlineSea = false }) {
       const { clientWidth: width, clientHeight: height } = canvas;
       if (!width || !height) return;
       const lon = longitude * rad;
@@ -679,7 +680,7 @@
       frame = { front, right, north, eye, light, distance, focal, cx: width / 2 + offsetX, cy: height / 2 + offsetY,
         width, height, offsetX, offsetY, lift, platform, reliefHeight, heightMap };
       draw({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise,
-        selectionSegments, outlineOpacity });
+        selectionSegments, outlineOpacity, outlineSea });
     }
 
     function project(longitude, latitude) {
