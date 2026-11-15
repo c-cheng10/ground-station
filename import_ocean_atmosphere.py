@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 import numpy as np
 
 from build_gldas_dataset import MONTHS, START_YEAR, annual, benjamini_hochberg, read_series, trend_test
-from download_gldas import CACHE, ROOT, grid, ocean_grid, read_env
+from download_gldas import CACHE, ROOT, grid, ocean_grid, polar_land, read_env
 
 FIELDS = (
     ("OZONE_COLUMN", "Total column ozone", "DU", "MERRA-2", "merra_TO3", 1, 0,
@@ -35,19 +35,24 @@ def read_point(point, ocean, existing):
     for name, _, _, _, source, multiplier, offset, _ in FIELDS:
         if name != "OCEAN_SKIN_TEMP" or ocean:
             data[name.lower()] = (source, multiplier, offset)
-    series = {}
-    for name, (source, multiplier, offset) in (data | SHARED).items():
-        values = read_series(folder / f"{source}.csv")
-        if values is None or not np.isfinite(values).any():
-            raise ValueError(f"Missing Giovanni series {source} at {lat},{lon}")
-        series[name] = values * multiplier + offset
     if not ocean and not existing:
-        series["qv2m"] = read_series(folder / "merra_QV2M.csv") * 1000
-        data["qv2m"] = None
+        data["qv2m"] = ("merra_QV2M", 1000, 0)
+    fields = data | SHARED
+    series = {}
+    for name, (source, multiplier, offset) in fields.items():
+        values = read_series(folder / f"{source}.csv")
+        finite = values[np.isfinite(values)] if values is not None else np.empty(0)
+        # Hundreds of high-latitude Giovanni GPM cells report zero for every month.
+        # Suppress those records instead of showing decades of zero rain or snow.
+        if not len(finite) or (name == "prectotcorr" and abs(lat) > 60 and np.all(finite == 0)):
+            series[name] = None
+        else:
+            series[name] = values * multiplier + offset
     if not existing:
         data.update(SHARED)
     row = {"id": f"{lat},{lon}", "lat": lat, "lon": lon, "is_ocean": ocean}
-    row.update({name: [round(float(v), 3) if np.isfinite(v) else None for v in series[name]] for name in data})
+    row.update({name: [round(float(v), 3) if np.isfinite(v) else None for v in series[name]]
+                if series[name] is not None else None for name in data})
     return row, series
 
 
@@ -72,7 +77,21 @@ def map_entry(series, ocean_start):
         "scale": float(np.percentile(magnitude, 95)) if len(magnitude) else 1,
         "years": [int(START_YEAR + a), int(START_YEAR + b - 1)],
         "oceanStart": ocean_start,
+        "oceanSpacing": 3,
     }
+
+
+def existing_land_trends(path, land_count):
+    if not path.exists():
+        return {}
+    previous = json.loads(path.read_text(encoding="utf-8").split("=", 1)[1].strip().rstrip(";"))
+    if "landTrends" in previous:
+        return previous["landTrends"]
+    if previous.get("oceanSpacing", 5) != 5:
+        return {}
+    return {name: {**entry, "slope": entry["slope"][:land_count],
+                   "significant": entry["significant"][:land_count]}
+            for name, entry in previous["trends"].items() if name.lower() in SHARED}
 
 
 def upload(groups):
@@ -111,9 +130,12 @@ def main():
     args = parser.parse_args()
     index = (ROOT / "points-index.js").read_text(encoding="utf-8")
     existing = [tuple(point) for point in json.loads(index.split("=", 1)[1].strip().rstrip(";"))]
-    land = grid(3)
-    extra_land = sorted(set(land).difference(existing))
-    ocean = sorted(set(ocean_grid(5)).difference(land))
+    land = set(grid(3))
+    polar = polar_land(3)
+    extra_land = sorted(land.difference(existing)) + polar
+    if not set(existing) <= land:
+        raise ValueError("The configured land grid no longer contains every existing site point.")
+    ocean = sorted(set(ocean_grid(3)).difference(land, polar))
     points = existing + extra_land + ocean
     ocean_start = len(existing) + len(extra_land)
     jobs = [(point, i >= ocean_start, i < len(existing)) for i, point in enumerate(points)]
@@ -128,8 +150,10 @@ def main():
                               source=source, decimals=2, description=description, firstMonth=first, lastMonth=last))
     for name in SHARED:
         _, _, trends[name.upper()] = map_entry([values[name] for values in series], ocean_start)
-    extension = dict(extraLand=extra_land, ocean=ocean, variables=variables, trends=trends)
-    (ROOT / "ocean-atmosphere.js").write_text("window.GIOVANNI_EXTENSION = " +
+    target = ROOT / "ocean-atmosphere.js"
+    extension = dict(extraLand=extra_land, polarLand=polar, ocean=ocean, oceanSpacing=3,
+                     variables=variables, trends=trends, landTrends=existing_land_trends(target, len(land)))
+    target.write_text("window.GIOVANNI_EXTENSION = " +
         json.dumps(extension, ensure_ascii=False, separators=(",", ":")) + ";\n", encoding="utf-8")
     print(f"Wrote ocean-atmosphere.js. Monthly arrays contain {MONTHS} slots.", flush=True)
     if args.upload:

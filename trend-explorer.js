@@ -8,6 +8,7 @@
   const oceanPoints = extension?.ocean ?? [];
   const points = [...landSamples, ...oceanPoints];
   const oceanIds = new Set(oceanPoints.map((point) => point.join(",")));
+  const polarIds = new Set(extension?.polarLand?.map((point) => point.join(",")) ?? []);
   const trendMap = { ...landTrends, ...extension?.trends };
   if (data && extension) data.variables.push(...extension.variables);
   // The globe shows one layer at a time; each layer lists its own measurements.
@@ -36,7 +37,7 @@
     return iceFree.get(id);
   }
   function mapEntry(id, name = layer) {
-    const entry = withoutIce(id);
+    const entry = (name === "land" ? extension?.landTrends?.[id] : null) ?? withoutIce(id);
     if (!entry) return entry;
     const key = `${name}:${id}`;
     if (name === "air" && !layerEntries.has(key)) layerEntries.set(key, { ...entry, blend: true });
@@ -58,7 +59,8 @@
   }
   const pointId = ({ latitude, longitude }) => `${latitude},${longitude}`;
   const gridSpacing = 3;
-  const oceanSpacing = 5;
+  const oceanSpacing = extension?.oceanSpacing ?? 5;
+  if (polarIds.size) byId("grid-coverage").textContent = "Land and ocean samples are spaced about 3° apart. The atmosphere grid extends across Antarctica and the Arctic.";
   const sourceCellHalfSize = 0.125;
   const sampleCountries = new Map();
   const countryBounds = new Map();
@@ -507,7 +509,7 @@
       }
       regionResults.dataset.site = nextSite.id;
       if (!nextSite.areaIds) regionResults.dataset.point = row.id;
-      byId("point-tools").hidden = Boolean(nextSite.areaIds || nextSite.ocean);
+      byId("point-tools").hidden = Boolean(nextSite.areaIds || nextSite.ocean || polarIds.has(pointId(nextSite)));
       regionResults.hidden = false;
       setRegionStatus("");
       renderDetails();

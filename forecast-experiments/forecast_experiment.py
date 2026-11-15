@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import build_gldas_dataset as dataset
 import train_world_model as forecast
-from download_gldas import CACHE, grid, ocean_grid
+from download_gldas import CACHE, cell_centre, grid, land_polygons, on_land
 
 OUTPUT = CACHE / "forecast-experiment"
 ATMOSPHERE = ("merra_TO3", "merra_TROPT", "airs_TotH2OVap", "airs_CloudFrc", "airs_OLR")
@@ -29,6 +29,15 @@ def point_path(point):
 
 def channel_values(point, channels):
     return np.column_stack([dataset.read_series(point_path(point) / f"{name}.csv") for name in channels])
+
+
+def experiment_ocean_grid():
+    """Keep the 5° ocean cohort used in the original benchmark."""
+    rings = land_polygons()
+    latitudes = [cell_centre(-60 + (i + 0.5) * 5) for i in range(26)]
+    longitudes = [cell_centre(-180 + (i + 0.5) * 5) for i in range(72)]
+    return sorted({(lat, lon) for lat in latitudes for lon in longitudes
+                   if not on_land(lat, lon, rings)}.difference(grid(3)))
 
 
 def read_data():
@@ -49,7 +58,7 @@ def read_data():
         land.append(raw[:, target_columns].astype(np.float32))
         atmosphere.append(channel_values(point, ATMOSPHERE).astype(np.float32))
 
-    ocean_grid_points = sorted(set(ocean_grid(5)).difference(land_grid))
+    ocean_grid_points = experiment_ocean_grid()
 
     def sphere(coords):
         lat, lon = np.radians(coords).T

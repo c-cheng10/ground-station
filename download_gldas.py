@@ -1,11 +1,11 @@
-"""Download monthly NASA data from Giovanni for global land and ocean grids.
+"""Download monthly NASA data from Giovanni for land, ocean, and polar land grids.
 
 Giovanni (giovanni.gsfc.nasa.gov) serves GLDAS Noah 0.25° monthly: version 2.0 covers
 1948-2014 and version 2.1 covers 2000 to today. Each request returns one variable at
 one point. Responses are cached in giovanni-cache/, so reruns skip finished requests.
 
     python download_gldas.py --pilot          # one land point and one ocean point
-    python download_gldas.py --spacing 3 --ocean-spacing 5 --workers 8
+    python download_gldas.py --spacing 3 --ocean-spacing 3 --workers 8
 
 Needs EARTHDATA_TOKEN in .env (see .env.example).
 """
@@ -45,6 +45,7 @@ ATMOSPHERE_REQUESTS = [
     ("merra_TROPT", "M2IMNXASM_5_12_4_TROPT", 1980, 2025),
 ]
 LAND_REQUESTS = REQUESTS + ATMOSPHERE_REQUESTS
+POLAR_REQUESTS = [request for request in REQUESTS if request[0] in {"merra_T2M", "merra_QV2M", "gpm_precipitation"}] + ATMOSPHERE_REQUESTS
 OCEAN_REQUESTS = [request for request in REQUESTS if request[0] in {"merra_T2M", "gpm_precipitation"}] + [
     ("airs_SurfSkinTemp", "AIRS3STM_7_0_SurfSkinTemp_A", 2002, 2025),
 ] + ATMOSPHERE_REQUESTS
@@ -92,12 +93,26 @@ def grid(spacing):
     return sorted(points | set(FIXED_POINTS))
 
 
-def ocean_grid(spacing):
+def lattice_latitudes(spacing):
+    start = -56 + spacing / 2
+    return [cell_centre(start + i * spacing) for i in range(-int(34 / spacing), int(146 / spacing))
+            if -90 < start + i * spacing < 90]
+
+
+def extended_grid(spacing, land):
     rings = land_polygons()
-    latitudes = [cell_centre(-60 + (i + 0.5) * spacing) for i in range(int(130 / spacing))]
+    latitudes = lattice_latitudes(spacing)
     longitudes = [cell_centre(-180 + (i + 0.5) * spacing) for i in range(int(360 / spacing))]
     return sorted({(lat, lon) for lat in latitudes for lon in longitudes
-                   if not on_land(lat, lon, rings)})
+                   if on_land(lat, lon, rings) == land})
+
+
+def ocean_grid(spacing):
+    return extended_grid(spacing, land=False)
+
+
+def polar_land(spacing):
+    return sorted(set(extended_grid(spacing, land=True)).difference(grid(spacing)))
 
 
 def fetch(token, name, data, first, last, lat, lon):
@@ -146,7 +161,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--pilot", action="store_true", help="download one land and one ocean point")
     parser.add_argument("--spacing", type=float, default=3.0, help="land lattice spacing in degrees")
-    parser.add_argument("--ocean-spacing", type=float, default=5.0, help="ocean lattice spacing in degrees")
+    parser.add_argument("--ocean-spacing", type=float, default=3.0, help="ocean lattice spacing in degrees")
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
     if args.spacing <= 0 or args.ocean_spacing <= 0 or args.workers <= 0:
@@ -156,13 +171,16 @@ def main():
         raise SystemExit("Add EARTHDATA_TOKEN to .env first (see .env.example).")
 
     land = FIXED_POINTS[:1] if args.pilot else grid(args.spacing)
+    polar = [] if args.pilot else polar_land(args.spacing)
     ocean = [PILOT_OCEAN_POINT] if args.pilot else ocean_grid(args.ocean_spacing)
-    ocean = sorted(set(ocean).difference(land))
-    jobs = [(*request, lat, lon) for points, requests in ((land, LAND_REQUESTS), (ocean, OCEAN_REQUESTS))
+    ocean = sorted(set(ocean).difference(land, polar))
+    jobs = [(*request, lat, lon) for points, requests in
+            ((land, LAND_REQUESTS), (polar, POLAR_REQUESTS), (ocean, OCEAN_REQUESTS))
             for lat, lon in points for request in requests]
     cached = sum((CACHE / f"{lat}_{lon}" / f"{name}.csv").exists() for name, _, _, _, lat, lon in jobs)
     before = quota(token)
-    print(f"{len(land)} land points, {len(ocean)} ocean points, {len(jobs)} requests ({cached} cached), "
+    print(f"{len(land)} land points, {len(polar)} polar land points, {len(ocean)} ocean points, "
+          f"{len(jobs)} requests ({cached} cached), "
           f"quota used so far {before:.11f}", flush=True)
     started = time.time()
     failures = 0
@@ -175,7 +193,7 @@ def main():
     finally:
         pool.shutdown(cancel_futures=True)
     after = quota(token)
-    per_point = (after - before) / (len(land) + len(ocean))
+    per_point = (after - before) / (len(land) + len(polar) + len(ocean))
     print(f"quota used {before:.11f} -> {after:.11f}; about {per_point:.11f} per point")
     if args.pilot and per_point > 0:
         print(f"a full month's quota covers about {int((1 - after) / per_point)} more points")

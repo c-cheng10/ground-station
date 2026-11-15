@@ -53,14 +53,19 @@ The historical [POWER correlation migration](supabase/correlations.sql) belongs 
 
 ## Ocean and atmospheric data
 
-The extended import uses the 3° land and 5° ocean Giovanni grids. Apply
+The extended import uses the 3° land, polar land, and ocean Giovanni grids.
+Download with `python download_gldas.py --spacing 3 --ocean-spacing 3 --workers 8`. Apply
 [`supabase/giovanni_ocean_atmosphere.sql`](supabase/giovanni_ocean_atmosphere.sql)
 in the project SQL Editor, then run `python import_ocean_atmosphere.py --upload`
 with the Supabase backend key in `.env`. Run without `--upload` to validate the
 local cache and rebuild `ocean-atmosphere.js`. The import adds atmospheric arrays
 to existing land rows and inserts ocean and additional land rows. Monthly arrays
 use the January 1948 origin. The ocean rows carry MERRA-2 air temperature and
-GPM precipitation in addition to the new measurements.
+GPM precipitation in addition to the new measurements. Polar land rows carry
+the available atmosphere, air temperature, specific humidity, and precipitation
+records. Giovanni series with no valid observations are saved as SQL nulls.
+The import also omits GPM series poleward of 60° that report zero for every
+observed month. [NASA describes reduced precipitation accuracy at high latitudes.](https://gpm.nasa.gov/resources/faq/what-difference-between-global-90degn-s-and-full-60degn-s-coverage-imerg)
 
 ## Refresh a stored point
 

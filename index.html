@@ -19,14 +19,14 @@
   <script defer src="featured-stripes.js"></script>
   <script defer src="trend-map.js"></script>
   <script defer src="ice-points.js"></script>
-  <script defer src="ocean-atmosphere.js"></script>
+  <script defer src="ocean-atmosphere.js?v=2"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
-  <script defer src="globe-fields.js?v=6"></script>
+  <script defer src="globe-fields.js?v=7"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=7"></script>
   <script defer src="climate-news.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=27"></script>
+  <script defer src="trend-explorer.js?v=28"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=4"></script>
   <script defer src="correlation-assistant.js?v=7"></script>
@@ -1104,7 +1104,8 @@
       <div>
         <h3>The data</h3>
         <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
-        <p>Land samples are spaced about 3° apart and ocean samples about 5° apart. MERRA-2 provides total column ozone and tropopause temperature (since 1980). Daytime AIRS observations provide total column water vapour, cloud fraction, outgoing longwave radiation, and sea surface skin temperature (since September 2002).</p>
+        <p id="grid-coverage">Land samples are spaced about 3° apart and ocean samples about 5° apart.</p>
+        <p>MERRA-2 provides total column ozone and tropopause temperature (since 1980). Daytime AIRS observations provide total column water vapour, cloud fraction, outgoing longwave radiation, and sea surface skin temperature (since September 2002). GPM precipitation estimates are less certain poleward of 60°.</p>
         <p>Use Magic select to sketch a ring around a place. The app selects the sampled points inside it. Each point counts equally, and the area chart uses months when every selected point has a value.</p>
         <p>Selection names describe the sampled grid points. Nearby cities, country outlines and <a href="https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/">state and province boundaries</a> come from Natural Earth. Biome labels use sample centres within <a href="https://ecoregions2017.appspot.com/">RESOLVE Ecoregions 2017</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
         <div class="location-tools">
@@ -1133,7 +1134,7 @@
       <div>
         <h3>Honest limits</h3>
         <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years. With only a few decades of years, p-values are approximate, especially for precipitation (27 years).</p>
-        <p>Trends are straight lines, so sudden jumps or curves aren’t modelled. Most measurements come from NASA models built from observations (MERRA-2, GLDAS); only precipitation is measured directly from space (GPM). Two rules of thumb are not formal tests: datasets “agree” when their trends are within 0.15 °C per decade, and the forecast’s shaded band assumes errors spread like those seen in testing.</p>
+        <p>Trends are straight lines, so sudden jumps or curves aren’t modelled. MERRA-2 and GLDAS use models informed by observations. GPM and AIRS estimate measurements from satellite observations. Two rules of thumb are not formal tests: datasets “agree” when their trends are within 0.15 °C per decade, and the forecast’s shaded band assumes errors spread like those seen in testing.</p>
         <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check. The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now.</p>
       </div>
       <p class="credits">Built for the NASA Space Apps Challenge. Data: <a id="data-source">NASA GES DISC Giovanni</a> (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 from NOAA ERSSTv5). Trend uncertainty: <a id="method-source">Newey–West method</a>. Map outlines: <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>. Place search: <a href="https://open-meteo.com/en/docs/geocoding-api">Open-Meteo</a> and <a href="https://www.geonames.org/">GeoNames</a>. <a href="study-areas.csv" download>Download the study-area data (CSV)</a>.</p>
