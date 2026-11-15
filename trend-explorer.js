@@ -19,8 +19,24 @@
   let layer = "land";
   const layerEntries = new Map();
   // Hide the other surface's points so land and ocean heatmaps never draw together.
-  function mapEntry(id, name = layer) {
+  // GLDAS has no glacier physics: on ice sheets its snow piles up forever and its soil and evaporation
+  // values mean nothing, so those three measurements are hidden at ice points (see find_ice_points.py).
+  const iceIds = new Set(window.ICE_POINTS ?? []);
+  const iceMasked = new Set(["SNOW", "GWETROOT", "EVLAND"]);
+  const iceFree = new Map();
+  function withoutIce(id) {
     const entry = trendMap[id];
+    if (!entry || !iceMasked.has(id) || !iceIds.size) return entry;
+    if (!iceFree.has(id)) {
+      const slope = entry.slope.map((value, index) => iceIds.has(points[index]?.join(",")) ? null : value);
+      // Re-derive the colour scale (95th percentile of |slope|) without the runaway ice values.
+      const sizes = slope.filter((value) => Number.isFinite(value) && value !== 0).map(Math.abs).sort((a, b) => a - b);
+      iceFree.set(id, { ...entry, slope, scale: sizes[Math.floor(0.95 * (sizes.length - 1))] ?? entry.scale });
+    }
+    return iceFree.get(id);
+  }
+  function mapEntry(id, name = layer) {
+    const entry = withoutIce(id);
     if (!entry) return entry;
     const key = `${name}:${id}`;
     if (name === "air" && !layerEntries.has(key)) layerEntries.set(key, { ...entry, blend: true });
@@ -318,6 +334,9 @@
     });
     if (!response.ok) throw new Error(`Supabase returned HTTP ${response.status}.`);
     const rows = await response.json();
+    for (const row of rows) {
+      if (iceIds.has(row.id)) for (const id of iceMasked) row[id.toLowerCase()] = null;
+    }
     const received = new Set(rows.map(({ id }) => id));
     if (rows.length !== ids.length || !ids.every((id) => received.has(id))) {
       throw new Error("Some selected grid points did not return a stored record.");
@@ -334,6 +353,8 @@
     const columns = [...data.variables, data.compare].filter(Boolean).map(({ id }) => id.toLowerCase());
     const totals = columns.map(() => []);
     const counts = columns.map(() => []);
+    // Points without a measurement (ice points for snow, say) drop out of that measurement's average only.
+    const present = columns.map(() => 0);
     let offset = 0;
     let loaded = 0;
     const readBatches = async () => {
@@ -343,6 +364,7 @@
         const rows = await loadPoints(batch, signal);
         for (const row of rows) {
           columns.forEach((column, index) => {
+            if (Array.isArray(row[column])) present[index] += 1;
             row[column]?.forEach((value, month) => {
               if (!Number.isFinite(value)) return;
               totals[index][month] = (totals[index][month] ?? 0) + value;
@@ -363,7 +385,7 @@
     signal.throwIfAborted();
     // A month has a mean only when the same set of grid points contributes to it.
     return Object.fromEntries(columns.map((column, index) => [column,
-      Array.from(totals[index], (sum, month) => counts[index][month] === ids.length ? sum / ids.length : null),
+      Array.from(totals[index], (sum, month) => present[index] && counts[index][month] === present[index] ? sum / present[index] : null),
     ]));
   }
 
@@ -1130,7 +1152,9 @@
     empty.hidden = Boolean(series);
     if (!series) {
       chartLayout = null;
-      empty.textContent = `No complete record for ${variable.name.toLowerCase()} here. Choose another heatmap measurement.`;
+      empty.textContent = iceMasked.has(variable.id) && selectedCells().every((id) => iceIds.has(id))
+        ? `${variable.name} isn’t shown on ice sheets. NASA’s GLDAS land model has no glacier physics, so there its snow keeps piling up every year and its soil and evaporation values aren’t meaningful.`
+        : `No complete record for ${variable.name.toLowerCase()} here. Choose another heatmap measurement.`;
     }
     let canCompare = false;
     for (const box of compareBoxes) {
