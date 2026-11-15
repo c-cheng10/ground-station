@@ -145,7 +145,7 @@
       }
       vec3 color = mix(vec3(${ocean}), vec3(${ground}), land) / 255.0;
       color *= 0.70 + 0.49 * lambert;
-      if (uHeatVisible && land > 0.0) {
+      if (uHeatVisible) {
         vec2 heat = texture2D(uHeat, vUv).rg;
         float grade = 0.86 + 0.14 * lambert;
         if (uRelief > 0.0 && (uLayer == 2 || selected > 0.01) && heat.g > 0.005) {
@@ -161,7 +161,7 @@
           grade = 0.48 + 0.65 * max(0.0, dot(normal, uLight));
         }
         float value = heat.r / max(heat.g, 1.0 / 255.0);
-        color = mix(color, bandColour(value) * grade, heat.g * land);
+        color = mix(color, bandColour(value) * grade, heat.g);
       }
       float brightness = uLayer == 2 ? mix(0.92, 1.03, selected) :
         1.0 - uRise * (uHasPlatform ? 0.38 : 0.66 * (1.0 - smoothstep(0.02, 0.94, selected)));
@@ -534,12 +534,12 @@
           const emphasis = focusTexture ? focusTexture.data[textureIndex(focusTexture, u, v)] / 255 : 1;
           const weight = 1 - (platformTexture ? 0.38 : 0.66) * rise * (1 - emphasis);
           const light = 0.70 + 0.49 * Math.max(0, -0.48 * localX + 0.48 * localY + 0.73 * z);
-          const heatI = heatTexture && land > 0.5 ? textureIndex(heatTexture, u, v) : 0;
-          const coverage = heatTexture && land > 0.5 ? heatTexture.data[heatI + 1] : 0;
+          const heatI = heatTexture ? textureIndex(heatTexture, u, v) : 0;
+          const coverage = heatTexture ? heatTexture.data[heatI + 1] : 0;
           const value = coverage ? heatTexture.data[heatI] / coverage : 0;
           const band = Math.min(palette.length - 1, Math.floor(value * palette.length));
           const heatColour = palette[band];
-          const blend = land * coverage / 255;
+          const blend = coverage / 255;
           const facing = Math.sqrt(discriminant / rayLengthSquared);
           const rim = Math.max(0, 1 - facing) ** 5;
           for (let channel = 0; channel < 3; channel += 1) {

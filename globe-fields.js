@@ -58,8 +58,6 @@
   }
 
   function makeMeasurement(entry, points, land) {
-    const range = 3.6;
-    const falloff = range ** 2 / (2 * 1.65 ** 2);
     const weights = new Float32Array(size);
     const slopes = new Float32Array(size);
     const confidences = new Float32Array(size);
@@ -68,9 +66,13 @@
     points.forEach(([lat, lon], index) => {
       const slope = entry.slope[index];
       if (!Number.isFinite(slope)) return;
+      const ocean = index >= (entry.oceanStart ?? points.length);
+      const range = ocean ? 6 : 3.6;
+      const falloff = range ** 2 / (2 * (ocean ? 2.75 : 1.65) ** 2);
       const confidence = entry.significant[index] ? 1 : 0;
       // Blend across the 3° sample spacing, with a soft cutoff before wider gaps.
       footprint(lon, lat, range, (pixel, distance) => {
+        if ((land[pixel * 4 + 3] < 128) !== ocean) return;
         const weight = Math.exp(-falloff * distance) * (1 - smooth(clamp01((distance - 0.60) / 0.40)));
         weights[pixel] += weight;
         slopes[pixel] += weight * slope;
@@ -92,7 +94,7 @@
       const trend = slopes[pixel] / weights[pixel] / scale;
       const magnitude = clamp01(Math.abs(trend));
       const coverage = 1 - smooth(clamp01((distances[pixel] - 0.34) / 0.66));
-      const edge = land[i + 3] / 255;
+      const edge = entry.oceanStart === undefined ? land[i + 3] / 255 : 1;
       const opacity = coverage * edge * (0.68 + 0.32 * confidences[pixel] / weights[pixel]);
       // Weight the trend by opacity so texture filtering beside a gap preserves the rate of change.
       values.data[i] = 255 * opacity * clamp01((trend + 1) / 2);
