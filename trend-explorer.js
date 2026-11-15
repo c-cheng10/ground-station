@@ -844,6 +844,24 @@
       byId("trend-p").textContent = pText(trend.adjustedPValue);
       byId("trend-sen").textContent = `${format(trend.senSlope, variable.decimals, true)} ${unit}`;
       byId("trend-mk").textContent = pText(trend.mkAdjustedPValue);
+      // Hover notes: where each number comes from and how it was worked out.
+      const years = lastYear - firstYear + 1;
+      const tested = Object.keys(analysis.series).length;
+      const basis = `${years} yearly averages of ${variable.source} data (${firstYear}–${lastYear}), downloaded from NASA Giovanni`;
+      const tips = {
+        "trend-verdict": `Decided by the adjusted p-value: 0.05 or lower counts as a clear rise or fall. Based on ${basis}.` +
+          (trend.verdict === "inconclusive" ? " “No clear trend” doesn’t mean nothing changed. The change is small next to the normal ups and downs between years, so the direction isn’t certain yet." : ""),
+        "trend-slope": `The slope of a straight line fitted through ${basis} (least squares), times 10 to give the change per decade.`,
+        "trend-ci": `The slope ± about two standard errors (Student’s t with ${years - 2} degrees of freedom). The standard error uses the Newey–West method with 3 years of lag, so years that resemble their neighbours make the range wider.`,
+        "trend-p": `Raw p = ${pText(trend.pValue)}, from a t-test of whether the slope differs from zero. It is then raised with the Holm method because ${tested} measurements are tested at this place, so a lucky result is less likely to slip through.`,
+        "trend-sen": "The Theil–Sen slope: the median of the slopes between every pair of years, times 10. One extreme year barely moves it.",
+        "trend-mk": `The Mann–Kendall test counts how often later years are higher or lower than earlier ones. It is widened with the Hamed–Rao correction when years are clearly linked, then Holm-adjusted across ${tested} measurements. Raw p = ${pText(trend.mkPValue)}.`,
+      };
+      for (const [id, tip] of Object.entries(tips)) {
+        const row = id === "trend-verdict" ? byId(id) : byId(id).parentElement;
+        row.dataset.tip = tip;
+        row.tabIndex = 0;
+      }
       const mkSignificant = trend.mkAdjustedPValue <= 0.05;
       byId("trend-agree").textContent = mkSignificant === (trend.verdict !== "inconclusive")
         ? "The Mann–Kendall test agrees."

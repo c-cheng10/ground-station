@@ -328,6 +328,15 @@
     .numbers div { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; border-top: 1px solid var(--rule); padding: 6px 0; }
     .numbers dt { color: var(--muted); font-size: 0.82rem; }
     .numbers dd { margin: 0; font: 500 0.86rem var(--numbers); font-variant-numeric: tabular-nums; text-align: right; }
+    [data-tip] { position: relative; cursor: help; }
+    [data-tip]::after {
+      content: attr(data-tip); position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; width: min(300px, 80vw);
+      padding: 10px 12px; background: var(--surface); border: 1px solid var(--rule); color: var(--ink);
+      font-family: inherit; font-size: 0.82rem; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal; box-shadow: 0 8px 24px rgb(0 0 0 / 0.4);
+      opacity: 0; visibility: hidden; transition: opacity 0.15s; pointer-events: none;
+    }
+    [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; visibility: visible; transition-delay: 0.25s; }
+    .drawer-panel:has([data-tip]:hover, [data-tip]:focus-visible) { position: relative; z-index: 2; }
     .agree { margin-top: 16px; padding: 14px 16px; background: var(--sunken); }
     .agree h4 { font-size: 0.95rem; margin-bottom: 4px; }
     .agree p { margin: 0; color: var(--muted); font-size: 0.92rem; }
@@ -657,7 +666,7 @@
 
           <section class="drawer-panel" id="compare-panel" aria-labelledby="compare-title">
             <div class="panel-heading">
-              <h3 id="compare-title">Compare measurements</h3>
+              <h3 id="compare-title">Compare variables</h3>
               <button type="button" class="button secondary small" id="compare-toggle" aria-expanded="false" aria-controls="compare-picker correlations">Compare</button>
             </div>
             <label class="compare-picker" id="compare-picker" hidden>
