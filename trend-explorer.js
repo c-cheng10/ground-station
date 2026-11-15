@@ -1404,7 +1404,7 @@
   ];
 
   function focusZoom(target) {
-    if (!target.areaIds && !target.platformCountries?.length) return Math.max(mapView.zoom, 3.1);
+    if (!target.areaIds && !target.platformCountries?.length) return 2.6;
     const angularDistance = (lat, lon) => distanceKm(target.latitude, target.longitude, lat, lon) / 111;
     const samples = (target.areaIds ?? []).map((id) => {
       const [lat, lon] = id.split(",").map(Number);
@@ -1422,7 +1422,8 @@
     const visibleWidth = mobile ? width : width - byId("drawer").offsetWidth;
     const visibleHeight = mobile ? height - byId("drawer").offsetHeight - byId("map-toolbar").offsetHeight - 38 : height;
     const available = Math.min(visibleWidth, visibleHeight);
-    return clampZoom(globe.zoomFor(spread + 1.25, Math.max(30, available * (mobile ? 0.54 : 0.58))));
+    const framing = Math.max(30, available * (mobile ? 0.44 : 0.46));
+    return Math.min(3.2, globe.zoomFor(spread + 1.25, framing));
   }
 
   function drawMagicEffects(now) {
