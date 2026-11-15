@@ -4,8 +4,9 @@
   const data = window.TREND_CONFIG;
   const { TrendStatistics, POINTS_INDEX: landPoints = [], FEATURED_STRIPES: featured = {}, TREND_MAP: landTrends = {},
     GIOVANNI_EXTENSION: extension } = window;
+  const landSamples = [...landPoints, ...(extension?.extraLand ?? [])];
   const oceanPoints = extension?.ocean ?? [];
-  const points = [...landPoints, ...(extension?.extraLand ?? []), ...oceanPoints];
+  const points = [...landSamples, ...oceanPoints];
   const oceanIds = new Set(oceanPoints.map((point) => point.join(",")));
   const trendMap = { ...landTrends, ...extension?.trends };
   if (data && extension) data.variables.push(...extension.variables);
@@ -600,7 +601,7 @@
     const id = `${latitude},${longitude}`;
     if (oceanIds.has(id)) return null;
     if (sampleCountries.has(id)) return sampleCountries.get(id);
-    let match = countries.find((country) => inCountry(country, latitude, longitude));
+    let match = countryAtLocation(latitude, longitude);
     if (!match && pointIds.has(id)) {
       // A simplified coastline can miss a land sample. Limit the fallback to half a source cell diagonal.
       let closest = sourceCellHalfSize * Math.hypot(1, Math.cos(latitude * radians));
@@ -613,6 +614,10 @@
     }
     sampleCountries.set(id, match ?? null);
     return match ?? null;
+  }
+
+  function countryAtLocation(latitude, longitude) {
+    return countries.find((country) => inCountry(country, latitude, longitude));
   }
 
   function countryAt(latitude, longitude) {
@@ -1000,8 +1005,13 @@
   }
 
   function choosePoint(latitude, longitude, useGridCell = false) {
+    const landOnly = layer === "land";
+    const id = `${latitude},${longitude}`;
+    const atSea = landOnly && (oceanIds.has(id) ||
+      ((useGridCell || !pointIds.has(id)) && !countryAtLocation(latitude, longitude)));
+    if (useGridCell && atSea) return;
     const sample = useGridCell ? points[gridPointIndex(latitude, longitude)] : [latitude, longitude];
-    const target = sample && pointSite(...sample);
+    const target = !atSea && sample && pointSite(...sample, landOnly ? landSamples : points);
     if (target) {
       selectSite(useGridCell ? { ...target, mapAnchor: [longitude, latitude] } : target);
       return;
@@ -1023,7 +1033,7 @@
     byId("point-tools").hidden = true;
     openDrawer();
     flyTo(mapView.zoom);
-    setRegionStatus(useGridCell
+    setRegionStatus(atSea ? "Switch to Water to select an ocean location." : useGridCell
       ? "There’s no stored NASA point for this cell. Select a nearby cell or use Magic select to cover more ground."
       : "No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
   }
@@ -1610,6 +1620,9 @@
     const name = event.target.closest("[data-layer]")?.dataset.layer;
     if (!name || name === layer || !layerOptions[name].length) return;
     setLayer(name);
+    if (name === "land" && selectedCells().some((id) => oceanIds.has(id))) {
+      clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
+    }
     chooseMeasurement(layerOptions[name][0]);
   });
   const compareGroups = new Map();
@@ -2132,10 +2145,12 @@
     drawTrendMap();
   }
 
-  function gridPointIndex(lat, lon) {
+  function gridPointIndex(lat, lon, name = layer) {
+    if (name === "land" && !countryAtLocation(lat, lon)) return -1;
     let best = -1;
     let bestDistance = Infinity;
-    points.forEach(([pLat, pLon], index) => {
+    const samples = name === "land" ? landSamples : points;
+    samples.forEach(([pLat, pLon], index) => {
       const distance = Math.max(Math.abs(pLat - lat), Math.abs(signedLongitude(pLon - lon)));
       const step = oceanIds.has(`${pLat},${pLon}`) ? oceanSpacing : gridSpacing;
       if (distance <= step / 2 && distance < bestDistance) [best, bestDistance] = [index, distance];
@@ -2150,7 +2165,7 @@
     const comparison = active?.comparison;
     const second = comparison && mapEntry(comparison.variable.id, comparison.layer);
     const coords = globe.invert(x, y);
-    const index = coords ? gridPointIndex(coords[1], coords[0]) : -1;
+    const index = coords ? gridPointIndex(coords[1], coords[0], active?.layer) : -1;
     if (!entry || index < 0 || !Number.isFinite(entry.slope[index]) || (second && !Number.isFinite(second.slope[index]))) {
       mapTip.hidden = true;
       return;
@@ -2245,7 +2260,8 @@
       return;
     }
     const [x, y, radius] = circle;
-    const inside = points.filter(([lat, lon]) => {
+    const samples = layer === "land" ? landSamples : points;
+    const inside = samples.filter(([lat, lon]) => {
       const p = globe.project(lon, lat);
       return p && Math.hypot(p[0] - x, p[1] - y) <= radius;
     });
@@ -2417,6 +2433,7 @@
 
   // Shift-click and Ctrl-click build an area out of grid squares, like Magic select does.
   function selectCells(ids, name, keepCamera = false) {
+    if (layer === "land") ids = ids.filter((id) => !oceanIds.has(id));
     if (!ids.length) return clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: mapView.zoom });
     if (ids.length === 1) return selectSite({ ...pointSite(...ids[0].split(",").map(Number)), keepCamera });
     const cells = ids.map((id) => id.split(",").map(Number));
@@ -2439,7 +2456,7 @@
   }
 
   function chooseCountry(latitude, longitude, add) {
-    const country = countries.find((item) => inCountry(item, latitude, longitude));
+    const country = countryAtLocation(latitude, longitude);
     const inside = country ? points.filter(([lat, lon]) => countryForSample(lat, lon) === country).map((cell) => cell.join(",")) : [];
     if (!inside.length) return choosePoint(latitude, longitude, true);
     selectCells(add ? [...new Set([...selectedCells(), ...inside])] : inside, add ? undefined : country.name);
