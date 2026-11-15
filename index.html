@@ -107,9 +107,8 @@
     #camera-grain, .camera-scanlines { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
     #camera-grain { opacity: 0.14; image-rendering: pixelated; }
     .camera-scanlines { background: repeating-linear-gradient(transparent 0 3px, rgb(0 0 0 / 0.03) 3px 4px); }
-    #camera-grain[hidden] + .camera-scanlines { display: none; }
-    .camera-frame, .camera-reticle { position: absolute; z-index: 2; pointer-events: none; }
     .camera-frame {
+      position: absolute; z-index: 2; pointer-events: none;
       inset: 154px clamp(30px, 6vw, 100px) clamp(74px, 12vh, 126px);
       color: rgb(219 249 253 / 0.65);
     }
@@ -126,18 +125,6 @@
       position: absolute; top: 5px; left: 30px; color: #dbf9fd; white-space: nowrap;
       font: 0.72rem/1.2 var(--numbers); text-shadow: 0 1px 3px #080b0e, 0 0 5px #080b0e;
     }
-    .camera-reticle {
-      left: var(--camera-target-x, 50%); top: var(--camera-target-y, 50%);
-      width: 36px; height: 36px; transform: translate(-50%, -50%);
-      background:
-        linear-gradient(currentColor, currentColor) center top / 1px 8px,
-        linear-gradient(currentColor, currentColor) center bottom / 1px 8px,
-        linear-gradient(currentColor, currentColor) left center / 8px 1px,
-        linear-gradient(currentColor, currentColor) right center / 8px 1px,
-        radial-gradient(circle closest-side, currentColor 55%, transparent) center / 3px 3px;
-      background-repeat: no-repeat; color: rgb(219 249 253 / 0.72); filter: drop-shadow(0 0 2px #080b0e);
-    }
-    .stage[data-drawing] .camera-reticle, .stage:has(.pin:not([hidden])) .camera-reticle { visibility: hidden; }
     #globe-effects { z-index: 3; pointer-events: none; }
     #lens-transition { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; }
     #lens-transition::before {
@@ -200,14 +187,13 @@
     .circle-hint { flex: 1 0 100%; margin: 0; padding: 7px 0 2px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.875rem; }
     .camera-actions {
       position: absolute; inset-block-start: calc(100% + 8px); inset-inline-end: 0;
-      display: flex; gap: 6px;
+      display: flex;
     }
     .camera-actions .button {
       min-height: 44px; padding: 4px 11px;
       background: var(--glass); backdrop-filter: blur(12px);
       font: 500 0.74rem var(--numbers); letter-spacing: 0.02em;
     }
-    #camera-static[aria-pressed="true"] { color: var(--control-hover); border-color: #577c88; background: var(--tint); }
     .stage[data-drawing] ~ .topbar .camera-actions { visibility: hidden; }
 
     /* Welcome card */
@@ -442,7 +428,6 @@
         <span></span><span></span><span></span><span></span>
         <output id="camera-coordinates"></output>
       </div>
-      <div class="camera-reticle" aria-hidden="true"></div>
       <canvas id="globe-effects" aria-hidden="true"></canvas>
       <div id="lens-transition" aria-hidden="true"></div>
       <div class="pin" id="map-pin" hidden></div>
@@ -469,7 +454,6 @@
       <p class="circle-hint" id="circle-hint" role="status" hidden></p>
       <div class="camera-actions">
         <button type="button" class="button secondary small" id="deselect-area" aria-controls="trend-map drawer" hidden>Deselect</button>
-        <button type="button" class="button secondary small" id="camera-static" aria-pressed="true" aria-controls="camera-grain">Static</button>
       </div>
     </header>
 

@@ -1245,7 +1245,6 @@
   const areaHint = byId("circle-hint");
   const heatButton = byId("toggle-heat");
   const deselectButton = byId("deselect-area");
-  const staticButton = byId("camera-static");
   const grain = byId("camera-grain");
   const cameraCoordinates = byId("camera-coordinates");
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -1400,7 +1399,7 @@
       tilt: mapView.orbitTilt * mapView.rise, orbitAzimuth: mapView.orbitAzimuth,
       selectionSegments: viewedSite?.selectionSegments, outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
       selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
-    updateViewfinder();
+    cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
     drawMagicEffects(now);
@@ -1410,13 +1409,6 @@
       pin.style.left = `${anchor[0]}px`;
       pin.style.top = `${anchor[1]}px`;
     }
-  }
-
-  function updateViewfinder() {
-    const [x, y] = viewCentre();
-    stage.style.setProperty("--camera-target-x", `${x}px`);
-    stage.style.setProperty("--camera-target-y", `${y}px`);
-    cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
   }
 
   function refocus(delay = 0) {
@@ -1464,16 +1456,11 @@
 
   function syncStatic() {
     clearInterval(staticTimer);
-    if (grain.hidden || document.hidden) return;
+    if (document.hidden) return;
     paintStatic();
     if (!motion.matches) staticTimer = setInterval(paintStatic, 125);
   }
 
-  staticButton.addEventListener("click", () => {
-    grain.hidden = !grain.hidden;
-    staticButton.setAttribute("aria-pressed", String(!grain.hidden));
-    syncStatic();
-  });
   document.addEventListener("visibilitychange", syncStatic);
   motion.addEventListener("change", () => {
     if (motion.matches) focusAnimation?.cancel();
