@@ -113,7 +113,42 @@
     return poly * Math.exp(-x * x);
   }
 
-  // shortcut: classic Mann-Kendall assumes independent years; switch to Hamed-Rao if annual autocorrelation is strong.
+  // Ranks starting at 1, with tied values sharing their average rank.
+  function ranks(values) {
+    const order = values.map((value, index) => [value, index]).sort((left, right) => left[0] - right[0]);
+    const out = Array(values.length);
+    for (let start = 0; start < order.length;) {
+      let end = start;
+      while (end + 1 < order.length && order[end + 1][0] === order[start][0]) end += 1;
+      for (let k = start; k <= end; k += 1) out[order[k][1]] = (start + end) / 2 + 1;
+      start = end + 1;
+    }
+    return out;
+  }
+
+  // Hamed & Rao (1998) variance correction: one year's weather leans on the next, which makes
+  // classic Mann-Kendall overconfident. Remove the Theil-Sen trend, measure the lag-1
+  // autocorrelation of the ranks, and if it is significantly positive, model the rank
+  // autocorrelation as AR(1) (lag k = r1^k) in Hamed & Rao's variance factor. Using every
+  // lag's raw estimate is unstable on records of a few decades, where noisy long lags can cancel
+  // a real year-to-year link. The factor never drops below 1, so the test only gets more cautious.
+  function hamedRaoFactor(values, slopePerStep) {
+    const count = values.length;
+    if (count < 4) return 1;
+    const centred = ranks(values.map((value, index) => value - slopePerStep * index)).map((rank) => rank - (count + 1) / 2);
+    const spread = dot(centred, centred);
+    if (spread === 0) return 1;
+    let cross = 0;
+    for (let index = 0; index + 1 < count; index += 1) cross += centred[index] * centred[index + 1];
+    const lagOne = cross / spread;
+    if (lagOne <= 1.96 / Math.sqrt(count)) return 1;
+    let total = 0;
+    for (let lag = 1; lag <= count - 3; lag += 1) {
+      total += (count - lag) * (count - lag - 1) * (count - lag - 2) * lagOne ** lag;
+    }
+    return Math.max(1, 1 + 2 * total / (count * (count - 1) * (count - 2)));
+  }
+
   function mannKendall(values) {
     const count = values.length;
     let s = 0;
@@ -129,10 +164,11 @@
     let variance = count * (count - 1) * (2 * count + 5);
     for (const tied of ties.values()) variance -= tied * (tied - 1) * (2 * tied + 5);
     variance /= 18;
-    const z = s === 0 || variance === 0 ? 0 : (s - Math.sign(s)) / Math.sqrt(variance);
     slopes.sort((left, right) => left - right);
     const middle = slopes.length / 2;
     const median = slopes.length % 2 ? slopes[Math.floor(middle)] : (slopes[middle - 1] + slopes[middle]) / 2;
+    variance *= hamedRaoFactor(values, median);
+    const z = s === 0 || variance === 0 ? 0 : (s - Math.sign(s)) / Math.sqrt(variance);
     return { senSlope: median * 10, mkPValue: erfc(Math.abs(z) / Math.SQRT2) };
   }
 

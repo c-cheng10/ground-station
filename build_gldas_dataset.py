@@ -180,16 +180,48 @@ def write_site_files(lats, lons, data, spans):
                                      *["" if np.isnan(col[y]) else f"{col[y]:.4f}" for col in yearly]])
 
 
-def mann_kendall(series):
-    """Theil-Sen slope per decade and two-sided Mann-Kendall p-value (with ties), as on the site."""
+def incomplete_beta(a, b, x):
+    """Regularised incomplete beta I_x(a, b) by continued fraction (Numerical Recipes betacf)."""
+    if x <= 0 or x >= 1:
+        return float(x >= 1)
+    front = math.exp(math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x) + b * math.log1p(-x))
+    if x > (a + 1) / (a + b + 2):
+        return 1 - incomplete_beta(b, a, 1 - x)
+    c, d = 1.0, 1 - (a + b) * x / (a + 1)
+    d = 1 / (d if abs(d) > 1e-30 else 1e-30)
+    total = d
+    for m in range(1, 300):
+        for term in (m * (b - m) * x / ((a + 2 * m - 1) * (a + 2 * m)),
+                     -(a + m) * (a + b + m) * x / ((a + 2 * m) * (a + 2 * m + 1))):
+            d = 1 + term * d
+            d = 1 / (d if abs(d) > 1e-30 else 1e-30)
+            c = 1 + term / c
+            c = c if abs(c) > 1e-30 else 1e-30
+            total *= c * d
+        if abs(c * d - 1) < 1e-13:
+            break
+    return front * total / a
+
+
+def trend_test(series, lags=3):
+    """Slope per decade and two-sided p-value: the same test as the site's results panel.
+
+    Least-squares line through the yearly values, with Newey-West standard errors (Bartlett
+    weights over `lags` years, small-sample factor n/(n-2)) so that one year leaning on the next
+    doesn't overstate certainty, then a Student t test with n-2 degrees of freedom.
+    """
     n = len(series)
-    i, j = np.triu_indices(n, 1)
-    diff = series[j] - series[i]
-    s = np.sign(diff).sum()
-    _, counts = np.unique(series, return_counts=True)
-    variance = (n * (n - 1) * (2 * n + 5) - (counts * (counts - 1) * (2 * counts + 5)).sum()) / 18
-    z = 0 if s == 0 or variance == 0 else (s - np.sign(s)) / math.sqrt(variance)
-    return float(np.median(diff / (j - i)) * 10), math.erfc(abs(z) / math.sqrt(2))
+    t = np.arange(n) - (n - 1) / 2
+    slope = float((t * (series - series.mean())).sum() / (t * t).sum())
+    scores = t * (series - series.mean() - slope * t)
+    covariance = float(scores @ scores)
+    for lag in range(1, lags + 1):
+        covariance += 2 * (1 - lag / (lags + 1)) * float(scores[lag:] @ scores[:-lag])
+    error = math.sqrt(max(0.0, covariance) * n / (n - 2)) / float((t * t).sum())
+    if error == 0:
+        return slope * 10, float(slope == 0)
+    statistic = slope / error
+    return slope * 10, incomplete_beta((n - 2) / 2, 0.5, (n - 2) / (n - 2 + statistic ** 2))
 
 
 def benjamini_hochberg(p, alpha=0.05):
@@ -210,7 +242,7 @@ def write_trend_map(data, spans):
         slopes, pvalues = [], []
         for point in data:
             yearly = annual(point[:, k])[first:last + 1]
-            slope, p = mann_kendall(yearly) if not np.isnan(yearly).any() else (math.nan, 1.0)
+            slope, p = trend_test(yearly) if not np.isnan(yearly).any() else (math.nan, 1.0)
             slopes.append(slope), pvalues.append(p)
         slopes, significant = np.array(slopes), benjamini_hochberg(np.array(pvalues))
         out[vid] = {"slope": [None if math.isnan(s) else round(float(s), 4) for s in slopes],

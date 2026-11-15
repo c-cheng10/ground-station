@@ -780,7 +780,14 @@
         rising: "is rising", falling: "is falling", inconclusive: "shows no clear trend yet",
       }[trend.verdict]}`;
       byId("variable-why").textContent = whyItMatters[variable.id] || "";
-      byId("variable-description").textContent = variable.description;
+      // Say plainly whether a number was measured from space or comes from a model.
+      const sourceKinds = {
+        "MERRA-2": "NASA weather model built from observations",
+        "GLDAS 2.0": "NASA land model driven by observed weather",
+        "GPM IMERG": "satellite measurement",
+      };
+      byId("variable-description").textContent = `${variable.description} Source: ${variable.source}` +
+        (sourceKinds[variable.source] ? ` (${sourceKinds[variable.source]}).` : ".");
       const scale = stripeScales[variable.id] || stripeScales.T2M;
       const { firstYear, lastYear } = analysis.series[variable.id];
       byId("stripes-note").textContent = `Each stripe is one year from ${firstYear} to ${lastYear}. ${scale.note}`;
@@ -796,6 +803,15 @@
       byId("trend-agree").textContent = mkSignificant === (trend.verdict !== "inconclusive")
         ? "The second test (Mann-Kendall) agrees with this result."
         : `The second test (Mann-Kendall) disagrees: it finds this trend ${mkSignificant ? "significant" : "not significant"}, so treat the result with caution.`;
+      // The map judges each square against about 1,700 places; this panel against the 9 measurements
+      // here. Both use the same test, but the bar differs, so say so when they land differently.
+      const pointIndex = site.areaIds ? -1 : points.findIndex(([lat, lon]) => lat === site.latitude && lon === site.longitude);
+      const mapClear = pointIndex >= 0 ? trendMap[variable.id]?.significant[pointIndex] : undefined;
+      if (mapClear !== undefined && Boolean(mapClear) !== (trend.verdict !== "inconclusive")) {
+        byId("trend-agree").textContent += mapClear
+          ? " On the map this square counts as a clear trend: there it is compared with about 1,700 places, here with the 9 measurements at this place, so the bar is set differently."
+          : " On the map this square is faded: it is checked against about 1,700 places at once, which sets a higher bar than checking the 9 measurements here.";
+      }
       const meaning = trend.verdict === "rising" ? risingMeans[variable.id] : fallingMeans[variable.id];
       const total = `${format(trend.endValue - trend.startValue, variable.decimals, true)} ${unit}`;
       byId("trend-meaning").textContent = trend.verdict === "inconclusive"

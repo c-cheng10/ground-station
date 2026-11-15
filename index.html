@@ -605,8 +605,8 @@
                 <dl>
                   <dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd>
                   <dt>Likely range (95%)</dt><dd>The real rate of change probably sits in this range. If it crosses zero, the data can’t tell rising from falling.</dd>
-                  <dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. Scientists usually call 0.05 (1 in 20) or smaller significant.</dd>
-                  <dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it.</dd>
+                  <dt>p-value</dt><dd>The chance of seeing a trend this strong if nothing were really changing. It is not the chance that the trend is fake. Scientists usually call 0.05 (1 in 20) or smaller significant.</dd>
+                  <dt>Mann-Kendall and Theil-Sen</dt><dd>A second test that only asks whether later years tend to be higher or lower than earlier ones, so one extreme year can’t fool it. It is widened when one year’s weather clearly leans on the next (the Hamed–Rao correction).</dd>
                   <dt>Why p-values are adjusted</dt><dd>Testing 9 measurements at once raises the odds that one looks significant by luck, so the tool raises the bar (the Holm method).</dd>
                 </dl>
               </details>
@@ -699,8 +699,8 @@
       </div>
       <div>
         <h3>The trend test</h3>
-        <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next. The Mann-Kendall test checks the answer a second way, and both are adjusted for testing 9 measurements at once (the Holm method).</p>
-        <p>The heatmap estimates trends between nearby sampled points on land and groups them into nine bands of equal width. The globe uses the Mann-Kendall test with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method).</p>
+        <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next. The Mann-Kendall test checks the answer a second way, with the Hamed–Rao correction when one year clearly leans on the next, and both are adjusted for testing 9 measurements at once (the Holm method).</p>
+        <p>The heatmap estimates trends between nearby sampled points on land and groups them into nine bands of equal width. Each point on the globe uses the same trend test as the results panel, with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method). Because the panel corrects for 9 measurements instead, the two can occasionally differ; the panel says so when they do.</p>
         <p>Countries lift above the globe when you select an area. Taller peaks show larger changes, and colour shows whether the measurement rose or fell. The charts use the grid points in the selection.</p>
       </div>
       <div>
@@ -710,7 +710,8 @@
       </div>
       <div>
         <h3>Honest limits</h3>
-        <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years.</p>
+        <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years. With only a few decades of years, p-values are approximate, especially for precipitation (27 years).</p>
+        <p>Trends are straight lines, so sudden jumps or curves aren’t modelled. Most measurements come from NASA models built from observations (MERRA-2, GLDAS); only precipitation is measured directly from space (GPM). Two rules of thumb are not formal tests: datasets “agree” when their trends are within 0.15 °C per decade, and the forecast’s shaded band assumes errors spread like those seen in testing.</p>
         <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check. The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now.</p>
       </div>
       <p class="credits">Built for the NASA Space Apps Challenge. Data: <a id="data-source">NASA GES DISC Giovanni</a> (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 from NOAA ERSSTv5). Trend uncertainty: <a id="method-source">Newey–West method</a>. Map outlines: <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>. Place search: <a href="https://open-meteo.com/en/docs/geocoding-api">Open-Meteo</a> and <a href="https://www.geonames.org/">GeoNames</a>. <a href="study-areas.csv" download>Download the study-area data (CSV)</a>.</p>
