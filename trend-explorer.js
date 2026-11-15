@@ -1320,7 +1320,8 @@
   let sparkleSeed = 0;
   const pointers = new Map();
   let drag = null;
-  const magicInstructions = "Draw most of a circle, then release. Or tap its centre and edge. Keyboard: move with arrows, Enter marks the centre, + or − changes the radius, Enter selects, Esc cancels.";
+  const magicDragThreshold = 6;
+  const magicInstructions = "Draw at least three quarters of a circle, then release. Or tap its centre and edge. Keyboard: move with arrows, Enter marks the centre, + or − changes the radius, Enter selects, Esc cancels.";
   const mapSize = () => [world.clientWidth, world.clientHeight];
   const radians = Math.PI / 180;
   const ease = (value) => value * value * (3 - 2 * value);
@@ -1726,6 +1727,13 @@
     const radius = distances[Math.floor(distances.length / 2)];
     if (!Number.isFinite(radius) || radius < 9 || radius > Math.min(...mapSize()) * 0.49) return null;
     if (distances[Math.floor(distances.length * 0.9)] - distances[Math.floor(distances.length * 0.1)] > radius * 0.7) return null;
+    // Measure the undrawn gap so retracing a short arc cannot count as closure.
+    const angles = path.map(([px, py]) => Math.atan2(py - y, px - x)).sort((a, b) => a - b);
+    let previous = angles.at(-1) - 2 * Math.PI;
+    for (const angle of angles) {
+      if (angle - previous > Math.PI / 2 + 1e-6) return null;
+      previous = angle;
+    }
     return [x, y, radius];
   }
 
@@ -1733,7 +1741,7 @@
     magicPath = [];
     magicCentre = null;
     if (!circle) {
-      areaHint.textContent = "Draw a rounder arc, or tap its centre and edge.";
+      areaHint.textContent = "Draw at least three quarters of a circle, or tap its centre and edge.";
       drawTrendMap();
       return;
     }
@@ -1833,7 +1841,7 @@
     const point = [event.offsetX, event.offsetY];
     if (drawingArea) {
       if (magicPointer?.id === event.pointerId) {
-        if (!magicPointer.tracing && Math.hypot(point[0] - magicPointer.start[0], point[1] - magicPointer.start[1]) >= 6) {
+        if (!magicPointer.tracing && Math.hypot(point[0] - magicPointer.start[0], point[1] - magicPointer.start[1]) >= magicDragThreshold) {
           magicPointer.tracing = true;
           magicCentre = null;
           magicPath = [magicPointer.start];
@@ -1884,13 +1892,16 @@
   const endPointer = (event) => {
     if (drawingArea) {
       if (magicPointer?.id !== event.pointerId) return;
-      const { tracing } = magicPointer;
+      const { tracing, start } = magicPointer;
       magicPointer = null;
       if (event.type === "pointercancel") {
         magicPath = [];
         drawMagicEffects(performance.now());
-      } else if (tracing) completeMagicCircle(fitMagicCircle(magicPath));
-      else magicTap(event.offsetX, event.offsetY);
+      } else if (tracing) {
+        completeMagicCircle(fitMagicCircle([...magicPath, [event.offsetX, event.offsetY]]));
+      } else if (Math.hypot(event.offsetX - start[0], event.offsetY - start[1]) < magicDragThreshold) {
+        magicTap(event.offsetX, event.offsetY);
+      } else completeMagicCircle(null);
       return;
     }
     if (!pointers.delete(event.pointerId) || !drag) return;
