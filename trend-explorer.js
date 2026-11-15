@@ -13,6 +13,8 @@
   }
   const pointId = ({ latitude, longitude }) => `${latitude},${longitude}`;
   const gridSpacing = 3;
+  const sourceCellHalfSize = 0.125;
+  const sampleCountries = new Map();
   const pointIds = new Set(points.map(([lat, lon]) => `${lat},${lon}`));
   const storedSites = data.sites.filter((item) => pointIds.has(pointId(item)));
 
@@ -462,7 +464,8 @@
       id: `point:${best[0]},${best[1]}`,
       name: countryAt(best[0], best[1]) || latLon(item),
       region: "Nearest NASA grid point",
-      bounds: { south: best[0] - 0.125, north: best[0] + 0.125, west: best[1] - 0.125, east: best[1] + 0.125 },
+      bounds: { south: best[0] - sourceCellHalfSize, north: best[0] + sourceCellHalfSize,
+        west: best[1] - sourceCellHalfSize, east: best[1] + sourceCellHalfSize },
     };
   }
 
@@ -484,15 +487,34 @@
     return country.polygons.some(([outline, ...holes]) => containsPoint(outline) && !holes.some(containsPoint));
   }
 
+  function countryForSample(latitude, longitude) {
+    const id = `${latitude},${longitude}`;
+    if (sampleCountries.has(id)) return sampleCountries.get(id);
+    let match = countries.find((country) => inCountry(country, latitude, longitude));
+    if (!match && pointIds.has(id)) {
+      // A simplified coastline can miss a land sample. Limit the fallback to half a source cell diagonal.
+      let closest = sourceCellHalfSize * Math.hypot(1, Math.cos(latitude * radians));
+      for (const country of countries) {
+        const offset = nearestBorderOffset(country, latitude, longitude, closest);
+        if (!offset) continue;
+        match = country;
+        closest = Math.hypot(...offset);
+      }
+    }
+    sampleCountries.set(id, match ?? null);
+    return match ?? null;
+  }
+
   function countryAt(latitude, longitude) {
-    return window.WORLD_MAP?.countries.find((country) => inCountry(country, latitude, longitude))?.name ?? null;
+    return countryForSample(latitude, longitude)?.name ?? null;
   }
 
   function selectedCountries(target) {
     const coordinates = target.areaIds ? target.areaIds.map((id) => id.split(",").map(Number)) :
       [[target.latitude, target.longitude]];
-    if (target.outline) coordinates.push(...target.outline.map(([lon, lat]) => [lat, lon]));
-    return countries.filter((country) => coordinates.some(([lat, lon]) => inCountry(country, lat, lon)));
+    const sampled = new Set(coordinates.map(([lat, lon]) => countryForSample(lat, lon)));
+    return countries.filter((country) => sampled.has(country) ||
+      target.outline?.some(([lon, lat]) => inCountry(country, lat, lon)));
   }
 
   function distanceKm(latitude, longitude, lat, lon) {
@@ -509,10 +531,8 @@
     return axis > 0 && axis >= Math.abs(direction === "north" || direction === "south" ? east : north);
   }
 
-  function outsideCountryInDirection(country, direction, lat, lon) {
-    // Relative directions use the nearest border segment, not the country's centre.
+  function nearestBorderOffset(country, lat, lon, closest) {
     const longitudeScale = Math.cos(lat * Math.PI / 180);
-    let closest = 500 / 111;
     let delta = null;
     for (const [outline] of country.polygons) {
       for (let index = 0; index < outline.length; index += 1) {
@@ -532,6 +552,11 @@
         }
       }
     }
+    return delta;
+  }
+
+  function outsideCountryInDirection(country, direction, lat, lon) {
+    const delta = nearestBorderOffset(country, lat, lon, 500 / 111);
     return delta && isInDirection(direction, ...delta);
   }
 

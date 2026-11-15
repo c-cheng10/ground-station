@@ -71,7 +71,6 @@
       const confidence = entry.significant[index] ? 1 : 0;
       // Blend across the 3° sample spacing, with a soft cutoff before wider gaps.
       footprint(lon, lat, range, (pixel, distance) => {
-        if (!land[4 * pixel + 3]) return;
         const weight = Math.exp(-falloff * distance) * (1 - smooth(clamp01((distance - 0.60) / 0.40)));
         weights[pixel] += weight;
         slopes[pixel] += weight * slope;
@@ -98,7 +97,8 @@
       // Weight the trend by opacity so texture filtering beside a gap preserves the rate of change.
       values.data[i] = 255 * opacity * clamp01((trend + 1) / 2);
       values.data[i + 1] = 255 * opacity;
-      relief.data[i] = 255 * coverage * edge * magnitude;
+      // A narrow island may sit between ocean vertices. Clip the surface after displacing the mesh.
+      relief.data[i] = 255 * coverage * magnitude;
     }
     heat.putImageData(values, 0, 0);
     heights.putImageData(relief, 0, 0);

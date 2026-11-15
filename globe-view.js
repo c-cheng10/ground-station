@@ -40,9 +40,11 @@
     float elevation(vec2 uv) {
       float height = 0.0;
       if (uRelief > 0.0) {
-        float land = smoothstep(0.5, 1.0, texture2D(uSurface, uv).r);
-        float selected = raisedLayer() ? 1.0 : texture2D(uSelection, uv).r;
-        height = texture2D(uHeight, uv).r * selected * land * uRelief;
+        height = texture2D(uHeight, uv).r * uRelief;
+        if (!raisedLayer()) {
+          float land = texture2D(uSurface, uv).r;
+          height *= texture2D(uSelection, uv).r * land * smoothstep(0.5, 1.0, land);
+        }
       }
       return height + (raisedLayer() ? uLift : 0.0);
     }
