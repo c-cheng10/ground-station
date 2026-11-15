@@ -64,6 +64,8 @@ use the January 1948 origin. The ocean rows carry MERRA-2 air temperature and
 GPM precipitation in addition to the new measurements. Polar land rows carry
 the available atmosphere, air temperature, specific humidity, and precipitation
 records. Giovanni series with no valid observations are saved as SQL nulls.
+The import also omits GPM series poleward of 60° that report zero for every
+observed month. [NASA describes reduced precipitation accuracy at high latitudes.](https://gpm.nasa.gov/resources/faq/what-difference-between-global-90degn-s-and-full-60degn-s-coverage-imerg)
 
 ## Refresh a stored point
 

@@ -41,10 +41,13 @@ def read_point(point, ocean, existing):
     series = {}
     for name, (source, multiplier, offset) in fields.items():
         values = read_series(folder / f"{source}.csv")
-        if values is not None and np.isfinite(values).any():
-            series[name] = values * multiplier + offset
-        else:
+        finite = values[np.isfinite(values)] if values is not None else np.empty(0)
+        # Hundreds of high-latitude Giovanni GPM cells report zero for every month.
+        # Suppress those records instead of showing decades of zero rain or snow.
+        if not len(finite) or (name == "prectotcorr" and abs(lat) > 60 and np.all(finite == 0)):
             series[name] = None
+        else:
+            series[name] = values * multiplier + offset
     if not existing:
         data.update(SHARED)
     row = {"id": f"{lat},{lon}", "lat": lat, "lon": lon, "is_ocean": ocean}
@@ -76,6 +79,19 @@ def map_entry(series, ocean_start):
         "oceanStart": ocean_start,
         "oceanSpacing": 3,
     }
+
+
+def existing_land_trends(path, land_count):
+    if not path.exists():
+        return {}
+    previous = json.loads(path.read_text(encoding="utf-8").split("=", 1)[1].strip().rstrip(";"))
+    if "landTrends" in previous:
+        return previous["landTrends"]
+    if previous.get("oceanSpacing", 5) != 5:
+        return {}
+    return {name: {**entry, "slope": entry["slope"][:land_count],
+                   "significant": entry["significant"][:land_count]}
+            for name, entry in previous["trends"].items() if name.lower() in SHARED}
 
 
 def upload(groups):
@@ -134,8 +150,10 @@ def main():
                               source=source, decimals=2, description=description, firstMonth=first, lastMonth=last))
     for name in SHARED:
         _, _, trends[name.upper()] = map_entry([values[name] for values in series], ocean_start)
-    extension = dict(extraLand=extra_land, polarLand=polar, ocean=ocean, oceanSpacing=3, variables=variables, trends=trends)
-    (ROOT / "ocean-atmosphere.js").write_text("window.GIOVANNI_EXTENSION = " +
+    target = ROOT / "ocean-atmosphere.js"
+    extension = dict(extraLand=extra_land, polarLand=polar, ocean=ocean, oceanSpacing=3,
+                     variables=variables, trends=trends, landTrends=existing_land_trends(target, len(land)))
+    target.write_text("window.GIOVANNI_EXTENSION = " +
         json.dumps(extension, ensure_ascii=False, separators=(",", ":")) + ";\n", encoding="utf-8")
     print(f"Wrote ocean-atmosphere.js. Monthly arrays contain {MONTHS} slots.", flush=True)
     if args.upload:

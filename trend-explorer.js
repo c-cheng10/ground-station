@@ -20,7 +20,7 @@
   const layerEntries = new Map();
   // Hide the other surface's points so land and ocean heatmaps never draw together.
   function mapEntry(id) {
-    const entry = trendMap[id];
+    const entry = (layer === "land" ? extension?.landTrends?.[id] : null) ?? trendMap[id];
     if (!entry || layer === "air") return entry;
     const key = `${layer}:${id}`;
     if (!layerEntries.has(key)) {

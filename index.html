@@ -17,7 +17,7 @@
   <script defer src="points-index.js"></script>
   <script defer src="featured-stripes.js"></script>
   <script defer src="trend-map.js"></script>
-  <script defer src="ocean-atmosphere.js"></script>
+  <script defer src="ocean-atmosphere.js?v=2"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
   <script defer src="globe-fields.js?v=3"></script>
@@ -844,7 +844,7 @@
       <div>
         <h3>The trend test</h3>
         <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next. The Mann-Kendall test checks the answer a second way, with the Hamed–Rao correction when one year clearly leans on the next, and both are adjusted for testing every measurement available at that place at once (the Holm method).</p>
-        <p>The heatmap estimates trends between nearby sampled points on land and groups them into nine bands of equal width. Each point on the globe uses the same trend test as the results panel, with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method). Because the panel corrects for the measurements at one place instead, the two can occasionally differ; the panel says so when they do.</p>
+        <p>The heatmap blends trends from nearby sampled points and groups them into nine bands of equal width. The map uses the same trend test as the results panel, with a Benjamini–Hochberg correction across the sampled places for each measurement. The results panel corrects across measurements at one place.</p>
         <p>Countries lift above the globe when you select an area. Taller peaks show larger changes, and colour shows whether the measurement rose or fell. The charts use the grid points in the selection.</p>
       </div>
       <div>
@@ -855,7 +855,7 @@
       <div>
         <h3>Honest limits</h3>
         <p>A trend can be real and still not reach significance yet; a longer record often settles it. Records have different lengths, so compare trends from the same years. With only a few decades of years, p-values are approximate, especially for precipitation (27 years).</p>
-        <p>Trends are straight lines, so sudden jumps or curves aren’t modelled. Most measurements come from NASA models built from observations (MERRA-2, GLDAS); only precipitation is measured directly from space (GPM). Two rules of thumb are not formal tests: datasets “agree” when their trends are within 0.15 °C per decade, and the forecast’s shaded band assumes errors spread like those seen in testing.</p>
+        <p>Trends are straight lines, so sudden jumps or curves aren’t modelled. MERRA-2 and GLDAS use models informed by observations. GPM and AIRS estimate measurements from satellite observations. Two rules of thumb are not formal tests: datasets “agree” when their trends are within 0.15 °C per decade, and the forecast’s shaded band assumes errors spread like those seen in testing.</p>
         <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check. The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now.</p>
       </div>
       <p class="credits">Built for the NASA Space Apps Challenge. Data: <a id="data-source">NASA GES DISC Giovanni</a> (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 from NOAA ERSSTv5). Trend uncertainty: <a id="method-source">Newey–West method</a>. Map outlines: <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>. Place search: <a href="https://open-meteo.com/en/docs/geocoding-api">Open-Meteo</a> and <a href="https://www.geonames.org/">GeoNames</a>. <a href="study-areas.csv" download>Download the study-area data (CSV)</a>.</p>
