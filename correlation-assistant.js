@@ -112,18 +112,20 @@
     document.getElementById("drawer-title").focus({ preventScroll: true });
   });
 
-  async function askAssistant(body) {
+  async function askAssistant(body, signal = AbortSignal.timeout(45_000)) {
     const response = await fetch(new URL("/functions/v1/climate-assistant-giovanni", config.supabaseUrl), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.supabaseAnonKey}` },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(45_000),
+      signal,
     });
     const answer = await response.json();
     if (response.status === 404) throw new Error("The Giovanni assistant is awaiting deployment.");
     if (!response.ok) throw new Error(answer?.error || "The assistant could not answer. Try again.");
     return answer;
   }
+
+  window.CorrelationAssistant = { ask: askAssistant };
 
   function validateIntent(intent) {
     const { kind, place, variable_ids, lag_months, start_year, end_year, reason } = intent ?? {};

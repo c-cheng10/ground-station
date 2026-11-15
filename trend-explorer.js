@@ -758,18 +758,18 @@
     return delta && isInDirection(direction, ...delta);
   }
 
-  function assistantArea(place) {
+  function assistantArea(place, availablePoints = points) {
     const { country, direction, interior } = place;
     const name = place.displayName ?? country?.name ?? place.name;
     let { latitude, longitude } = place;
     let selected;
     let distance;
     if (country) {
-      const inside = points.filter(([lat, lon]) => inCountry(country, lat, lon));
+      const inside = availablePoints.filter(([lat, lon]) => inCountry(country, lat, lon));
       selected = inside;
       if (direction && !interior) {
         const insideSet = new Set(inside);
-        selected = points.filter((coords) => !insideSet.has(coords) && outsideCountryInDirection(country, direction, ...coords));
+        selected = availablePoints.filter((coords) => !insideSet.has(coords) && outsideCountryInDirection(country, direction, ...coords));
       } else if (direction && inside.length) {
         const axis = direction === "north" || direction === "south" ? 0 : 1;
         const values = inside.map((coords) => coords[axis]);
@@ -783,7 +783,7 @@
       latitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
       longitude = (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
     } else {
-      const nearby = points.map((coords) => ({ coords, km: distanceKm(latitude, longitude, ...coords) }))
+      const nearby = availablePoints.map((coords) => ({ coords, km: distanceKm(latitude, longitude, ...coords) }))
         .filter(({ coords: [lat, lon], km }) => km <= 700 && (!direction ||
           isInDirection(direction, lat - latitude, signedLongitude(lon - longitude) * Math.cos(latitude * Math.PI / 180))))
         .sort((a, b) => a.km - b.km).slice(0, 5);
@@ -834,6 +834,33 @@
     return selectSite(target);
   };
 
+  window.selectOnboardingArea = async ({ place, variable, signal }) => {
+    const measurement = mapVariables.get(variable);
+    const name = Object.keys(layerOptions).find((key) => layerOptions[key].includes(variable));
+    if (!measurement || !name) throw new Error("Choose a climate measurement with map data.");
+    const location = /^ontario(?:,\s*canada)?$/i.test(place) ? "Southern Ontario" : place;
+    const match = window.AssistantPlace.findStudyArea(location, data.sites);
+    if (match.ambiguous) throw new Error("More than one study area matches. Enter the full place name.");
+    if (match.wrongCountry) throw new Error(`${match.wrongCountry.name} is in ${match.wrongCountry.region}. Check the place name.`);
+    const resolved = match.entry ?? await window.AssistantPlace.resolve(location, { signal });
+    signal?.throwIfAborted();
+    if (resolved.kind === "unresolved") throw new Error(resolved.message);
+    const entry = mapEntry(variable, name);
+    const covered = points.filter((_, index) => Number.isFinite(entry?.slope[index]));
+    const target = match.entry ? pointSite(resolved.latitude, resolved.longitude) : assistantArea(resolved, covered);
+    if (!target) throw new Error(`There is no nearby ${measurement.name.toLowerCase()} coverage. Try a nearby city or a different interest.`);
+    setLayer(name);
+    compareMode = false;
+    selectedIds = new Set([variable]);
+    if (site?.id === target.id && analysis) {
+      openDrawer();
+      renderDetails();
+    } else if (!await selectSite(target)) {
+      throw new Error(`Climate records didn’t load for ${target.name}. Try again or choose a smaller area.`);
+    }
+    if (!analysis.series[variable]) throw new Error(`${target.name} has no complete record for ${measurement.name.toLowerCase()}.`);
+  };
+
   function trendMapVariable() {
     return data.variables.find((item) => item.id === [...selectedIds][0]) || data.variables[0];
   }
@@ -846,6 +873,14 @@
 
   function renderTrendMap() {
     const variable = trendMapVariable();
+    if (site && window.ClimateNews) {
+      const name = site.name.split(",")[0].replace(/^Near /, "").replace(/’/g, "'");
+      const samples = selectionSamples(site);
+      const countriesHere = samples.length > 1 && !site.id.startsWith("assistant:")
+        ? sampledCountryCounts(samples).map(([country]) => countryLabel(country))
+        : [];
+      window.ClimateNews.update(variable, countriesHere.length > 1 ? countriesHere : [name], site.name);
+    }
     if (!layerOptions[layer].includes(variable.id)) {
       setLayer(Object.keys(layerOptions).find((name) => layerOptions[name].includes(variable.id)) ?? layer);
     }
@@ -880,12 +915,48 @@
     drawTrendMap();
   }
 
-  function renderTrendLegend(variable, name, palette) {
+  function renderTrendLegend({ variable, layer: name, comparison }) {
     const entry = mapEntry(variable.id, name);
     if (!entry) return;
+    byId("trend-key").hidden = Boolean(comparison);
+    byId("heatmap-note").hidden = Boolean(comparison);
+    byId("trend-extremes").hidden = Boolean(comparison);
+    const legends = [byId("overlay-key"), byId("overlay-key-mobile")];
+    legends.forEach((legend) => { legend.hidden = !comparison; });
+    if (comparison) {
+      const other = comparison.variable;
+      const second = mapEntry(other.id, comparison.layer);
+      byId("trend-map-title").textContent = "Two trends · change per decade";
+      byId("trend-map-sub").textContent = "";
+      byId("trend-map-sub").hidden = true;
+      const key = create("table");
+      key.innerHTML = '<thead><tr><td></td><th scope="col">Falls</th><th scope="col">Near 0</th><th scope="col">Rises</th></tr></thead>';
+      const rows = key.createTBody();
+      ["Rises", "Near 0", "Falls"].forEach((label, row) => {
+        const tr = rows.insertRow();
+        const th = create("th", label);
+        th.scope = "row";
+        tr.append(th);
+        comparisonPalette.slice((2 - row) * 3, (3 - row) * 3).forEach((colour, col) => {
+          const cell = tr.insertCell();
+          cell.setAttribute("aria-label", `${variable.name} ${["falls", "near zero", "rises"][col]}; ${other.name} ${label.toLowerCase()}`);
+          cell.style.backgroundColor = `rgb(${colour})`;
+        });
+      });
+      const vertical = `↑ ${other.name} (${trendUnit(other)}) · ${second.years.join("–")}`;
+      const horizontal = `→ ${variable.name} (${trendUnit(variable)}) · ${entry.years.join("–")}`;
+      for (const legend of legends) {
+        const title = legend.id.endsWith("mobile") ? [create("h4", "Two trends · change per decade")] : [];
+        legend.replaceChildren(...title, create("p", vertical), key.cloneNode(true), create("p", horizontal),
+          create("small", `Near 0 is ±${format(entry.scale / 3, variable.decimals + 1)} horizontally and ±${format(second.scale / 3, other.decimals + 1)} vertically. Colour requires both measurements.`));
+      }
+      return;
+    }
+    byId("trend-map-sub").hidden = false;
     const unit = trendUnit(variable);
     byId("trend-map-title").textContent = `Change per decade (${unit})`;
     byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
+    const palette = heatPalettes[variable.id] ?? temperaturePalette;
     const bandStops = palette.map((colour, i) =>
       `rgb(${colour}) ${100 * i / palette.length}% ${100 * (i + 1) / palette.length}%`);
     byId("trend-ramp").style.background = `linear-gradient(90deg, ${bandStops.join(", ")})`;
@@ -915,6 +986,7 @@
     regionRequest?.abort();
     regionRequest = null;
     site = null;
+    window.ClimateNews?.update();
     deselectButton.hidden = true;
     analysis = null;
     chartLayout = null;
@@ -1533,6 +1605,12 @@
     CLOUD_FRACTION: humidityPalette,
     OUTGOING_LONGWAVE: humidityPalette,
   };
+  // Row and column classes both run from falling to rising.
+  const comparisonPalette = [
+    [232, 232, 232], [172, 228, 228], [90, 200, 200],
+    [223, 176, 214], [165, 173, 211], [86, 152, 185],
+    [190, 100, 172], [140, 98, 170], [85, 114, 188],
+  ];
   const globe = window.createGlobeView(world, countries);
   if (!globe) {
     byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
@@ -1661,9 +1739,11 @@
     sparkleFrame = requestAnimationFrame(update);
   }
 
-  function mapLayer({ variable, layer: name }) {
-    return { ...fields.measurement(mapEntry(variable.id, name)), palette: heatPalettes[variable.id] ?? temperaturePalette,
-      blend: name !== "land" };
+  function mapLayer({ variable, layer: name, comparison }) {
+    const primary = fields.measurement(mapEntry(variable.id, name));
+    if (!comparison) return { ...primary, palette: heatPalettes[variable.id] ?? temperaturePalette, blend: name !== "land" };
+    const second = fields.measurement(mapEntry(comparison.variable.id, comparison.layer));
+    return { ...primary, comparisonHeat: second.heat, palette: comparisonPalette, blend: name !== "land" && comparison.layer !== "land" };
   }
 
   function drawFilterFrame(now) {
@@ -1672,21 +1752,30 @@
   }
 
   function drawTrendMap(now = performance.now()) {
-    const target = trendMapVariable();
+    const variable = trendMapVariable();
+    const [, otherId] = selectedIds;
+    const secondLayer = layerOptions[layer].includes(otherId) ? layer :
+      Object.keys(layerOptions).find((key) => layerOptions[key].includes(otherId));
+    const comparison = secondLayer && analysis?.series[variable.id] && analysis.series[otherId]
+      ? { variable: mapVariables.get(otherId), layer: secondLayer } : null;
+    const key = comparison ? `${layer}:${variable.id}/${secondLayer}:${otherId}` : `${layer}:${variable.id}`;
+    const target = { variable, layer, comparison, key };
     const immediate = !displayedMap || motion.matches;
     if (immediate || (filter && now - filter.started >= filterDuration)) {
-      const settled = immediate ? { variable: target, layer } : filter.target;
+      const settled = immediate ? target : filter.target;
       filter = null;
-      if (settled.variable !== displayedMap?.variable || settled.layer !== displayedMap?.layer) {
+      if (settled.key !== displayedMap?.key) {
         displayedMap = settled;
-        renderTrendLegend(settled.variable, settled.layer, heatPalettes[settled.variable.id] ?? temperaturePalette);
+        renderTrendLegend(settled);
+        byId("relief-note").textContent = settled.comparison
+          ? `Peak height shows ${settled.variable.name.toLowerCase()} change. Drag to orbit.`
+          : "Peak height shows the size of the change. Drag to orbit the selected area.";
       }
     }
-    if (!filter && (target !== displayedMap.variable || layer !== displayedMap.layer)) {
-      const next = { variable: target, layer };
+    if (!filter && target.key !== displayedMap.key) {
       const previous = mapLayer(displayedMap);
-      const incoming = mapLayer(next);
-      filter = { target: next, previous, incoming, started: performance.now(), wipe: 0 };
+      const incoming = mapLayer(target);
+      filter = { target, previous, incoming, started: performance.now(), wipe: 0 };
       mapTip.hidden = true;
     }
     if (filter) {
@@ -1909,19 +1998,23 @@
     const active = filter && y < filter.wipe * world.clientHeight ? filter.target : displayedMap;
     const variable = active?.variable ?? trendMapVariable();
     const entry = mapEntry(variable.id, active?.layer);
+    const comparison = active?.comparison;
+    const second = comparison && mapEntry(comparison.variable.id, comparison.layer);
     const coords = globe.invert(x, y);
     const index = coords ? gridPointIndex(coords[1], coords[0]) : -1;
-    if (!entry || index < 0 || !Number.isFinite(entry.slope[index])) {
+    if (!entry || index < 0 || !Number.isFinite(entry.slope[index]) || (second && !Number.isFinite(second.slope[index]))) {
       mapTip.hidden = true;
       return;
     }
     const [lat, lon] = points[index];
-    mapTip.replaceChildren(
-      create("strong", sampleName(lat, lon)),
-      create("span", `${format(entry.slope[index], variable.decimals + 1, true)} ${trendUnit(variable)} per decade`),
-      create("br"),
+    const value = (item, map) => `${format(map.slope[index], item.decimals + 1, true)} ${trendUnit(item)} per decade`;
+    mapTip.replaceChildren(create("strong", sampleName(lat, lon)), ...(comparison ? [
+      create("span", `${variable.name} · ${value(variable, entry)}`), create("br"),
+      create("span", `${comparison.variable.name} · ${value(comparison.variable, second)}`),
+    ] : [
+      create("span", value(variable, entry)), create("br"),
       create("small", entry.significant[index] ? "Clear trend. Select for details." : "No clear trend. Select for details."),
-    );
+    ]));
     mapTip.hidden = false;
     mapTip.style.left = `${Math.max(2, Math.min(x, mapSize()[0] - mapTip.offsetWidth - 24))}px`;
     mapTip.style.top = `${y}px`;
@@ -2244,6 +2337,7 @@
     regionRequest?.abort();
     regionRequest = null;
     site = null;
+    window.ClimateNews?.update();
     analysis = null;
     deselectButton.hidden = true;
     regionResults.hidden = true;

@@ -97,11 +97,11 @@
     precision highp float;
     uniform vec3 uEye, uLight;
     uniform float uRelief, uRise, uOutlineOpacity;
-    uniform bool uHeatVisible, uHeatBlend, uFocused, uHasPlatform, uOutlineSea;
+    uniform bool uHeatVisible, uHeatBlend, uComparing, uFocused, uHasPlatform, uOutlineSea;
     uniform mediump int uLayer;
     uniform vec2 uTexel;
     uniform vec4 uPlatformBounds;
-    uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform, uPalette;
+    uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform, uPalette, uComparisonHeat;
     varying vec2 vUv;
     varying vec3 vPoint;
     varying float vWallTop;
@@ -141,6 +141,7 @@
       }
       if (uLayer == 1 || uLayer == 3) {
         float heat = uHeatVisible ? texture2D(uHeat, vUv).g : 0.0;
+        if (uComparing) heat = min(heat, texture2D(uComparisonHeat, vUv).g);
         vec3 ink = mix(vec3(0.61, 0.77, 0.80), vec3(0.04, 0.08, 0.11), smoothstep(0.20, 0.66, heat));
         float emphasis = smoothstep(0.02, 0.94, selected);
         float contrast = uLayer == 3 ? 0.65 : 0.54 - uRise * (uHasPlatform ? 0.25 : 0.40 * (1.0 - emphasis));
@@ -151,7 +152,8 @@
       color *= 0.70 + 0.49 * lambert;
       if (uHeatVisible && (uHeatBlend || land > 0.0)) {
         vec2 heat = texture2D(uHeat, vUv).rg;
-        float covered = step(0.5, heat.g);
+        vec2 other = uComparing ? texture2D(uComparisonHeat, vUv).rg : vec2(0.0, 1.0);
+        float covered = step(0.5, min(heat.g, other.g));
         float grade = 0.86 + 0.14 * lambert;
         if (uRelief > 0.0 && (uLayer == 2 || selected > 0.01) && covered > 0.0) {
           vec2 dx = vec2(uTexel.x, 0.0);
@@ -166,6 +168,11 @@
           grade = 0.48 + 0.65 * max(0.0, dot(normal, uLight));
         }
         float value = heat.r / max(heat.g, 1.0 / 255.0);
+        if (uComparing) {
+          float x = min(2.0, floor(value * 3.0));
+          float y = min(2.0, floor(3.0 * other.r / max(other.g, 1.0 / 255.0)));
+          value = (3.0 * y + x + 0.5) / 9.0;
+        }
         vec3 band = texture2D(uPalette, vec2(value, 0.5)).rgb;
         color = mix(color, band * grade, covered * (uHeatBlend ? 1.0 : land));
       }
@@ -346,7 +353,7 @@
       if (!locations.has(name)) locations.set(name, gl.getUniformLocation(program, name));
       return locations.get(name);
     };
-    const names = ["uSurface", "uHeat", "uSelection", "uHeight", "uPlatform", "uPalette"];
+    const names = ["uSurface", "uHeat", "uSelection", "uHeight", "uPlatform", "uPalette", "uComparisonHeat"];
     const textures = names.map((name, unit) => {
       gl.uniform1i(uniform(name), unit);
       return { filter: name === "uPalette" ? gl.NEAREST : gl.LINEAR, entries: [], bound: null };
@@ -401,7 +408,7 @@
     let outlineVertexCount = 0;
     const paletteImages = new WeakMap();
     function drawScene({ frame, surface, selection, relief, platform, platformCountries, rise, selectionSegments,
-      outlineOpacity, outlineSea }, { heat, palette, heightMap, blend }, dpr, variant) {
+      outlineOpacity, outlineSea }, { heat, comparisonHeat, palette, heightMap, blend }, dpr, variant) {
       const { width, height, front, right, north, eye, light, focal, offsetX, offsetY, reliefHeight } = frame;
       if (!paletteImages.has(palette)) {
         const rgba = new Uint8ClampedArray(palette.flatMap((colour) => [...colour, 255]));
@@ -413,6 +420,7 @@
       setTexture(3, heightMap, variant);
       setTexture(4, platform?.canvas ?? null);
       setTexture(5, paletteImages.get(palette), variant);
+      setTexture(6, comparisonHeat ?? null, variant);
       gl.uniform3fv(uniform("uRight"), right);
       gl.uniform3fv(uniform("uNorth"), north);
       gl.uniform3fv(uniform("uFront"), front);
@@ -422,6 +430,7 @@
       gl.uniform2f(uniform("uShift"), 2 * offsetX / width, -2 * offsetY / height);
       gl.uniform1i(uniform("uHeatVisible"), heat !== null);
       gl.uniform1i(uniform("uHeatBlend"), Boolean(blend));
+      gl.uniform1i(uniform("uComparing"), Boolean(comparisonHeat));
       gl.uniform1i(uniform("uFocused"), selection !== null);
       gl.uniform2f(uniform("uTexel"), 1 / (heightMap?.width || 1), 1 / (heightMap?.height || 1));
       const hasPlatform = platform !== null;
@@ -526,7 +535,7 @@
       return textures.get(source);
     }
 
-    return ({ frame, surface, heat, palette, blend, previous, selection, platform, rise, selectionSegments,
+    return ({ frame, surface, heat, comparisonHeat, palette, blend, previous, selection, platform, rise, selectionSegments,
       outlineOpacity, outlineSea }) => {
       const { width, height, cx, cy, focal, eye, front, right, north } = frame;
       const scale = Math.min(1, 500 / Math.max(width, height));
@@ -543,6 +552,8 @@
       const landTexture = pixels(surface);
       const nextHeat = pixels(heat);
       const previousHeat = pixels(previous?.heat);
+      const nextComparison = pixels(comparisonHeat);
+      const previousComparison = pixels(previous?.comparisonHeat);
       const showingPrevious = (y) => previous && y >= frame.wipeY;
       const selectionTexture = pixels(selection);
       const platformTexture = pixels(platform?.canvas);
@@ -566,6 +577,7 @@
         const py = (cy - row) / focal;
         const oldLayer = showingPrevious(row);
         const heatTexture = oldLayer ? previousHeat : nextHeat;
+        const comparisonTexture = oldLayer ? previousComparison : nextComparison;
         const colours = oldLayer ? previous.palette : palette;
         const overlaysWater = oldLayer ? previous.blend : blend;
         for (let x = 0; x < w; x += 1) {
@@ -592,9 +604,17 @@
           const heatI = heatTexture ? textureIndex(heatTexture, u, v) : 0;
           const coverage = heatTexture?.data[heatI + 1] ?? 0;
           const value = coverage ? heatTexture.data[heatI] / coverage : 0;
-          const band = Math.min(colours.length - 1, Math.floor(value * colours.length));
+          let band = Math.min(colours.length - 1, Math.floor(value * colours.length));
+          let covered = coverage >= 128;
+          if (comparisonTexture) {
+            const otherI = textureIndex(comparisonTexture, u, v);
+            const otherCoverage = comparisonTexture.data[otherI + 1];
+            const other = otherCoverage ? comparisonTexture.data[otherI] / otherCoverage : 0;
+            band = 3 * Math.min(2, Math.floor(other * 3)) + Math.min(2, Math.floor(value * 3));
+            covered = covered && otherCoverage >= 128;
+          }
           const heatColour = colours[band];
-          const alpha = coverage < 128 ? 0 : overlaysWater ? 1 : land;
+          const alpha = covered ? (overlaysWater ? 1 : land) : 0;
           const facing = Math.sqrt(discriminant / rayLengthSquared);
           const rim = Math.max(0, 1 - facing) ** 5;
           for (let channel = 0; channel < 3; channel += 1) {
@@ -628,9 +648,11 @@
         if (a[3] < 0 && b[3] < 0) continue;
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
-        const heatTexture = previous && showingPrevious((project(visible(a, b))[1] + project(visible(b, a))[1]) / 2)
-          ? previousHeat : nextHeat;
-        const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
+        const oldLayer = showingPrevious((project(visible(a, b))[1] + project(visible(b, a))[1]) / 2);
+        const heatTexture = oldLayer ? previousHeat : nextHeat;
+        const comparisonTexture = oldLayer ? previousComparison : nextComparison;
+        const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120 &&
+          (!comparisonTexture || comparisonTexture.data[textureIndex(comparisonTexture, u, v) + 1] > 120);
         const dim = emphasisAt(u, v) < 0.5;
         trace(paths[(dim ? 2 : 0) + (dark ? 1 : 0)], a, b);
       }
@@ -708,7 +730,8 @@
     }
 
     function render({ longitude, latitude, zoom = 1, offsetX = 0, offsetY = 0,
-      surface = null, heat = null, palette, blend = false, previous = null, wipe = 1, selection = null, heightMap = null, relief = 0,
+      surface = null, heat = null, comparisonHeat = null, palette, blend = false, previous = null, wipe = 1,
+      selection = null, heightMap = null, relief = 0,
       platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0, cameraLift = platform ? rise : 0,
       selectionSegments = null, outlineOpacity = 0, outlineSea = false }) {
       const { clientWidth: width, clientHeight: height } = canvas;
@@ -742,7 +765,7 @@
       const light = unit(aim.map((value, i) => key[0] * aimRight[i] + key[1] * aimNorth[i] + key[2] * value));
       frame = { front, right, north, eye, light, distance, focal, cx: width / 2 + offsetX, cy: height / 2 + offsetY,
         width, height, offsetX, offsetY, lift, platform, reliefHeight, heightMap, previous, wipeY: wipe * height };
-      draw({ frame, surface, heat, palette, blend, selection, heightMap, relief, platform, platformCountries, rise,
+      draw({ frame, surface, heat, comparisonHeat, palette, blend, selection, heightMap, relief, platform, platformCountries, rise,
         selectionSegments, outlineOpacity, outlineSea, previous });
     }
 

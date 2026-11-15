@@ -18,15 +18,16 @@ function loadAssistant(fetch) {
     });
     return nodes.get(id);
   };
-  const context = vm.createContext({ window, document: { getElementById: element }, fetch, URL, URLSearchParams, AbortSignal });
+  const context = vm.createContext({ window, document: { getElementById: element }, fetch, URL, URLSearchParams, AbortController, AbortSignal });
+  const load = (file) => vm.runInContext(readFileSync(resolve(__dirname, "..", file), "utf8"), context, { filename: file });
   for (const file of ["trend-config.js", "assistant-place.js", "correlation-assistant.js"]) {
-    vm.runInContext(readFileSync(resolve(__dirname, "..", file), "utf8"), context, { filename: file });
+    load(file);
   }
   const ask = async (question) => {
     element("assistant-question").value = question;
     await element("assistant-form").submit({ preventDefault() {} });
   };
-  return { window, element, ask };
+  return { window, element, ask, load };
 }
 
 const interpret = (details) => ({ intent: { kind: "trend", place: null, variable_ids: [], lag_months: 0,
@@ -126,4 +127,38 @@ test("Ask AI stops on invalid measurements, time windows or unclear intent", asy
   assert.match(element("assistant-reply").textContent, /could not identify/);
   await ask("What about Madagascar's humidity?");
   assert.match(element("assistant-reply").textContent, /Which measurement/);
+});
+
+test("onboarding uses the interpreted measurement, preserves the typed place and falls back by role", async () => {
+  const answers = [respond(interpret({ place: "Kenya", variable_ids: ["prectotcorr"] })),
+    { ok: false, status: 429, json: async () => ({ error: "Rate limit" }) }];
+  const { window, element, load } = loadAssistant(async (_url, options) => {
+    const { mode, question } = JSON.parse(options.body);
+    assert.equal(mode, "interpret");
+    assert.match(question, /As a farmer.*western Nigeria.*rainfall compared with Kenya/);
+    return answers.shift();
+  });
+  const dialog = element("onboarding");
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.close = () => { dialog.open = false; };
+  element("drawer-title").focus = () => {};
+  const form = element("onboarding-form");
+  form.elements = { role: { value: "farmer" }, place: { value: "western Nigeria" },
+    interest: { value: "rainfall compared with Kenya" } };
+  const selections = [];
+  window.selectOnboardingArea = async ({ place, variable, signal }) => {
+    assert.equal(signal.aborted, false);
+    selections.push({ place, variable });
+  };
+  load("onboarding.js");
+  assert.equal(dialog.open, true);
+  await form.submit({ preventDefault() {} });
+  assert.equal(dialog.open, false);
+  element("help").close = () => {};
+  element("show-onboarding").click();
+  await form.submit({ preventDefault() {} });
+  assert.deepEqual(selections, [
+    { place: "western Nigeria", variable: "PRECTOTCORR" },
+    { place: "western Nigeria", variable: "GWETROOT" },
+  ]);
 });

@@ -22,11 +22,13 @@
   <script defer src="world-model.js"></script>
   <script defer src="globe-fields.js?v=5"></script>
   <script defer src="globe-selection-outline.js"></script>
-  <script defer src="globe-view.js?v=6"></script>
-  <script defer src="trend-explorer.js?v=14"></script>
+  <script defer src="globe-view.js?v=7"></script>
+  <script defer src="climate-news.js"></script>
+  <script defer src="trend-explorer.js?v=15"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
-  <script defer src="correlation-assistant.js?v=3"></script>
+  <script defer src="correlation-assistant.js?v=4"></script>
+  <script defer src="onboarding.js"></script>
   <style>
     :root {
       --space: #080b0e;
@@ -302,6 +304,14 @@
     .legend-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
     .trend-key { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 10px 0 6px; font: 0.74rem var(--numbers); color: var(--muted); font-variant-numeric: tabular-nums; }
     .trend-key .ramp { grid-column: 1 / -1; height: 8px; }
+    .overlay-key { display: grid; gap: 5px; margin-top: 8px; }
+    .overlay-key p { font-size: 0.78rem; color: var(--ink); }
+    .overlay-key small { font-size: 0.72rem; color: var(--muted); line-height: 1.35; }
+    .overlay-key table { border-collapse: separate; border-spacing: 3px; width: 100%; table-layout: fixed; }
+    .overlay-key th { color: var(--muted); font-size: 0.68rem; text-align: center; font-weight: 600; }
+    .overlay-key tbody th { text-align: right; padding-right: 5px; }
+    .overlay-key td { height: 15px; }
+    #overlay-key-mobile { display: none; }
     #trend-zero { text-align: center; }
     #trend-high { text-align: right; }
     .changes { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; }
@@ -445,6 +455,10 @@
     .research-sources { margin: 14px 0 0; padding-inline-start: 24px; overflow-wrap: anywhere; }
     .research-sources li + li { margin-top: 12px; }
     .research-sources li p { margin-top: 2px; }
+    #news > summary { cursor: pointer; font-weight: 700; }
+    #news > summary:hover, #news-list a:hover { color: var(--control-hover); }
+    #news-list a { font-weight: 600; }
+    #news-more { display: inline-block; margin-top: 12px; font-size: 0.88rem; }
 
     /* Correlation assistant */
     .assistant { padding: 18px 26px 26px; }
@@ -476,6 +490,29 @@
     .dialog-body h3 { font-size: 1.02rem; margin-top: 16px; }
     .dialog-body p { color: var(--muted); margin: 6px 0 0; font-size: 0.94rem; }
     .dialog-body .credits { grid-column: 1 / -1; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 0.86rem; }
+
+    #onboarding { width: min(530px, calc(100vw - 28px)); }
+    #onboarding .dialog-head { position: static; }
+    #onboarding-form { padding: 18px clamp(16px, 4vw, 26px) 22px; }
+    #onboarding-form fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
+    #onboarding-fields { display: grid; gap: 16px; }
+    .onboarding-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    #onboarding-form legend, #onboarding-form .onboarding-label { display: block; font-weight: 700; margin-bottom: 6px; }
+    #onboarding-form small { color: var(--muted); font-weight: 400; }
+    .onboarding-role { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; min-height: 48px; padding: 8px; border: 1px solid var(--rule); background: var(--surface); cursor: pointer; font-size: 0.9rem; line-height: 1.2; }
+    .onboarding-role:hover, .onboarding-role:has(:checked) { border-color: var(--control); background: var(--tint); }
+    .onboarding-role input { margin: 0; accent-color: var(--control); }
+    #onboarding-form input[type="text"] { min-height: 44px; width: 100%; padding: 8px 10px; border: 1px solid var(--rule); background: var(--sunken); }
+    #onboarding-form input::placeholder { color: var(--muted); opacity: 1; }
+    .onboarding-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    #onboarding-start:disabled { opacity: 0.6; cursor: wait; }
+    #onboarding-status { margin: 12px 0 0; color: var(--muted); }
+    #onboarding-status:empty { margin: 0; }
+
+    @media (max-width: 440px) {
+      .onboarding-options { grid-template-columns: 1fr; }
+      .onboarding-role { min-height: 44px; }
+    }
 
     .error { position: absolute; z-index: 30; top: 90px; left: 14px; right: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--warm); }
 
@@ -512,6 +549,7 @@
       .drawer { top: auto; height: var(--mobile-drawer-height); transform: translateY(105%); }
       .drawer-body { padding: 0 var(--map-inset) max(12px, env(safe-area-inset-bottom)); }
       .drawer-panel { padding: 12px; }
+      #overlay-key-mobile { display: grid; margin-bottom: 12px; }
       .panel-info > summary { top: 12px; right: 12px; }
       .info-panel .info-content { --info-top: 48px; right: 12px; }
       .dialog-body { grid-template-columns: 1fr; }
@@ -609,9 +647,10 @@
         <span class="ramp" id="trend-ramp" aria-hidden="true"></span>
         <span id="trend-low"></span><span id="trend-zero">0</span><span id="trend-high"></span>
       </div>
+      <div class="overlay-key" id="overlay-key" hidden></div>
       <p id="heatmap-note">Uncoloured areas are outside this layer’s coverage. Select a point for trend evidence.</p>
       <p id="relief-note" hidden>Peak height shows the size of the change. Drag to orbit the selected area.</p>
-      <details class="changes">
+      <details class="changes" id="trend-extremes">
         <summary>Biggest changes</summary>
         <div class="extremes">
           <div><h3>Fastest rising</h3><ol id="rising-list"></ol></div>
@@ -805,6 +844,7 @@
             <label class="compare-picker" id="compare-picker" hidden>
               Compare with <select id="compare-variable"></select>
             </label>
+            <div class="overlay-key" id="overlay-key-mobile" hidden></div>
             <div class="info-panel" id="correlations" hidden>
               <div class="panel-heading"><h4 id="correlations-title">Correlation</h4></div>
               <label class="lag-control">Time delay <input type="range" id="lag" min="0" max="6" step="1" value="0"> <output id="lag-value" for="lag">0 months</output></label>
@@ -822,9 +862,49 @@
           </section>
 
         </div>
+        <section class="drawer-panel" id="news-panel" aria-labelledby="news-title" hidden>
+          <details id="news">
+            <summary id="news-title">News</summary>
+            <p class="description" id="news-scope"></p>
+            <p class="description research-status" id="news-status" role="status"></p>
+            <ol class="research-sources" id="news-list" aria-label="News articles" hidden></ol>
+            <a id="news-more" target="_blank" rel="noopener noreferrer">Search Google News ↗</a>
+          </details>
+        </section>
       </div>
     </aside>
   </div>
+
+  <dialog id="onboarding" aria-labelledby="onboarding-title">
+    <div class="dialog-head">
+      <h2 id="onboarding-title" tabindex="-1" autofocus>Start with a place</h2>
+    </div>
+    <form id="onboarding-form">
+      <fieldset id="onboarding-fields">
+        <fieldset>
+          <legend>Which role fits you?</legend>
+          <div class="onboarding-options">
+            <label class="onboarding-role"><input type="radio" name="role" value="farmer" required>Farmer</label>
+            <label class="onboarding-role"><input type="radio" name="role" value="policymaker">Policymaker</label>
+            <label class="onboarding-role"><input type="radio" name="role" value="researcher">Student researcher</label>
+          </div>
+        </fieldset>
+        <div>
+          <label class="onboarding-label" for="onboarding-place">Where are you looking?</label>
+          <input type="text" id="onboarding-place" name="place" placeholder="e.g. Southern Ontario or Kenya" maxlength="100" required>
+        </div>
+        <div>
+          <label class="onboarding-label" for="onboarding-interest">What are you interested in? <small>Optional</small></label>
+          <input type="text" id="onboarding-interest" name="interest" placeholder="e.g. drought and crop stress" maxlength="250">
+        </div>
+      </fieldset>
+      <p id="onboarding-status" role="status"></p>
+      <div class="onboarding-actions">
+        <button type="button" class="button secondary" id="onboarding-skip">Skip</button>
+        <button type="submit" class="button primary" id="onboarding-start">Open my map</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="assistant-dialog" aria-labelledby="assistant-title">
     <div class="dialog-head">
@@ -912,6 +992,7 @@
           <li><strong>Read the results panel</strong> on the right: is it changing, by how much, and how sure are we?</li>
         </ol>
         <p>Press <strong>Get started</strong> on the left edge for example investigations.</p>
+        <button type="button" class="button secondary small" id="show-onboarding" aria-haspopup="dialog">Set up my map</button>
       </section>
 
       <section role="tabpanel" id="help-results" aria-labelledby="tab-results" hidden>
