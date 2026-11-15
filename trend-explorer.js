@@ -26,8 +26,9 @@
     if (name === "air" && !layerEntries.has(key)) layerEntries.set(key, { ...entry, blend: true });
     if (!layerEntries.has(key)) {
       const oceanStart = entry.oceanStart ?? entry.slope.length;
-      const keep = (index) => (index >= oceanStart) === (name === "water");
-      layerEntries.set(key, { ...entry, slope: entry.slope.map((value, index) => keep(index) ? value : null) });
+      const water = name === "water";
+      const slope = entry.slope.map((value, index) => (index >= oceanStart) === water ? value : null);
+      layerEntries.set(key, { ...entry, water, slope });
     }
     return layerEntries.get(key);
   }
