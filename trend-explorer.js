@@ -200,7 +200,7 @@
     const lastYear = firstYear + count - 1;
     const stepWidth = width / count;
     const tickX = (year) => (year - firstYear + 0.5) * stepWidth;
-    ctx.font = '12px "IBM Plex Mono", monospace';
+    ctx.font = '12px "Space Mono", monospace';
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     ctx.fillStyle = "#a5b8c3";
@@ -995,7 +995,7 @@
     const band = ahead ? model.rmse.map((row) => 1.645 * row[index]) : [];
     const bandValues = band.flatMap((spread, k) => [predicted[k] + spread, predicted[k] - spread]);
     const { floor, ceiling, decimals, ticks } = axisScale([...actual, ...predicted, ...bandValues], [0]);
-    ctx.font = '13px "Atkinson Hyperlegible Next", system-ui, sans-serif';
+    ctx.font = '13px "Geist", system-ui, sans-serif';
     const left = Math.max(29, ...ticks.map((tick) => ctx.measureText(format(tick, decimals)).width + 12));
     const right = width - 18;
     const top = 16;
@@ -1095,7 +1095,7 @@
     const annual = view === "annual";
     const endpoints = annual ? [trend.startValue, trend.endValue] : view === "anomaly" ? [0] : [];
     const { floor, ceiling, decimals, ticks } = axisScale(values.filter(Number.isFinite), endpoints);
-    ctx.font = '13px "Atkinson Hyperlegible Next", system-ui, sans-serif';
+    ctx.font = '13px "Geist", system-ui, sans-serif';
     const left = Math.max(29, ...ticks.map((tick) => ctx.measureText(format(tick, decimals)).width + 12));
     const right = width - 18;
     const top = 12;
