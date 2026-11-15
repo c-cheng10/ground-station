@@ -244,7 +244,11 @@
     }
   }
 
-  const pText = (p) => p < 0.001 ? "<0.001" : format(p, 3);
+  function pText(p) {
+    if (p < 0.001) return "<0.001";
+    const rounded = format(p, 3);
+    return p > 0.05 && rounded === "0.050" ? ">0.050" : rounded;
+  }
 
   // Every land point's record is stored in Supabase by build_gldas_dataset.py (NASA Giovanni data).
   async function loadPoints(ids, signal) {
@@ -941,9 +945,9 @@
       byId("trend-sen").textContent = `${format(trend.senSlope, variable.decimals, true)} ${unit}`;
       byId("trend-mk").textContent = pText(trend.mkAdjustedPValue);
       const mkSignificant = trend.mkAdjustedPValue <= 0.05;
-      byId("trend-agree").textContent = mkSignificant === (trend.verdict !== "inconclusive")
-        ? "The Mann–Kendall test agrees."
-        : "The Mann–Kendall test disagrees. Treat this result with caution.";
+      byId("trend-agree").textContent = mkSignificant
+        ? "Mann–Kendall found evidence of a trend."
+        : "The Mann–Kendall result was inconclusive.";
       // The map judges each square against about 1,700 places; this panel against the 9 measurements
       // here. Both use the same test, but the bar differs, so say so when they land differently.
       const pointIndex = site.areaIds ? -1 : points.findIndex(([lat, lon]) => lat === site.latitude && lon === site.longitude);

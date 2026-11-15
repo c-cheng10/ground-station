@@ -22,7 +22,7 @@
   <script defer src="globe-fields.js?v=2"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=7"></script>
+  <script defer src="trend-explorer.js?v=8"></script>
   <script defer src="research.js?v=2"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="assistant-question.js?v=2"></script>
@@ -280,7 +280,7 @@
     .panel-heading h3 { font-size: 1.05rem; }
     .info-panel { position: relative; }
     .info-panel .panel-heading { padding-right: 46px; }
-    .drawer-panel:has(.panel-info[open]) { position: relative; z-index: 2; }
+    .drawer-panel:has(.panel-info[open], .metric-info[open]) { position: relative; z-index: 2; }
     .panel-info { display: contents; }
     .panel-info > summary { position: absolute; top: 16px; right: 16px; }
     summary.icon-button { list-style: none; cursor: pointer; width: 36px; height: 36px; color: var(--muted); }
@@ -289,11 +289,12 @@
     .info-icon svg { width: 17px; height: 17px; }
     .info-content {
       --info-top: 52px;
+      --info-trigger: 36px;
       position: absolute; z-index: 1; top: var(--info-top); right: 16px; width: min(340px, calc(100% - 32px));
       max-height: min(280px, 38dvh, var(--info-room, 280px)); overflow: auto; overscroll-behavior: contain; margin: 0; padding: 12px;
       background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-2);
     }
-    details[data-info-above] > .info-content { top: calc(var(--info-top) - 36px); transform: translateY(-100%); }
+    details[data-info-above] > .info-content { top: calc(var(--info-top) - var(--info-trigger)); transform: translateY(-100%); }
     .drawer-head .info-content {
       --info-top: calc(50% + 18px);
       right: 14px; width: min(340px, calc(100% - 28px));
@@ -310,7 +311,6 @@
     .verdict[data-state="inconclusive"] { background: #26343c; color: #c3d4dd; }
     .trend-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; margin: 2px 0 0; }
     #result-headline { font-size: 1.32rem; font-weight: 700; letter-spacing: -0.025em; line-height: 1.2; margin: 0; }
-    .plain { margin: 14px 0 0; }
     .answer-stripes { margin: 12px 0 0; }
     #result-stripes { height: 68px; }
     .stripes-note, .chart-note, .note { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
@@ -328,9 +328,12 @@
     .swatch.trend, .swatch.forecast { border-top: 2.5px dashed var(--warm); }
     .swatch.band { height: 12px; border: 0; background: #ff9c822e; }
     .numbers { margin: 12px 0 0; }
-    .numbers div { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; border-top: 1px solid var(--rule); padding: 6px 0; }
+    .numbers > div { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 4px 12px; min-height: 34px; border-top: 1px solid var(--rule); padding: 5px 32px 5px 0; }
     .numbers dt { color: var(--muted); font-size: 0.82rem; }
     .numbers dd { margin: 0; font: 500 0.86rem var(--numbers); font-variant-numeric: tabular-nums; text-align: right; }
+    .metric-info > summary { position: absolute; right: 0; top: 50%; translate: 0 -50%; width: 24px; height: 24px; background: transparent; border-color: transparent; }
+    .metric-info > summary svg { width: 15px; height: 15px; }
+    .numbers .metric-info > .info-content { --info-top: calc(50% + 12px); --info-trigger: 24px; right: 0; width: min(300px, 100%); }
     .agree { margin-top: 16px; padding: 14px 16px; background: var(--sunken); }
     .agree h4 { font-size: 0.95rem; margin-bottom: 4px; }
     .agree p { margin: 0; color: var(--muted); font-size: 0.92rem; }
@@ -342,9 +345,6 @@
     .extra-details > summary { cursor: pointer; color: var(--control); font-size: 0.9rem; font-weight: 700; }
     .extra-details > summary:hover { color: var(--control-hover); }
     .extra-details .chart-head, .tools #research { margin-top: 12px; }
-    .glossary { margin: 8px 0 0; }
-    .glossary dt { font-weight: 700; font-size: 0.9rem; margin-top: 8px; }
-    .glossary dd { margin: 2px 0 0; color: var(--muted); font-size: 0.88rem; }
     .section-card h3 { font-size: 1.05rem; }
     .compare-picker { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-top: 10px; font-size: 0.9rem; }
     .compare-picker select { flex: 1; min-width: 0; min-height: 36px; padding: 4px 8px; background: var(--sunken); border: 1px solid var(--rule); }
@@ -581,33 +581,68 @@
                 <span class="verdict" id="trend-verdict"></span>
               </div>
               <dl class="numbers">
-                <div><dt>Change per decade</dt><dd id="trend-slope"></dd></div>
-                <div><dt>95% interval</dt><dd id="trend-ci"></dd></div>
-                <div><dt>Adjusted p-value</dt><dd id="trend-p"></dd></div>
+                <div>
+                  <dt>Change per decade
+                    <details class="metric-info">
+                      <summary class="icon-button info-icon" aria-label="About change per decade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg></summary>
+                      <p class="info-content description">How much the fitted line through the yearly averages rises or falls over 10 years.</p>
+                    </details>
+                  </dt>
+                  <dd id="trend-slope"></dd>
+                </div>
+                <div>
+                  <dt>95% confidence interval
+                    <details class="metric-info">
+                      <summary class="icon-button info-icon" aria-label="About the 95% confidence interval"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg></summary>
+                      <p class="info-content description">A range of plausible rates of change. In repeated samples, about 95% of intervals built this way would contain the true rate.</p>
+                    </details>
+                  </dt>
+                  <dd id="trend-ci"></dd>
+                </div>
+                <div>
+                  <dt>t-test p-value
+                    <details class="metric-info">
+                      <summary class="icon-button info-icon" aria-label="About the t-test p-value"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg></summary>
+                      <p class="info-content description">Measures how unusual the fitted rate would be if the true rate were zero. It accounts for testing multiple measurements. A value of 0.05 or less marks a clear trend.</p>
+                    </details>
+                  </dt>
+                  <dd id="trend-p"></dd>
+                </div>
+                <div>
+                  <dt>Mann–Kendall p-value
+                    <details class="metric-info">
+                      <summary class="icon-button info-icon" aria-label="About the Mann–Kendall p-value"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg></summary>
+                      <p class="info-content description">Tests whether later yearly values tend to be higher or lower. Its p-value accounts for testing multiple measurements.</p>
+                    </details>
+                  </dt>
+                  <dd id="trend-mk"></dd>
+                </div>
+                <div>
+                  <dt>Theil–Sen rate per decade
+                    <details class="metric-info">
+                      <summary class="icon-button info-icon" aria-label="About the Theil–Sen rate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg></summary>
+                      <p class="info-content description">The median rate of change across all pairs of years, expressed per decade.</p>
+                    </details>
+                  </dt>
+                  <dd id="trend-sen"></dd>
+                </div>
               </dl>
               <details class="panel-info">
-                <summary class="icon-button info-icon" aria-label="Explain this trend and its statistics">
+                <summary class="icon-button info-icon" aria-label="About this measurement">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v2"/></svg>
                 </summary>
                 <div class="info-content">
-                  <p class="plain" id="trend-meaning" aria-live="polite"></p>
-                  <p class="description" id="variable-why"></p>
                   <p class="description" id="variable-description"></p>
-                  <dl class="numbers">
-                    <div><dt>Theil–Sen per decade</dt><dd id="trend-sen"></dd></div>
-                    <div><dt>Mann–Kendall p-value</dt><dd id="trend-mk"></dd></div>
-                  </dl>
-                  <p class="note" id="trend-agree"></p>
-                  <div class="agree" id="datasets-agree" hidden>
-                    <h4>Do the datasets agree?</h4>
-                    <p id="datasets-agree-text"></p>
-                  </div>
-                  <dl class="glossary">
-                    <dt>Change per decade</dt><dd>How much the value rises or falls every 10 years, read from the straight trend line.</dd>
-                    <dt>95% interval</dt><dd>The estimated range for the rate of change. If it crosses zero, the data can’t tell rising from falling.</dd>
-                    <dt>Adjusted p-value</dt><dd>Measures how unusual a trend this strong would be if there were no change. The Holm method accounts for testing several measurements at once.</dd>
-                    <dt>Mann–Kendall and Theil–Sen</dt><dd>A second check based on whether later years tend to be higher or lower than earlier ones. It allows for one year’s weather leaning on the next.</dd>
-                  </dl>
+                  <p class="description" id="variable-why"></p>
+                </div>
+              </details>
+              <details class="extra-details">
+                <summary>Trend notes</summary>
+                <p class="description" id="trend-meaning" aria-live="polite"></p>
+                <p class="note" id="trend-agree"></p>
+                <div class="agree" id="datasets-agree" hidden>
+                  <h4>Do the datasets agree?</h4>
+                  <p id="datasets-agree-text"></p>
                 </div>
               </details>
             </section>
@@ -747,7 +782,7 @@
       </div>
       <div>
         <h3>The trend test</h3>
-        <p>A straight line through the yearly averages gives the change per decade. Its range and p-value allow for one year’s weather leaning on the next. The Mann-Kendall test checks the answer a second way, with the Hamed–Rao correction when one year clearly leans on the next, and both are adjusted for testing 9 measurements at once (the Holm method).</p>
+        <p>A fitted line through the yearly averages gives the change per decade. The t-test and 95% confidence interval allow for correlation between nearby years. Mann–Kendall checks whether yearly values tend to rise or fall, using the Hamed–Rao correction when needed. Both p-values use the Holm adjustment for testing multiple measurements.</p>
         <p>The heatmap estimates trends between nearby sampled points on land and groups them into nine bands of equal width. Each point on the globe uses the same trend test as the results panel, with a correction for checking about 1,700 places at once (the Benjamini–Hochberg method). Because the panel corrects for 9 measurements instead, the two can occasionally differ; the panel says so when they do.</p>
         <p>Countries lift above the globe when you select an area. Taller peaks show larger changes, and colour shows whether the measurement rose or fell. The charts use the grid points in the selection.</p>
       </div>
