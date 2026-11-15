@@ -23,7 +23,7 @@
   <script defer src="globe-fields.js?v=5"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=6"></script>
-  <script defer src="trend-explorer.js?v=14"></script>
+  <script defer src="trend-explorer.js?v=16"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=3"></script>
@@ -412,6 +412,14 @@
     .extra-details { border-top: 1px solid var(--rule); margin-top: 12px; padding-top: 8px; }
     .extra-details > summary { cursor: pointer; color: var(--control); font-size: 0.9rem; font-weight: 700; }
     .extra-details > summary:hover { color: var(--control-hover); }
+    .news > summary { cursor: pointer; font-weight: 700; font-size: 1rem; }
+    .news > summary:hover { color: var(--control-hover); }
+    .news-list { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 10px; }
+    .news-list a { color: var(--ink); font-weight: 600; }
+    .news-list .description { margin: 2px 0 0; font-size: 0.8rem; }
+    .news-more { display: inline-block; margin-top: 12px; color: var(--control); font-size: 0.88rem; font-weight: 700; }
+    #locate-me[aria-busy="true"] svg { animation: pulse 0.9s ease-in-out infinite alternate; }
+    @keyframes pulse { to { opacity: 0.3; } }
     .extra-details .chart-head, .tools #research { margin-top: 12px; }
     .section-card h3 { font-size: 1.05rem; }
     .compare-picker { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-top: 10px; font-size: 0.9rem; }
@@ -621,6 +629,9 @@
     </section>
 
     <div class="zoom" role="group" aria-label="Map zoom">
+      <button type="button" class="icon-button" id="locate-me" aria-label="Go to my location" title="Go to my location">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+      </button>
       <button type="button" class="icon-button" id="zoom-in" aria-label="Zoom in">+</button>
       <button type="button" class="icon-button" id="zoom-out" aria-label="Zoom out">−</button>
       <button type="button" class="icon-button" id="zoom-reset" aria-label="Show the whole world">
@@ -819,6 +830,16 @@
                 </div>
               </details>
             </div>
+          </section>
+
+          <section class="drawer-panel" id="news-panel" aria-labelledby="news-title">
+            <details class="news" id="news">
+              <summary id="news-title">News</summary>
+              <p class="description" id="news-scope"></p>
+              <p class="description research-status" id="news-status" role="status"></p>
+              <ol class="research-sources news-list" id="news-list" aria-label="News articles" hidden></ol>
+              <a class="news-more" id="news-more" target="_blank" rel="noopener noreferrer">More on Google News ↗</a>
+            </details>
           </section>
 
         </div>

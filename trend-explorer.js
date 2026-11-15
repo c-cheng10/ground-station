@@ -1027,6 +1027,7 @@
     }
     if (!series || !canCompare) compareMode = false;
     byId("compare-panel").hidden = !series;
+    updateNews(variable);
     compareToggle.disabled = !canCompare;
     compareToggle.textContent = comparing ? "Done" : compareMode ? "Cancel" : "Compare";
     compareToggle.setAttribute("aria-expanded", String(compareMode));
@@ -1083,6 +1084,80 @@
       renderForecast(variable);
     }
   }
+
+  // ---- News: recent articles about the measurement in the selected place (GDELT, opened on demand) ----
+  const newsTopics = {
+    T2M: ["heatwave", "temperature", "heat wave"], TS: ["heatwave", "temperature", "heat wave"],
+    PRECTOTCORR: ["rainfall", "drought", "flooding"], QV2M: ["humidity", "heatwave"], RH2M: ["humidity", "heatwave"],
+    GWETROOT: ["drought", "soil moisture", "crops"], EVLAND: ["drought", "evaporation", "water shortage"],
+    WS10M: ["wind", "storm"], SNOW: ["snow", "snowfall", "snowpack"],
+    OZONE_COLUMN: ["ozone layer", "ozone hole"], TROPOPAUSE_TEMP: ["stratosphere", "upper atmosphere"],
+    COLUMN_WATER_VAPOUR: ["water vapour", "atmospheric river", "humidity"], CLOUD_FRACTION: ["cloud cover", "clouds"],
+    OUTGOING_LONGWAVE: ["heat", "climate"], OCEAN_SKIN_TEMP: ["marine heatwave", "ocean temperature", "sea temperature"],
+  };
+  const newsCache = new Map();
+  let newsQuery = "";
+  const quoted = (term) => term.includes(" ") ? `"${term}"` : term;
+  // GDELT only accepts parentheses around OR'd terms.
+  const anyOf = (terms) => terms.length > 1 ? `(${terms.map(quoted).join(" OR ")})` : quoted(terms[0]);
+
+  function newsPlaces(target) {
+    if (!target || selectionSamples(target).every(([lat, lon]) => oceanIds.has(`${lat},${lon}`))) return [];
+    const near = /^Near (.+)$/.exec(target.name)?.[1];
+    const named = storedSites.includes(target) ? target.name.replace(/^(Central|Southern|Northern|Eastern|Western) /, "") : null;
+    const countriesHere = sampledCountryCounts(selectionSamples(target)).slice(0, 2).map(([country]) => countryLabel(country));
+    return [...new Set([near, named, ...countriesHere].filter(Boolean))];
+  }
+
+  function updateNews(variable) {
+    const places = newsPlaces(site);
+    const topics = newsTopics[variable.id] ?? [variable.name.toLowerCase()];
+    const where = places.length ? places : ["ocean"];
+    byId("news-scope").textContent = `Recent articles about ${topics.slice(0, 2).join(" and ")} in ${places.join(" or ") || "the oceans"}.`;
+    byId("news-more").href = `https://news.google.com/search?q=${encodeURIComponent(`${topics[0]} ${where[0]}`)}`;
+    if (!byId("news").open) return;
+    const query = `${anyOf(topics)} ${anyOf(where)} sourcelang:english`;
+    if (query === newsQuery) return;
+    newsQuery = query;
+    if (newsCache.has(query)) return showNews(newsCache.get(query));
+    byId("news-status").textContent = "Finding articles…";
+    byId("news-list").hidden = true;
+    const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
+    url.search = new URLSearchParams({ query, mode: "artlist", maxrecords: "6", format: "json", sort: "hybridrel", timespan: "3months" });
+    fetch(url, { signal: AbortSignal.timeout(12000) })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(String(response.status))))
+      .then((body) => {
+        const articles = Array.isArray(body.articles) ? body.articles : [];
+        newsCache.set(query, articles);
+        if (newsQuery === query) showNews(articles);
+      })
+      .catch(() => {
+        if (newsQuery !== query) return;
+        newsQuery = "";
+        byId("news-status").textContent = "The news index didn’t answer. Try again in a moment, or use Google News below.";
+      });
+  }
+
+  function showNews(articles) {
+    const items = articles.map((article) => {
+      let url;
+      try { url = new URL(article.url); } catch { return null; }
+      if (!/^https?:$/.test(url.protocol) || typeof article.title !== "string") return null;
+      const item = create("li");
+      const link = create("a", article.title.trim());
+      link.href = url.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      const date = /^(\d{4})(\d{2})(\d{2})/.exec(article.seendate ?? "");
+      const when = date ? new Date(`${date[1]}-${date[2]}-${date[3]}T00:00:00Z`).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
+      item.append(link, create("p", [article.domain, when].filter(Boolean).join(" · "), "description"));
+      return item;
+    }).filter(Boolean).slice(0, 5);
+    byId("news-list").replaceChildren(...items);
+    byId("news-list").hidden = !items.length;
+    byId("news-status").textContent = items.length ? "" : "No recent articles found. Try Google News below.";
+  }
+  byId("news").addEventListener("toggle", () => { if (byId("news").open && analysis) updateNews(trendMapVariable()); });
 
   // Air temperature only: compare MERRA-2 with GLDAS 2.1 over the years both cover.
   function renderAgreement(variable) {
@@ -2366,26 +2441,30 @@
     } else if (site || app.hasAttribute("data-drawer")) clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
     else if (!welcome.inert) hideWelcome();
   });
-  byId("locate").addEventListener("click", () => {
-    const button = byId("locate");
-    if (!navigator.geolocation) {
-      button.textContent = "Location unavailable";
-      return;
-    }
-    button.textContent = "Finding you…";
+  // The position stays in the browser; only the nearest grid point is selected.
+  function findMe(onState) {
+    if (!navigator.geolocation) return onState("unavailable");
+    onState("finding");
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        button.textContent = "Use my location";
+        onState("found");
         how.close();
         choosePoint(coords.latitude, coords.longitude);
       },
-      () => {
-        button.textContent = "Location unavailable";
-        setTimeout(() => { button.textContent = "Use my location"; }, 2500);
-      },
+      () => onState("unavailable"),
       { timeout: 10000 },
     );
-  });
+  }
+  byId("locate").addEventListener("click", () => findMe((state) => {
+    const button = byId("locate");
+    button.textContent = { finding: "Finding you…", unavailable: "Location unavailable" }[state] ?? "Use my location";
+    if (state === "unavailable") setTimeout(() => { button.textContent = "Use my location"; }, 2500);
+  }));
+  byId("locate-me").addEventListener("click", () => findMe((state) => {
+    const button = byId("locate-me");
+    button.setAttribute("aria-busy", String(state === "finding"));
+    button.title = state === "unavailable" ? "Location unavailable. Check the browser's location permission." : "Go to my location";
+  }));
   byId("point-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const { latitude, longitude } = event.target.elements;
