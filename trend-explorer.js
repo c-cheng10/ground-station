@@ -1122,12 +1122,8 @@
     if (newsCache.has(query)) return showNews(newsCache.get(query));
     byId("news-status").textContent = "Finding articles…";
     byId("news-list").hidden = true;
-    const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
-    url.search = new URLSearchParams({ query, mode: "artlist", maxrecords: "6", format: "json", sort: "hybridrel", timespan: "3months" });
-    fetch(url, { signal: AbortSignal.timeout(12000) })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error(String(response.status))))
-      .then((body) => {
-        const articles = Array.isArray(body.articles) ? body.articles : [];
+    fetchNews(topics.slice(0, 4), where.slice(0, 3), query)
+      .then((articles) => {
         newsCache.set(query, articles);
         if (newsQuery === query) showNews(articles);
       })
@@ -1136,6 +1132,29 @@
         newsQuery = "";
         byId("news-status").textContent = "The news index didn’t answer. Try again in a moment, or use Google News below.";
       });
+  }
+
+  // The Supabase function (Guardian, cached) is the reliable path; calling GDELT from the browser is the backup.
+  async function fetchNews(topics, places, query) {
+    try {
+      const response = await fetch(new URL("/functions/v1/climate-news", data.supabaseUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.supabaseAnonKey}` },
+        body: JSON.stringify({ topics, places }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && Array.isArray(body?.articles)) return body.articles;
+    } catch { /* not deployed or unreachable: fall through to GDELT */ }
+    const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
+    url.search = new URLSearchParams({ query, mode: "artlist", maxrecords: "6", format: "json", sort: "hybridrel", timespan: "3months" });
+    const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!response.ok) throw new Error(String(response.status));
+    const body = await response.json();
+    return (Array.isArray(body.articles) ? body.articles : []).map((item) => {
+      const day = /^(\d{4})(\d{2})(\d{2})/.exec(item.seendate ?? "");
+      return { title: item.title, url: item.url, source: item.domain, date: day ? `${day[1]}-${day[2]}-${day[3]}` : "" };
+    });
   }
 
   function showNews(articles) {
@@ -1148,9 +1167,9 @@
       link.href = url.href;
       link.target = "_blank";
       link.rel = "noopener noreferrer";
-      const date = /^(\d{4})(\d{2})(\d{2})/.exec(article.seendate ?? "");
-      const when = date ? new Date(`${date[1]}-${date[2]}-${date[3]}T00:00:00Z`).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
-      item.append(link, create("p", [article.domain, when].filter(Boolean).join(" · "), "description"));
+      const when = /^\d{4}-\d{2}-\d{2}$/.test(article.date ?? "")
+        ? new Date(`${article.date}T00:00:00Z`).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
+      item.append(link, create("p", [article.source, when].filter(Boolean).join(" · "), "description"));
       return item;
     }).filter(Boolean).slice(0, 5);
     byId("news-list").replaceChildren(...items);
