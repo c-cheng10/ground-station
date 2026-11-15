@@ -1437,7 +1437,6 @@
   const effects = byId("globe-effects");
   const mapTip = byId("map-tip");
   const pin = byId("map-pin");
-  const northPole = byId("north-pole");
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
   const deselectButton = byId("deselect-area");
@@ -1607,12 +1606,6 @@
     if (anchor) {
       pin.style.left = `${anchor[0]}px`;
       pin.style.top = `${anchor[1]}px`;
-    }
-    const pole = !drawingArea && mapView.lat >= 60 && globe.project(mapView.lon, 90);
-    northPole.hidden = !pole;
-    if (pole) {
-      northPole.style.left = `${pole[0]}px`;
-      northPole.style.top = `${pole[1]}px`;
     }
   }
 

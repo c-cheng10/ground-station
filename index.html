@@ -23,7 +23,7 @@
   <script defer src="globe-fields.js?v=3"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=10"></script>
+  <script defer src="trend-explorer.js?v=9"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="assistant-question.js?v=2"></script>
@@ -143,8 +143,6 @@
       100% { opacity: 0; transform: translateY(290%); }
     }
     .pin { position: absolute; z-index: 4; width: 6px; height: 6px; margin: -3px 0 0 -3px; background: #fff; box-shadow: 0 0 0 1px rgb(8 16 24 / 0.7), 0 0 7px rgb(246 251 255 / 0.72); pointer-events: none; }
-    .pole-label { position: absolute; z-index: 4; pointer-events: none; color: var(--ink); background: var(--surface); border: 1px solid var(--rule); padding: 3px 6px; font-size: 0.72rem; white-space: nowrap; transform: translate(-50%, calc(-100% - 5px)); }
-    .pole-label::after { content: ""; position: absolute; top: calc(100% + 3px); left: 50%; width: 5px; height: 5px; transform: translateX(-50%); border: 1px solid currentColor; border-radius: 50%; }
     .tip {
       position: absolute; z-index: 6; pointer-events: none; padding: 8px 12px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
       font-size: 0.88rem; line-height: 1.35; white-space: nowrap; box-shadow: var(--shadow-2); font-variant-numeric: tabular-nums;
@@ -483,7 +481,6 @@
       <canvas id="globe-effects" aria-hidden="true"></canvas>
       <div id="lens-transition" aria-hidden="true"></div>
       <div class="pin" id="map-pin" hidden></div>
-      <span class="pole-label" id="north-pole" hidden>North Pole · 90° N</span>
       <div class="tip" id="map-tip" hidden></div>
     </div>
     <p class="sr-only" id="map-help">Drag or use the arrow keys to rotate the globe or orbit the selected area. Plus and minus zoom. Select a place or press Enter for the centre of the view.</p>
