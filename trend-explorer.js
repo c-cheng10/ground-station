@@ -15,6 +15,7 @@
   const gridSpacing = 3;
   const sourceCellHalfSize = 0.125;
   const sampleCountries = new Map();
+  const countryBounds = new Map();
   const pointIds = new Set(points.map(([lat, lon]) => `${lat},${lon}`));
   const storedSites = data.sites.filter((item) => pointIds.has(pointId(item)));
 
@@ -381,6 +382,7 @@
     chartLayout = null;
     byId("drawer-place").textContent = nextSite.name;
     byId("site-description").textContent = coordinates(nextSite);
+    byId("site-ecoregion").textContent = selectionEcology(nextSite);
     byId("story").hidden = true;
     byId("point-tools").hidden = true;
     byId("point-tools").open = false;
@@ -498,7 +500,7 @@
     return {
       ...item,
       id: `point:${best[0]},${best[1]}`,
-      name: countryAt(best[0], best[1]) || latLon(item),
+      name: selectionName([best]),
       region: "Nearest NASA grid point",
       bounds: { south: best[0] - sourceCellHalfSize, north: best[0] + sourceCellHalfSize,
         west: best[1] - sourceCellHalfSize, east: best[1] + sourceCellHalfSize },
@@ -545,10 +547,13 @@
     return countryForSample(latitude, longitude)?.name ?? null;
   }
 
-  function selectedCountries(target) {
-    const coordinates = target.areaIds ? target.areaIds.map((id) => id.split(",").map(Number)) :
+  function selectionSamples(target) {
+    return target.areaIds ? target.areaIds.map((id) => id.split(",").map(Number)) :
       [[target.latitude, target.longitude]];
-    const sampled = new Set(coordinates.map(([lat, lon]) => countryForSample(lat, lon)));
+  }
+
+  function selectedCountries(target) {
+    const sampled = new Set(selectionSamples(target).map(([lat, lon]) => countryForSample(lat, lon)));
     return countries.filter((country) => sampled.has(country) ||
       target.outline?.some(([lon, lat]) => inCountry(country, lat, lon)));
   }
@@ -561,6 +566,94 @@
   }
 
   const signedLongitude = (difference) => ((difference + 540) % 360) - 180;
+
+  const countryLabel = ({ name }) => name === "United States of America" ? "United States" : name;
+
+  function mainlandBounds(country) {
+    if (!countryBounds.has(country)) {
+      let largest = null;
+      for (const [outline] of country.polygons) {
+        if (!outline.length) continue;
+        const reference = outline[0][0];
+        const latitudes = outline.map(([, lat]) => lat);
+        const longitudes = outline.map(([lon]) => signedLongitude(lon - reference));
+        const south = Math.min(...latitudes), north = Math.max(...latitudes);
+        const west = Math.min(...longitudes), east = Math.max(...longitudes);
+        const area = (north - south) * (east - west) * Math.cos((south + north) * Math.PI / 360);
+        if (!largest || area > largest.area) largest = { south, north, west, east, reference, area };
+      }
+      countryBounds.set(country, largest);
+    }
+    return countryBounds.get(country);
+  }
+
+  function regionalName(country, samples) {
+    const name = countryLabel(country);
+    const bounds = mainlandBounds(country);
+    if (!bounds) return name;
+    const { south, north, west, east, reference } = bounds;
+    const height = north - south;
+    const width = east - west;
+    if (Math.max(height, width * Math.cos((south + north) * Math.PI / 360)) < 2.5 || !height || !width) return name;
+    // Keep distant islands and overseas territories out of mainland direction labels.
+    const relative = samples.map(([lat, lon]) => [(lat - south) / height, (signedLongitude(lon - reference) - west) / width]);
+    if (relative.some((pair) => pair.some((value) => value < 0 || value > 1))) return name;
+    const axes = [relative.map(([lat]) => lat), relative.map(([, lon]) => lon)];
+    const offsets = axes.map((values) => Math.max(...values) - Math.min(...values) > 0.45
+      ? null : values.reduce((sum, value) => sum + value, 0) / values.length - 0.5);
+    const [vertical, horizontal] = offsets.map((offset) => offset ?? 0);
+    if (Math.max(Math.abs(vertical), Math.abs(horizontal)) < 0.17) return offsets.includes(null) ? name : `Central ${name}`;
+    const direction = Math.abs(vertical) >= Math.abs(horizontal)
+      ? (vertical < 0 ? "Southern" : "Northern") : (horizontal < 0 ? "Western" : "Eastern");
+    return `${direction} ${name}`;
+  }
+
+  function sampledCountryCounts(samples) {
+    const counts = new Map();
+    for (const [lat, lon] of samples) {
+      const country = countryForSample(lat, lon);
+      if (country) counts.set(country, (counts.get(country) ?? 0) + 1);
+    }
+    return [...counts].sort((a, b) => b[1] - a[1]);
+  }
+
+  function selectionName(samples) {
+    const ranked = sampledCountryCounts(samples);
+    if (ranked.length > 1) {
+      const names = ranked.map(([country]) => countryLabel(country));
+      return names.length === 2 ? names.join(" and ") : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+    }
+    const [country, count] = ranked[0] ?? [];
+    const [latitude, longitude] = samples[0];
+    if (!country) return latLon({ latitude, longitude });
+    if (count < samples.length) return `Near ${countryLabel(country)}`;
+
+    let nearby = null;
+    let nearest = 60;
+    for (const [name, lat, lon] of window.SELECTION_CITIES ?? []) {
+      const km = distanceKm(latitude, longitude, lat, lon);
+      if (km >= nearest || !samples.every(([y, x]) => distanceKm(y, x, lat, lon) <= 60) || !inCountry(country, lat, lon)) continue;
+      nearby = name;
+      nearest = km;
+    }
+    return nearby ? `Near ${nearby}` : regionalName(country, samples);
+  }
+
+  function selectionEcology(target) {
+    const samples = selectionSamples(target);
+    const records = samples.map(([lat, lon]) => window.SELECTION_ECOREGIONS?.[`${lat},${lon}`]).filter(Boolean);
+    if (!records.length) return "";
+    const ecoregions = [...new Set(records.map(([name]) => name))];
+    const biomes = [...new Set(records.map(([, biome]) => biome))];
+    if (records.length === samples.length) {
+      if (ecoregions.length === 1) return `Ecoregion · ${ecoregions[0]} (${biomes[0]})`;
+      if (biomes.length === 1) return `Biome · ${biomes[0]} (${ecoregions.length} ecoregions)`;
+    }
+    const coverage = records.length < samples.length ? ` (${records.length} of ${samples.length} grid points mapped)` : "";
+    const names = ecoregions.slice(0, 2).join(" and ");
+    const remainder = ecoregions.length > 2 ? ` and ${ecoregions.length - 2} more` : "";
+    return `Mapped ecoregions · ${names}${remainder}${coverage}`;
+  }
 
   function isInDirection(direction, north, east) {
     const axis = { north, south: -north, east, west: -east }[direction];
@@ -720,6 +813,7 @@
     delete regionResults.dataset.point;
     byId("drawer-place").textContent = useGridCell ? "No data for this cell" : "No land data here";
     byId("site-description").textContent = "";
+    byId("site-ecoregion").textContent = "";
     regionResults.hidden = true;
     byId("story").hidden = true;
     byId("point-tools").hidden = true;
@@ -741,7 +835,9 @@
       const count = item.areaIds.length;
       const distance = item.distance ? ` within ${format(item.distance, 0)} km of the city` :
         item.outsideBorder ? " within about 500 km of the border" : "";
-      return `Monthly average across ${format(count, 0)} NASA grid ${count === 1 ? "point" : "points"}${distance}. Each month uses the same points.`;
+      const names = sampledCountryCounts(selectionSamples(item)).map(([country]) => countryLabel(country));
+      const locations = names.length > 2 ? ` Sampled in ${new Intl.ListFormat("en-CA").format(names)}.` : "";
+      return `Monthly average across ${format(count, 0)} NASA grid ${count === 1 ? "point" : "points"}${distance}. Each month uses the same points.${locations}`;
     }
     return `${item.region} at ${latLon(item)}. Each source uses its own grid resolution.`;
   }
@@ -1769,7 +1865,7 @@
       const angle = i * Math.PI / 4;
       emitSparkle(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius, angle);
     }
-    const target = { id: `area:${areaIds.join(";")}`, name: "Selected area", latitude: lat, longitude: lon,
+    const target = { id: `area:${areaIds.join(";")}`, name: selectionName(inside), latitude: lat, longitude: lon,
       areaIds, drawn: true, outline: outline.every(Boolean) ? outline : null };
     target.platformCountries = selectedCountries(target);
     for (const country of countries) {
@@ -1933,9 +2029,8 @@
     const cells = ids.map((id) => id.split(",").map(Number));
     const latitudes = cells.map(([lat]) => lat);
     const longitudes = cells.map(([, lon]) => lon);
-    const places = new Set(cells.map((cell) => countryAt(...cell)).filter(Boolean));
     selectSite({ id: `area:${ids.join(";")}`, areaIds: ids,
-      name: name ?? (places.size === 1 ? [...places][0] : "Selected area"),
+      name: name ?? selectionName(cells),
       latitude: (Math.min(...latitudes) + Math.max(...latitudes)) / 2,
       longitude: (Math.min(...longitudes) + Math.max(...longitudes)) / 2, keepCamera });
   }
