@@ -263,6 +263,19 @@ test("onboarding advances one step at a time, preserves the typed place and fall
   ]);
 });
 
+test("the fisherman persona opens the sea-surface temperature map without Groq", async () => {
+  const { window, load, submit, dialog } = loadOnboarding(async () => assert.fail("Fisherman uses a fixed Water preset"),
+    { role: "fisherman", place: "near Mogadishu", interest: "air temperature" });
+  let selected;
+  window.selectOnboardingArea = async ({ place, variable }) => { selected = { place, variable }; };
+  load("onboarding.js");
+  await submit();
+  await submit();
+  await submit();
+  assert.deepEqual(selected, { place: "Mogadishu", variable: "OCEAN_SKIN_TEMP" });
+  assert.equal(dialog.open, false);
+});
+
 test("device location allows a retry after permission denial and coordinates stay out of the assistant request", async () => {
   const coordinates = { latitude: 43.654321, longitude: -79.398765 };
   let geolocationResult;

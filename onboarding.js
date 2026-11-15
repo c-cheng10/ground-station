@@ -19,6 +19,7 @@
   const variables = new Map(window.TREND_CONFIG.variables.map(({ id, name }) => [id, name]));
   const roles = {
     farmer: { name: "farmer", variable: "GWETROOT" },
+    fisherman: { name: "fisherman", variable: "OCEAN_SKIN_TEMP", fixed: true },
     policymaker: { name: "policymaker", variable: "T2M" },
     researcher: { name: "student researcher", variable: "PRECTOTCORR" },
   };
@@ -28,6 +29,8 @@
   let pending;
 
   async function interpret(role, place, interest, signal) {
+    const plain = place?.replace(/^(?:in|near|around)\s+/i, "");
+    if (role.fixed) return { place: plain, variable: role.variable };
     const context = role.custom ? `As someone who describes their role as “${role.name}”` : `As a ${role.name}`;
     const where = place ? `in “${place}”` : "in this area";
     const question = interest ? `${context}, what is the historical climate trend ${where} for ${interest}?`
@@ -45,7 +48,6 @@
     const interpretedVariable = intent?.variable_ids?.[0];
     const id = typeof interpretedVariable === "string" ? interpretedVariable.toUpperCase() : "";
     const match = ["trend", "correlation"].includes(intent?.kind) && variables.has(id);
-    const plain = place?.replace(/^(?:in|near|around)\s+/i, "");
     const normalize = (value) => value.toLowerCase().replace(/[’‘]/g, "'").replace(/\s+/g, " ");
     // Keep the entered geography if the model picked a different place mentioned in the interest.
     const samePlace = plain && typeof intent?.place === "string" && normalize(intent.place) === normalize(plain);
@@ -72,6 +74,8 @@
 
   steps[0].page.addEventListener("change", () => {
     byId("onboarding-custom-role-field").hidden = form.elements.role.value !== "other";
+    byId("onboarding-place").placeholder = form.elements.role.value === "fisherman"
+      ? "e.g. Mogadishu, Somalia" : "e.g. Ontario, Canada";
     status.textContent = "";
   });
   back.addEventListener("click", () => {
@@ -176,10 +180,10 @@
         ? `Finding ${location} with the ${variables.get(result.variable).toLowerCase()} heatmap…`
         : `Finding ${location} on the globe…`;
       const target = coordinates ? { coordinates } : { place: result.place };
-      await window.selectOnboardingArea({ ...target, variable: result.variable, signal });
+      const selected = await window.selectOnboardingArea({ ...target, variable: result.variable, signal });
       signal.throwIfAborted();
       dismiss();
-      byId("drawer-title").focus({ preventScroll: true });
+      byId(selected === false ? "trend-map" : "drawer-title").focus({ preventScroll: true });
     } catch (error) {
       if (!signal.aborted) status.textContent = error instanceof Error ? error.message : "Could not open the map. Try again.";
     } finally {

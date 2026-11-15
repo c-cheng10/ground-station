@@ -878,6 +878,29 @@
     return selectSite(target);
   };
 
+  function nearbyOceanSite(place, covered) {
+    let target;
+    if (Number.isFinite(place.latitude) && Number.isFinite(place.longitude)) {
+      target = pointSite(place.latitude, place.longitude, covered);
+    } else {
+      const sector = place.direction && assistantArea(place, landSamples);
+      const land = sector ? selectionSamples(sector) : place.region?.samples;
+      let distance = 400;
+      let nearest;
+      for (const [lat, lon] of covered) {
+        const edge = !land && place.country && nearestBorderOffset(place.country, lat, lon, distance / 111);
+        const km = land ? Math.min(...land.map(([y, x]) => distanceKm(lat, lon, y, x)))
+          : edge ? 111 * Math.hypot(...edge) : Infinity;
+        if (km < distance) {
+          distance = km;
+          nearest = [lat, lon];
+        }
+      }
+      target = nearest && pointSite(...nearest, covered);
+    }
+    return target && { ...target, name: `Ocean near ${place.displayName ?? place.country?.name ?? place.name}` };
+  }
+
   window.selectOnboardingArea = async ({ place, coordinates, variable, signal }) => {
     const measurement = mapVariables.get(variable);
     const measurementLayers = Object.keys(layerOptions).filter((key) => layerOptions[key].includes(variable));
@@ -905,18 +928,30 @@
       if (match.ambiguous) throw new Error("More than one study area matches. Enter the full place name.");
       if (match.wrongCountry) throw new Error(`${match.wrongCountry.name} is in ${match.wrongCountry.region}. Check the place name.`);
       const resolved = match.entry ?? await window.AssistantPlace.resolve(place, { signal });
-      if (resolved.kind === "unresolved") throw new Error(resolved.message);
-      target = match.entry ? pointSite(resolved.latitude, resolved.longitude) : assistantArea(resolved, coveredPoints(name));
-      if (!target && resolved.kind === "region") {
-        throw new Error(`No stored NASA grid points in ${resolved.displayName} have ${measurement.name.toLowerCase()} coverage.`);
+      if (name === "water") {
+        if (resolved.kind !== "unresolved") target = nearbyOceanSite(resolved, coveredPoints(name));
+      } else {
+        if (resolved.kind === "unresolved") throw new Error(resolved.message);
+        target = match.entry ? pointSite(resolved.latitude, resolved.longitude) : assistantArea(resolved, coveredPoints(name));
+        if (!target && resolved.kind === "region") {
+          throw new Error(`No stored NASA grid points in ${resolved.displayName} have ${measurement.name.toLowerCase()} coverage.`);
+        }
       }
     }
     signal?.throwIfAborted();
+    if (!target && name === "water") {
+      setLayer(name);
+      clearSelection(home);
+      chooseMeasurement(variable);
+      return false;
+    }
     if (!target) throw new Error(`There is no nearby ${measurement.name.toLowerCase()} coverage. Try a nearby city or a different interest.`);
     setLayer(name);
     compareMode = false;
     selectedIds = new Set([variable]);
     if (site?.id === target.id && analysis) {
+      site.name = target.name;
+      byId("drawer-place").textContent = target.name;
       openDrawer();
       renderDetails();
     } else if (!await selectSite(target)) {
