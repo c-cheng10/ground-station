@@ -20,10 +20,10 @@
   <script defer src="ocean-atmosphere.js"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
-  <script defer src="globe-fields.js?v=2"></script>
+  <script defer src="globe-fields.js?v=3"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=8"></script>
+  <script defer src="trend-explorer.js?v=9"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="assistant-question.js?v=2"></script>
@@ -825,7 +825,8 @@
       <div>
         <h3>The data</h3>
         <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
-        <p>Land samples are spaced about 3° apart and ocean samples about 5° apart. MERRA-2 provides total column ozone and tropopause temperature (since 1980). Daytime AIRS observations provide total column water vapour, cloud fraction, outgoing longwave radiation, and sea surface skin temperature (since September 2002).</p>
+        <p id="grid-coverage">Land samples are spaced about 3° apart and ocean samples about 5° apart.</p>
+        <p>MERRA-2 provides total column ozone and tropopause temperature (since 1980). Daytime AIRS observations provide total column water vapour, cloud fraction, outgoing longwave radiation, and sea surface skin temperature (since September 2002). GPM precipitation estimates are less certain poleward of 60°.</p>
         <p>Use Magic select to sketch a ring around a place. The app selects the sampled points inside it. Each point counts equally, and the area chart uses months when every selected point has a value.</p>
         <p>Selection names describe the sampled grid points. Nearby cities and country outlines come from <a href="https://www.naturalearthdata.com/downloads/50m-cultural-vectors/50m-populated-places/">Natural Earth</a>. Biome labels use sample centres within <a href="https://ecoregions2017.appspot.com/">RESOLVE Ecoregions 2017</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
         <div class="location-tools">

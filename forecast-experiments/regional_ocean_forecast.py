@@ -21,7 +21,7 @@ REGIONS = {
 
 
 def regional_series():
-    points = sorted(set(experiment.ocean_grid(5)).difference(experiment.grid(3)))
+    points = experiment.experiment_ocean_grid()
     lat, lon = np.asarray(points).T
     weights = np.cos(np.radians(lat))
     series = np.stack([experiment.channel_values(point, ("airs_SurfSkinTemp",))[:, 0] for point in points])

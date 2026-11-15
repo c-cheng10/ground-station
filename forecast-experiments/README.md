@@ -10,7 +10,7 @@ The experiments reuse the site's monthly feature generation, ridge trainer, and 
 
 ## Reproduce
 
-Use Python with NumPy and the complete Giovanni cache from `python download_gldas.py --spacing 3 --ocean-spacing 5 --workers 8`. Run from the repository root.
+Use Python with NumPy and the historical 5° Giovanni cache. The 5° backtest cohort and its download command are available on `codex/forecast-experiments` at `f2a352a`. Run from the repository root.
 
 ```sh
 python forecast-experiments/forecast_experiment.py

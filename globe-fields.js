@@ -67,8 +67,9 @@
       const slope = entry.slope[index];
       if (!Number.isFinite(slope)) return;
       const ocean = index >= (entry.oceanStart ?? points.length);
-      const range = ocean ? 6 : 3.6;
-      const falloff = range ** 2 / (2 * (ocean ? 2.75 : 1.65) ** 2);
+      const spacing = ocean ? (entry.oceanSpacing ?? 5) : 3;
+      const range = spacing * 1.2;
+      const falloff = range ** 2 / (2 * (spacing * 0.55) ** 2);
       const confidence = entry.significant[index] ? 1 : 0;
       // Blend across the 3° sample spacing, with a soft cutoff before wider gaps.
       footprint(lon, lat, range, (pixel, distance) => {
