@@ -23,7 +23,7 @@
   <script defer src="globe-fields.js?v=5"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=6"></script>
-  <script defer src="trend-explorer.js?v=17"></script>
+  <script defer src="trend-explorer.js?v=18"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=3"></script>
@@ -417,6 +417,19 @@
     .news-list { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 10px; }
     .news-list a { color: var(--ink); font-weight: 600; }
     .news-list .description { margin: 2px 0 0; font-size: 0.8rem; }
+    .export-bar { position: sticky; bottom: 0; z-index: 3; padding: 10px 0 2px; background: linear-gradient(transparent, var(--space) 40%); }
+    .export-bar .button { width: 100%; min-height: 44px; }
+    .export-dialog { width: min(520px, calc(100vw - 28px)); }
+    .export-body { padding: 14px 26px 22px; }
+    .export-body fieldset { border: 0; margin: 10px 0; padding: 0; display: grid; gap: 4px; }
+    .export-body legend { font-weight: 700; margin-bottom: 6px; }
+    .export-body label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--rule); cursor: pointer; }
+    .export-body label:hover { border-color: var(--control); }
+    .export-body label:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+    .export-body label span { color: var(--muted); font-size: 0.88rem; }
+    .export-body label strong { display: block; color: var(--ink); font-size: 0.95rem; }
+    .export-body input { margin-top: 3px; accent-color: var(--control); }
+    .export-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
     .news-more { display: inline-block; margin-top: 12px; color: var(--control); font-size: 0.88rem; font-weight: 700; }
     #locate-me[aria-busy="true"] svg { animation: pulse 0.9s ease-in-out infinite alternate; }
     @keyframes pulse { to { opacity: 0.3; } }
@@ -842,6 +855,10 @@
             </details>
           </section>
 
+          <div class="export-bar" id="export-bar" hidden>
+            <button type="button" class="button primary small" id="open-export" aria-haspopup="dialog">Export data</button>
+          </div>
+
         </div>
       </div>
     </aside>
@@ -878,6 +895,34 @@
       </div>
       <button class="button secondary small" type="button" id="assistant-view-area" hidden>View selected area on map</button>
     </div>
+  </dialog>
+
+  <dialog id="export-dialog" class="export-dialog" aria-labelledby="export-title">
+    <form method="dialog" id="export-form">
+      <div class="dialog-head">
+        <h2 id="export-title">Export data</h2>
+        <button type="button" class="icon-button" id="close-export" aria-label="Close">×</button>
+      </div>
+      <div class="export-body">
+        <p class="description" id="export-scope"></p>
+        <fieldset>
+          <legend>Choose what to download</legend>
+          <label><input type="checkbox" name="trends" checked> <span><strong>Trend summary</strong> Change per decade, 95% interval, p-values and verdict for every measurement</span></label>
+          <label><input type="checkbox" name="annual" checked> <span><strong>Yearly averages</strong> One row per year, one column per measurement</span></label>
+          <label><input type="checkbox" name="monthly"> <span><strong>Monthly values</strong> Every month in the record</span></label>
+          <label><input type="checkbox" name="anomalies"> <span><strong>Monthly anomalies</strong> How far each month was from its usual value</span></label>
+          <label><input type="checkbox" name="forecast"> <span><strong>Forecast</strong> <span id="export-forecast-note">The next 12 months with the 90% range</span></span></label>
+          <label><input type="checkbox" name="news"> <span><strong>News articles</strong> <span id="export-news-note">Headlines and links from the News panel</span></span></label>
+          <label><input type="checkbox" name="sources" checked> <span><strong>Sources and methods</strong> Where every number came from and how it was tested</span></label>
+        </fieldset>
+        <p class="description">Each choice downloads as its own CSV file (the sources as a text file). Your browser may ask once to allow several downloads.</p>
+        <p class="description export-status" id="export-status" role="status"></p>
+        <div class="export-actions">
+          <button type="button" class="button secondary small" id="cancel-export">Cancel</button>
+          <button type="submit" class="button primary small" id="confirm-export">Download</button>
+        </div>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="help" aria-labelledby="help-title">

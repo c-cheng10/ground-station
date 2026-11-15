@@ -1027,6 +1027,7 @@
     }
     if (!series || !canCompare) compareMode = false;
     byId("compare-panel").hidden = !series;
+    byId("export-bar").hidden = false;
     updateNews(variable);
     compareToggle.disabled = !canCompare;
     compareToggle.textContent = comparing ? "Done" : compareMode ? "Cancel" : "Compare";
@@ -1157,7 +1158,9 @@
     });
   }
 
+  let shownNews = [];
   function showNews(articles) {
+    shownNews = articles;
     const items = articles.map((article) => {
       let url;
       try { url = new URL(article.url); } catch { return null; }
@@ -1177,6 +1180,129 @@
     byId("news-status").textContent = items.length ? "" : "No recent articles found. Try Google News below.";
   }
   byId("news").addEventListener("toggle", () => { if (byId("news").open && analysis) updateNews(trendMapVariable()); });
+
+  // ---- Export: the selected place's numbers as CSV files the user picks in a dialog ----
+  const exportDialog = byId("export-dialog");
+  const exportForm = byId("export-form");
+  // Quote every text cell, and defuse text that a spreadsheet would run as a formula.
+  const cell = (value) => typeof value === "number" ? (Number.isFinite(value) ? String(value) : "")
+    : value == null ? "" : `"${String(value).replace(/^([=+\-@])/, "'$1").replaceAll('"', '""')}"`;
+  const toCsv = (rows) => rows.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n";
+  const round = (value, places = 4) => Number.isFinite(value) ? Number(value.toFixed(places)) : null;
+  const monthLabel = (index) => `${data.startYear + Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, "0")}`;
+  const exportVariables = () => data.variables.filter((variable) => analysis?.series[variable.id]);
+  const column = (variable) => `${variable.name} (${variable.unit})`;
+
+  function exportForecast() {
+    const variable = trendMapVariable();
+    const index = model ? model.variables.indexOf(variable.id) : -1;
+    const result = index >= 0 && !site.areaIds ? forecastData() : null;
+    return result ? { variable, index, result } : null;
+  }
+
+  function byPeriod(header, key, period) {
+    const variables = exportVariables();
+    const rows = new Map();
+    variables.forEach((variable, v) => {
+      const series = analysis.series[variable.id];
+      series[key].forEach((value, i) => {
+        const at = period(series.firstYear, i);
+        if (!rows.has(at)) rows.set(at, Array(variables.length).fill(null));
+        rows.get(at)[v] = round(value);
+      });
+    });
+    return [[header, ...variables.map(column)], ...[...rows].sort(([a], [b]) => a - b)
+      .map(([at, values]) => [header === "month" ? monthLabel(at) : at, ...values])];
+  }
+  const monthOf = (firstYear, i) => (firstYear - data.startYear) * 12 + i;
+
+  const exportFiles = {
+    trends: () => [["measurement", "unit per decade", "source", "first year", "last year", "change per decade", "95% low", "95% high",
+      "t-test p (raw)", "t-test p (Holm-adjusted)", "Theil-Sen per decade", "Mann-Kendall p (Holm-adjusted)", "verdict"],
+      ...exportVariables().map((variable) => {
+        const { trend, firstYear, lastYear } = analysis.series[variable.id];
+        return [variable.name, trendUnit(variable), variable.source, firstYear, lastYear, round(trend.slope), round(trend.ciLow),
+          round(trend.ciHigh), round(trend.pValue, 6), round(trend.adjustedPValue, 6), round(trend.senSlope),
+          round(trend.mkAdjustedPValue, 6), verdictLabels[trend.verdict]];
+      })],
+    annual: () => byPeriod("year", "values", (firstYear, i) => firstYear + i),
+    monthly: () => byPeriod("month", "monthlyValues", monthOf),
+    anomalies: () => byPeriod("month", "monthlyAnomalies", monthOf),
+    forecast: () => {
+      const { variable, index, result } = exportForecast();
+      return [["month", `${variable.name} forecast anomaly (${variable.unit})`, "90% low", "90% high", "normal period"],
+        ...result.ahead.map((row, k) => {
+          const spread = 1.645 * model.rmse[k][index];
+          return [monthLabel(result.months + k), round(row[index]), round(row[index] - spread), round(row[index] + spread), model.normal.join("-")];
+        })];
+    },
+    news: () => [["title", "source", "date", "url"], ...shownNews.map(({ title, source, date, url }) => [title, source, date, url])],
+  };
+
+  function sourcesText() {
+    const where = site.areaIds ? `${site.areaIds.length} NASA grid points, averaged with equal weight` : `NASA grid point at ${latLon(site)}`;
+    return [
+      `Climate Trend Explorer export: ${site.name}`,
+      `Exported ${new Date().toISOString().slice(0, 10)} from ${location.origin}${location.pathname}`,
+      `Selection: ${where}.`, "",
+      "Measurements and sources (all through NASA GES DISC Giovanni):",
+      ...exportVariables().map((variable) => {
+        const { firstYear, lastYear } = analysis.series[variable.id];
+        return `- ${variable.name} (${variable.unit}): ${variable.source}, ${firstYear}-${lastYear}`;
+      }),
+      "", "Methods:",
+      "- Yearly averages use complete calendar years only.",
+      "- Change per decade: least-squares straight line through the yearly averages, times 10.",
+      "- 95% interval and t-test p-value use Newey-West standard errors (3 years of lag) and Student's t with n-2 degrees of freedom.",
+      `- p-values are Holm-adjusted across the ${exportVariables().length} measurements tested at this place. Rising/Falling means adjusted p <= 0.05.`,
+      "- Mann-Kendall (with the Hamed-Rao correction) and Theil-Sen give a second, rank-based check.",
+      "- Monthly anomalies are the difference from each calendar month's average over the record.",
+      "- Forecast: ridge world model on monthly anomalies with El Nino (KNMI Climate Explorer, Nino 3.4); the 90% range is 1.645 x test error.",
+      "- News articles (if included) come from The Guardian or GDELT and are context only, not data.",
+    ].join("\r\n") + "\r\n";
+  }
+
+  function download(name, text, type) {
+    const link = create("a");
+    link.href = URL.createObjectURL(new Blob([text], { type }));
+    link.download = name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+  }
+
+  byId("open-export").addEventListener("click", () => {
+    if (!analysis || !site) return;
+    const forecast = exportForecast();
+    const elements = exportForm.elements;
+    elements.forecast.disabled = !forecast;
+    if (!forecast) elements.forecast.checked = false;
+    byId("export-forecast-note").textContent = forecast ? `${forecast.variable.name}, the next 12 months with the 90% range`
+      : "Only for single points with air temperature, humidity or rain selected";
+    elements.news.disabled = !shownNews.length;
+    if (!shownNews.length) elements.news.checked = false;
+    byId("export-news-note").textContent = shownNews.length ? `${shownNews.length} headlines from the News panel` : "Open the News panel first";
+    byId("export-scope").textContent = `${site.name} · ${exportVariables().length} measurements`;
+    byId("export-status").textContent = "";
+    exportDialog.showModal();
+  });
+  for (const id of ["close-export", "cancel-export"]) byId(id).addEventListener("click", () => exportDialog.close());
+  exportDialog.addEventListener("click", (event) => { if (event.target === exportDialog) exportDialog.close(); });
+  exportForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const chosen = [...exportForm.querySelectorAll("input:checked:not(:disabled)")].map((input) => input.name);
+    if (!chosen.length) {
+      byId("export-status").textContent = "Pick at least one thing to download.";
+      return;
+    }
+    const slug = site.name.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "selection";
+    // Space the downloads out so browsers treat them as separate files.
+    chosen.forEach((name, i) => setTimeout(() => name === "sources"
+      ? download(`${slug}-sources-and-methods.txt`, sourcesText(), "text/plain;charset=utf-8")
+      : download(`${slug}-${name}.csv`, "﻿" + toCsv(exportFiles[name]()), "text/csv;charset=utf-8"), i * 350));
+    exportDialog.close();
+  });
 
   // Air temperature only: compare MERRA-2 with GLDAS 2.1 over the years both cover.
   function renderAgreement(variable) {
@@ -2449,7 +2575,7 @@
     });
   }
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || how.open || help.open || assistantDialog.open) return;
+    if (event.key !== "Escape" || how.open || help.open || assistantDialog.open || exportDialog.open) return;
     const info = explorer.querySelector("details[open] > .info-icon, #point-tools[open] > summary");
     if (info && app.hasAttribute("data-drawer")) {
       info.parentElement.open = false;
