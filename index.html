@@ -24,11 +24,11 @@
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=7"></script>
   <script defer src="climate-news.js"></script>
-  <script defer src="trend-explorer.js?v=15"></script>
+  <script defer src="trend-explorer.js?v=16"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=4"></script>
-  <script defer src="onboarding.js"></script>
+  <script defer src="onboarding.js?v=2"></script>
   <style>
     :root {
       --space: #080b0e;
@@ -495,23 +495,29 @@
     #onboarding .dialog-head { position: static; }
     #onboarding-form { padding: 18px clamp(16px, 4vw, 26px) 22px; }
     #onboarding-form fieldset { min-width: 0; padding: 0; margin: 0; border: 0; }
-    #onboarding-fields { display: grid; gap: 16px; }
-    .onboarding-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-    #onboarding-form legend, #onboarding-form .onboarding-label { display: block; font-weight: 700; margin-bottom: 6px; }
+    #onboarding-progress { flex: none; color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+    .onboarding-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .onboarding-label { display: block; font-weight: 600; margin-bottom: 6px; }
     #onboarding-form small { color: var(--muted); font-weight: 400; }
-    .onboarding-role { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px; min-height: 48px; padding: 8px; border: 1px solid var(--rule); background: var(--surface); cursor: pointer; font-size: 0.9rem; line-height: 1.2; }
-    .onboarding-role:hover, .onboarding-role:has(:checked) { border-color: var(--control); background: var(--tint); }
-    .onboarding-role input { margin: 0; accent-color: var(--control); }
+    .onboarding-role { position: relative; display: grid; place-items: center; min-height: 54px; padding: 9px 10px; border: 1px solid var(--rule); background: var(--surface); cursor: pointer; line-height: 1.2; text-align: center; }
+    .onboarding-role:hover { border-color: var(--control); }
+    .onboarding-role:has(:checked) { border-color: var(--control); background: var(--tint); color: var(--control); box-shadow: inset 0 0 0 1px var(--control); }
+    .onboarding-role:has(:focus-visible) { outline: 2px solid var(--control); outline-offset: 2px; }
+    .onboarding-role input { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; }
+    #onboarding-custom-role-field, .onboarding-location { margin-top: 14px; }
+    .onboarding-location { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+    #onboarding-locate { min-height: 44px; }
     #onboarding-form input[type="text"] { min-height: 44px; width: 100%; padding: 8px 10px; border: 1px solid var(--rule); background: var(--sunken); }
     #onboarding-form input::placeholder { color: var(--muted); opacity: 1; }
     .onboarding-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-    #onboarding-start:disabled { opacity: 0.6; cursor: wait; }
+    .onboarding-actions > div { display: flex; gap: 6px; }
+    #onboarding-start:disabled, #onboarding-locate:disabled { opacity: 0.6; cursor: wait; }
     #onboarding-status { margin: 12px 0 0; color: var(--muted); }
     #onboarding-status:empty { margin: 0; }
 
     @media (max-width: 440px) {
-      .onboarding-options { grid-template-columns: 1fr; }
-      .onboarding-role { min-height: 44px; }
+      #onboarding .dialog-head { padding-inline: 16px; }
+      #onboarding .dialog-head h2 { font-size: 1.18rem; }
     }
 
     .error { position: absolute; z-index: 30; top: 90px; left: 14px; right: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--warm); }
@@ -877,31 +883,43 @@
 
   <dialog id="onboarding" aria-labelledby="onboarding-title">
     <div class="dialog-head">
-      <h2 id="onboarding-title" tabindex="-1" autofocus>Start with a place</h2>
+      <h2 id="onboarding-title" tabindex="-1" autofocus>Which role fits you?</h2>
+      <span id="onboarding-progress">1 of 3</span>
     </div>
-    <form id="onboarding-form">
+    <form id="onboarding-form" novalidate>
       <fieldset id="onboarding-fields">
-        <fieldset>
-          <legend>Which role fits you?</legend>
+        <fieldset id="onboarding-role-step" aria-labelledby="onboarding-title">
           <div class="onboarding-options">
-            <label class="onboarding-role"><input type="radio" name="role" value="farmer" required>Farmer</label>
+            <label class="onboarding-role"><input type="radio" name="role" value="farmer">Farmer</label>
             <label class="onboarding-role"><input type="radio" name="role" value="policymaker">Policymaker</label>
             <label class="onboarding-role"><input type="radio" name="role" value="researcher">Student researcher</label>
+            <label class="onboarding-role"><input type="radio" name="role" value="other">Other</label>
+          </div>
+          <div id="onboarding-custom-role-field" hidden>
+            <label class="onboarding-label" for="onboarding-custom-role">Describe your role</label>
+            <input type="text" id="onboarding-custom-role" name="customRole" placeholder="e.g. fisheries manager" maxlength="80">
           </div>
         </fieldset>
-        <div>
-          <label class="onboarding-label" for="onboarding-place">Where are you looking?</label>
-          <input type="text" id="onboarding-place" name="place" placeholder="e.g. Southern Ontario or Kenya" maxlength="100" required>
-        </div>
-        <div>
-          <label class="onboarding-label" for="onboarding-interest">What are you interested in? <small>Optional</small></label>
+        <fieldset id="onboarding-place-step" hidden>
+          <label class="onboarding-label" for="onboarding-place">City, country or study area</label>
+          <input type="text" id="onboarding-place" name="place" placeholder="e.g. Southern Ontario or Kenya" maxlength="100">
+          <div class="onboarding-location">
+            <button type="button" class="button secondary small" id="onboarding-locate">Use my location</button>
+            <small id="onboarding-location-note" role="status"></small>
+          </div>
+        </fieldset>
+        <fieldset id="onboarding-interest-step" hidden>
+          <label class="onboarding-label" for="onboarding-interest">Climate topics <small>Optional</small></label>
           <input type="text" id="onboarding-interest" name="interest" placeholder="e.g. drought and crop stress" maxlength="250">
-        </div>
+        </fieldset>
       </fieldset>
       <p id="onboarding-status" role="status"></p>
       <div class="onboarding-actions">
-        <button type="button" class="button secondary" id="onboarding-skip">Skip</button>
-        <button type="submit" class="button primary" id="onboarding-start">Open my map</button>
+        <div>
+          <button type="button" class="button secondary" id="onboarding-back" hidden>Back</button>
+          <button type="button" class="button secondary" id="onboarding-skip">Skip</button>
+        </div>
+        <button type="submit" class="button primary" id="onboarding-start">Next</button>
       </div>
     </form>
   </dialog>

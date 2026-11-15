@@ -551,10 +551,10 @@
   }
 
   // Snap to the nearest stored sample within the reach of its grid.
-  function pointSite(latitude, longitude) {
+  function pointSite(latitude, longitude, availablePoints = points) {
     let best = null;
     let bestKm = Infinity;
-    for (const [lat, lon] of points) {
+    for (const [lat, lon] of availablePoints) {
       const km = distanceKm(latitude, longitude, lat, lon);
       if (km > (oceanIds.has(`${lat},${lon}`) ? 400 : 350)) continue;
       if (km < bestKm) [best, bestKm] = [[lat, lon], km];
@@ -834,20 +834,41 @@
     return selectSite(target);
   };
 
-  window.selectOnboardingArea = async ({ place, variable, signal }) => {
+  window.selectOnboardingArea = async ({ place, coordinates, variable, signal }) => {
     const measurement = mapVariables.get(variable);
-    const name = Object.keys(layerOptions).find((key) => layerOptions[key].includes(variable));
+    const measurementLayers = Object.keys(layerOptions).filter((key) => layerOptions[key].includes(variable));
+    let [name] = measurementLayers;
     if (!measurement || !name) throw new Error("Choose a climate measurement with map data.");
-    const location = /^ontario(?:,\s*canada)?$/i.test(place) ? "Southern Ontario" : place;
-    const match = window.AssistantPlace.findStudyArea(location, data.sites);
-    if (match.ambiguous) throw new Error("More than one study area matches. Enter the full place name.");
-    if (match.wrongCountry) throw new Error(`${match.wrongCountry.name} is in ${match.wrongCountry.region}. Check the place name.`);
-    const resolved = match.entry ?? await window.AssistantPlace.resolve(location, { signal });
     signal?.throwIfAborted();
-    if (resolved.kind === "unresolved") throw new Error(resolved.message);
-    const entry = mapEntry(variable, name);
-    const covered = points.filter((_, index) => Number.isFinite(entry?.slope[index]));
-    const target = match.entry ? pointSite(resolved.latitude, resolved.longitude) : assistantArea(resolved, covered);
+    const coveredPoints = (layerName) => {
+      const { slope } = mapEntry(variable, layerName);
+      return points.filter((_, index) => Number.isFinite(slope[index]));
+    };
+    let target;
+    if (coordinates !== undefined) {
+      const { latitude, longitude } = coordinates ?? {};
+      if (!Number.isFinite(latitude) || Math.abs(latitude) > 90 ||
+          !Number.isFinite(longitude) || Math.abs(longitude) > 180) {
+        throw new Error("Your location couldn’t be read. Enter a place instead.");
+      }
+      // Snap before creating the selection, so only the stored cell is used in data requests.
+      for (const layerName of measurementLayers) {
+        target = pointSite(latitude, longitude, coveredPoints(layerName));
+        if (target) {
+          name = layerName;
+          break;
+        }
+      }
+    } else {
+      const location = /^ontario(?:,\s*canada)?$/i.test(place) ? "Southern Ontario" : place;
+      const match = window.AssistantPlace.findStudyArea(location, data.sites);
+      if (match.ambiguous) throw new Error("More than one study area matches. Enter the full place name.");
+      if (match.wrongCountry) throw new Error(`${match.wrongCountry.name} is in ${match.wrongCountry.region}. Check the place name.`);
+      const resolved = match.entry ?? await window.AssistantPlace.resolve(location, { signal });
+      if (resolved.kind === "unresolved") throw new Error(resolved.message);
+      target = match.entry ? pointSite(resolved.latitude, resolved.longitude) : assistantArea(resolved, coveredPoints(name));
+    }
+    signal?.throwIfAborted();
     if (!target) throw new Error(`There is no nearby ${measurement.name.toLowerCase()} coverage. Try a nearby city or a different interest.`);
     setLayer(name);
     compareMode = false;
