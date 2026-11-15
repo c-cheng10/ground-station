@@ -11,35 +11,75 @@
   const clamp01 = (value) => Math.max(0, Math.min(1, value));
   const smooth = (value) => value * value * (3 - 2 * value);
 
-  function texture() {
+  function texture(columns = width, rows = height) {
     const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
+    canvas.width = columns;
+    canvas.height = rows;
     return canvas.getContext("2d");
   }
 
-  function makeSurface(countries) {
-    const ctx = texture();
-    const paths = countries.flatMap(({ polygons }) => polygons).map((rings) => {
-      const path = new Path2D();
-      for (const ring of rings) {
-        if (!ring.length) continue;
-        path.moveTo(toX(ring[0][0]), toY(ring[0][1]));
-        for (const [lon, lat] of ring.slice(1)) path.lineTo(toX(lon), toY(lat));
-        path.closePath();
+  function rasterCountries(countries, columns, rows, [west, south, east, north] = [-180, -90, 180, 90]) {
+    const ctx = texture(columns, rows);
+    const toColumn = (lon) => (lon - west) * columns / (east - west);
+    const toRow = (lat) => (north - lat) * rows / (north - south);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, columns, rows);
+    ctx.fillStyle = "#f00";
+    for (const { polygons } of countries) {
+      for (const rings of polygons) {
+        const path = new Path2D();
+        for (const ring of rings) {
+          if (!ring.length) continue;
+          const [firstLon, firstLat] = ring[0];
+          path.moveTo(toColumn(firstLon), toRow(firstLat));
+          for (let i = 1; i < ring.length; i += 1) {
+            const [lon, lat] = ring[i];
+            path.lineTo(toColumn(lon), toRow(lat));
+          }
+          path.closePath();
+        }
+        ctx.fill(path, "evenodd");
       }
-      return path;
-    });
-    ctx.fillStyle = "#fff";
-    for (const path of paths) ctx.fill(path, "evenodd");
-    const land = ctx.getImageData(0, 0, width, height).data;
-    const surface = ctx.createImageData(width, height);
-    for (let i = 0; i < surface.data.length; i += 4) {
-      surface.data[i] = land[i + 3];
-      surface.data[i + 3] = 255;
     }
-    ctx.putImageData(surface, 0, 0);
-    return { surface: ctx.canvas, land };
+    return ctx.canvas;
+  }
+
+  function makePlatform(countries, maxTextureSize) {
+    let west = Infinity;
+    let south = Infinity;
+    let east = -Infinity;
+    let north = -Infinity;
+    // The bundled polygons are split at the date line, so the crop can span both world edges.
+    for (const { polygons } of countries) {
+      for (const [outline = []] of polygons) {
+        for (const [lon, lat] of outline) {
+          west = Math.min(west, lon);
+          south = Math.min(south, lat);
+          east = Math.max(east, lon);
+          north = Math.max(north, lat);
+        }
+      }
+    }
+    if (!Number.isFinite(west)) return null;
+    const padding = 0.15;
+    west = Math.max(-180, west - padding);
+    south = Math.max(-90, south - padding);
+    east = Math.min(180, east + padding);
+    north = Math.min(90, north + padding);
+    const longitudeSpan = east - west;
+    const latitudeSpan = north - south;
+    const density = Math.min(
+      32,
+      maxTextureSize / longitudeSpan,
+      maxTextureSize / latitudeSpan,
+      Math.sqrt(4_194_304 / (longitudeSpan * latitudeSpan)),
+    );
+    const columns = Math.max(1, Math.floor(longitudeSpan * density));
+    const rows = Math.max(1, Math.floor(latitudeSpan * density));
+    return {
+      canvas: rasterCountries(countries, columns, rows, [west, south, east, north]),
+      bounds: [(west + 180) / 360, (90 - north) / 180, longitudeSpan / 360, latitudeSpan / 180],
+    };
   }
 
   // Visit compact sample footprints in map coordinates, including both sides of the date line.
@@ -57,8 +97,9 @@
     }
   }
 
-  function makeMeasurement(entry, points, land) {
+  function makeMeasurement(entry, points) {
     const range = 3.6;
+    const fullCoverage = (3.25 / range) ** 2;
     const falloff = range ** 2 / (2 * 1.65 ** 2);
     const weights = new Float32Array(size);
     const slopes = new Float32Array(size);
@@ -91,9 +132,8 @@
       if (!weights[pixel]) continue;
       const trend = slopes[pixel] / weights[pixel] / scale;
       const magnitude = clamp01(Math.abs(trend));
-      const coverage = 1 - smooth(clamp01((distances[pixel] - 0.34) / 0.66));
-      const edge = land[i + 3] / 255;
-      const opacity = coverage * edge * (0.68 + 0.32 * confidences[pixel] / weights[pixel]);
+      const coverage = 1 - smooth(clamp01((distances[pixel] - fullCoverage) / (1 - fullCoverage)));
+      const opacity = coverage * (0.68 + 0.32 * confidences[pixel] / weights[pixel]);
       // Weight the trend by opacity so texture filtering beside a gap preserves the rate of change.
       values.data[i] = 255 * opacity * clamp01((trend + 1) / 2);
       values.data[i + 1] = 255 * opacity;
@@ -177,8 +217,9 @@
     return ctx.canvas;
   }
 
-  window.createGlobeFields = ({ countries, points }) => {
-    const { surface, land } = makeSurface(countries);
+  window.createGlobeFields = ({ countries, points, maxTextureSize = 4096 }) => {
+    const columns = Math.min(360 * 8, maxTextureSize);
+    const surface = rasterCountries(countries, columns, Math.round(columns / 2));
     const pointsById = new Map(points.map((point) => [point.join(","), point]));
     const measurements = new Map();
     let selectedSite;
@@ -195,7 +236,7 @@
           measurements.set(entry, cached);
           return cached;
         }
-        const field = makeMeasurement(entry, points, land);
+        const field = makeMeasurement(entry, points);
         measurements.set(entry, field);
         if (measurements.size > 3) measurements.delete(measurements.keys().next().value);
         return field;
@@ -211,8 +252,7 @@
       platform(selectedCountries) {
         if (!selectedCountries?.length) return null;
         if (platformCountries !== selectedCountries) {
-          // The bundled country polygons are already split at the date line.
-          platform = makeSurface(selectedCountries).surface;
+          platform = makePlatform(selectedCountries, maxTextureSize);
           platformCountries = selectedCountries;
         }
         return platform;

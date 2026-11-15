@@ -1358,13 +1358,13 @@
   const bandStops = heatPalette.map((colour, i) =>
     `rgb(${colour}) ${100 * i / heatPalette.length}% ${100 * (i + 1) / heatPalette.length}%`);
   byId("trend-ramp").style.background = `linear-gradient(90deg, ${bandStops.join(", ")})`;
-  const fields = window.createGlobeFields({ countries, points });
   const globe = window.createGlobeView(world, countries, heatPalette);
   if (!globe) {
     byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
     byId("data-error").hidden = false;
     return;
   }
+  const fields = window.createGlobeFields({ countries, points, maxTextureSize: globe.maxTextureSize });
   const home = { lat: 17, lon: -18, zoom: 1 };
   const initialOrbitTilt = 0.9;
   const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, outlineOpacity: 0,
@@ -1503,7 +1503,7 @@
       tilt: mapView.orbitTilt * mapView.cameraFocus, orbitAzimuth: mapView.orbitAzimuth * mapView.cameraFocus,
       cameraLift: mapView.cameraLift,
       selectionSegments: viewedSite?.selectionSegments, outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
-      selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
+      selection: platform ? null : fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
     cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);

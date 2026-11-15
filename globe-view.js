@@ -12,6 +12,7 @@
   const rimColour = [8, 15, 20];
   const platformLift = 0.031;
   const platformRelief = 0.037;
+  const platformEdge = 0.5;
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
   const unit = (v) => {
@@ -99,6 +100,7 @@
     uniform bool uHeatVisible, uFocused, uHasPlatform;
     uniform mediump int uLayer;
     uniform vec2 uTexel;
+    uniform vec4 uPlatformBounds;
     uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform;
     varying vec2 vUv;
     varying vec3 vPoint;
@@ -112,23 +114,28 @@
     float peak(vec2 uv) {
       return texture2D(uHeight, uv).r * (uLayer == 2 ? 1.0 : texture2D(uSelection, uv).r);
     }
+    float platformCoverage(vec2 uv) {
+      vec2 local = (uv - uPlatformBounds.xy) / uPlatformBounds.zw;
+      if (local.x < 0.0 || local.x > 1.0 || local.y < 0.0 || local.y > 1.0) return 0.0;
+      return smoothstep(${platformEdge - 0.15}, ${platformEdge + 0.15}, texture2D(uPlatform, local).r);
+    }
     void main() {
-      if (uLayer == 2 && texture2D(uPlatform, vUv).r < 0.46) discard;
+      float cap = uLayer == 2 ? platformCoverage(vUv) : 1.0;
+      if (cap < 0.005) discard;
       vec3 bodyNormal = normalize(vPoint);
       vec3 toEye = normalize(uEye - vPoint);
       float facing = clamp(dot(bodyNormal, toEye), 0.0, 1.0);
       float lambert = max(0.0, dot(bodyNormal, uLight));
       vec4 surface = texture2D(uSurface, vUv);
       if (uLayer == 5 || uLayer == 6) {
-        bool cap = uHasPlatform && uRise >= 0.001 && texture2D(uPlatform, vUv).r >= 0.46;
-        if (cap != (uLayer == 6) || surface.r < 0.48 || facing <= 0.0) discard;
+        if (facing <= 0.0) discard;
         float edge = abs(vWallTop);
         float core = 1.0 - smoothstep(0.16, 0.34, edge);
         float glow = 0.24 * (1.0 - smoothstep(0.20, 1.0, edge));
         gl_FragColor = vec4(mix(vec3(0.79, 0.91, 1.0), vec3(1.0), core), max(core, glow) * uOutlineOpacity);
         return;
       }
-      float land = smoothstep(0.48, 0.62, surface.r);
+      float land = uLayer == 2 ? 1.0 : smoothstep(0.38, 0.62, surface.r);
       float selected = uFocused ? texture2D(uSelection, vUv).r : 1.0;
       if (uLayer == 4) {
         vec3 wall = mix(vec3(0.07, 0.12, 0.17), vec3(0.28, 0.41, 0.46), pow(vWallTop, 1.5));
@@ -168,7 +175,7 @@
       color *= brightness;
       float edge = pow(1.0 - facing, 5.0);
       color += (vec3(${rimColour}) / 255.0) * edge * brightness;
-      gl_FragColor = vec4(color, 1.0);
+      gl_FragColor = vec4(color, cap);
     }
   `;
 
@@ -400,7 +407,7 @@
         canvas.width = pixelWidth;
         canvas.height = pixelHeight;
       }
-      [surface, heat, selection, heightMap, platform].forEach((texture, unit) => setTexture(unit, texture));
+      [surface, heat, selection, heightMap, platform?.canvas ?? null].forEach((texture, unit) => setTexture(unit, texture));
       gl.viewport(0, 0, pixelWidth, pixelHeight);
       gl.uniform3fv(uniform("uRight"), right);
       gl.uniform3fv(uniform("uNorth"), north);
@@ -415,6 +422,7 @@
       const hasPlatform = platform !== null;
       const hasCap = hasPlatform && rise >= 0.001;
       const baseRelief = !hasPlatform && heat && selection && heightMap ? 0.030 * Math.min(rise, relief) : 0;
+      gl.uniform4fv(uniform("uPlatformBounds"), platform?.bounds ?? [0, 0, 1, 1]);
       gl.uniform1i(uniform("uHasPlatform"), hasPlatform);
       gl.uniform1f(uniform("uRise"), rise);
       gl.uniform1f(uniform("uLift"), hasPlatform ? platformLift * rise : 0);
@@ -445,7 +453,9 @@
         }
         bindVertices(mesh.buffer);
         gl.uniform1i(uniform("uLayer"), 2);
+        gl.enable(gl.BLEND);
         gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
+        gl.disable(gl.BLEND);
         drawBorders(platformBorder, borderVertexCount, 3, dpr);
       }
       if (selectionSegments?.length && outlineOpacity > 0) {
@@ -458,9 +468,8 @@
         }
         gl.uniform1f(uniform("uOutlineOpacity"), outlineOpacity);
         gl.uniform2f(uniform("uOutlineScale"), 4.8 / width, 4.8 / height);
-        if (hasCap) drawBorders(outlineBuffer, outlineVertexCount, 6, dpr);
-        gl.uniform1f(uniform("uRelief"), baseRelief);
-        drawBorders(outlineBuffer, outlineVertexCount, 5, dpr);
+        // Selection segments were already clipped to the platform's vector polygons.
+        drawBorders(outlineBuffer, outlineVertexCount, hasCap ? 6 : 5, dpr);
       }
     };
   }
@@ -501,11 +510,17 @@
       const landTexture = pixels(surface);
       const heatTexture = pixels(heat);
       const selectionTexture = pixels(selection);
-      const platformTexture = pixels(platform);
-      const focusTexture = platformTexture ?? selectionTexture;
+      const platformTexture = pixels(platform?.canvas);
+      const [left, top, spanU, spanV] = platform?.bounds ?? [0, 0, 1, 1];
       const textureIndex = (texture, u, v) =>
         4 * (Math.min(texture.width - 1, Math.floor(u * texture.width)) +
           texture.width * Math.min(texture.height - 1, Math.floor(v * texture.height)));
+      const emphasisAt = (u, v) => {
+        if (!platformTexture) return selectionTexture ? selectionTexture.data[textureIndex(selectionTexture, u, v)] / 255 : 1;
+        const x = (u - left) / spanU;
+        const y = (v - top) / spanV;
+        return x < 0 || x > 1 || y < 0 || y > 1 ? 0 : platformTexture.data[textureIndex(platformTexture, x, y)] / 255;
+      };
       const eyeRight = dot(eye, right);
       const eyeUp = dot(eye, north);
       const eyeForward = dot(eye, front);
@@ -531,11 +546,11 @@
           const at = 4 * (y * w + x);
           const landI = landTexture ? textureIndex(landTexture, u, v) : 0;
           const land = (landTexture?.data[landI] ?? 0) / 255;
-          const emphasis = focusTexture ? focusTexture.data[textureIndex(focusTexture, u, v)] / 255 : 1;
+          const emphasis = emphasisAt(u, v);
           const weight = 1 - (platformTexture ? 0.38 : 0.66) * rise * (1 - emphasis);
           const light = 0.70 + 0.49 * Math.max(0, -0.48 * localX + 0.48 * localY + 0.73 * z);
-          const heatI = heatTexture && land > 0.5 ? textureIndex(heatTexture, u, v) : 0;
-          const coverage = heatTexture && land > 0.5 ? heatTexture.data[heatI + 1] : 0;
+          const heatI = heatTexture && land > 0 ? textureIndex(heatTexture, u, v) : 0;
+          const coverage = heatTexture && land > 0 ? heatTexture.data[heatI + 1] : 0;
           const value = coverage ? heatTexture.data[heatI] / coverage : 0;
           const band = Math.min(palette.length - 1, Math.floor(value * palette.length));
           const heatColour = palette[band];
@@ -574,7 +589,7 @@
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
         const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
-        const dim = focusTexture && focusTexture.data[textureIndex(focusTexture, u, v)] < 128;
+        const dim = emphasisAt(u, v) < 0.5;
         trace(paths[(dim ? 2 : 0) + (dark ? 1 : 0)], a, b);
       }
       ctx.lineWidth = 1;
@@ -618,15 +633,18 @@
     const textures = new WeakMap();
     let frame;
 
-    function readTexture(source, longitude, latitude) {
+    function readTexture(source, longitude, latitude, [left, top, spanU, spanV] = [0, 0, 1, 1]) {
       if (!source) return 0;
+      const u = ((longitude + 180) / 360 - left) / spanU;
+      const v = ((90 - latitude) / 180 - top) / spanV;
+      if (u < 0 || u > 1 || v < 0 || v > 1) return 0;
       if (!textures.has(source)) {
         const { width, height } = source;
         textures.set(source, source.data ? source : source.getContext("2d").getImageData(0, 0, width, height));
       }
       const { width, height, data } = textures.get(source);
-      const x = width * (longitude + 180) / 360 - 0.5;
-      const y = height * (90 - latitude) / 180 - 0.5;
+      const x = width * u - 0.5;
+      const y = height * v - 0.5;
       const col = Math.floor(x);
       const row = Math.floor(y);
       const sample = (column, line) => data[4 * (Math.min(width - 1, Math.max(0, column)) +
@@ -638,7 +656,7 @@
 
     function raisedRadius(longitude, latitude) {
       const { lift, platform, reliefHeight, heightMap } = frame;
-      if (!lift || readTexture(platform, longitude, latitude) < 0.46) return 1;
+      if (!lift || readTexture(platform.canvas, longitude, latitude, platform.bounds) < platformEdge) return 1;
       return 1 + lift + reliefHeight * readTexture(heightMap, longitude, latitude);
     }
 
@@ -661,7 +679,7 @@
       const lift = gl && platform ? platformLift * rise : 0;
       const reliefHeight = reliefAvailable && heat && heightMap ? platformRelief * Math.min(rise, relief) : 0;
       const distance = Math.hypot(1, nominalFocal / nominalRadius) + (gl ? platformLift * cameraLift : 0);
-      const aimRadius = 1 + (lift && readTexture(platform, longitude, latitude) >= 0.46
+      const aimRadius = 1 + (lift && readTexture(platform.canvas, longitude, latitude, platform.bounds) >= platformEdge
         ? lift + reliefHeight * readTexture(heightMap, longitude, latitude) : 0);
       // Solve for the orbit angle that produces the requested viewing angle at the target.
       const sightAngle = 68 * rad * Math.max(0, Math.min(1, tilt));
@@ -747,7 +765,7 @@
     }
 
     return { render, project, invert, zoomFor,
-      reliefAvailable,
+      reliefAvailable, maxTextureSize: gl?.getParameter(gl.MAX_TEXTURE_SIZE) ?? 4096,
       get radius() {
       return frame ? frame.focal / Math.sqrt(frame.distance ** 2 - 1) : 0;
     } };
