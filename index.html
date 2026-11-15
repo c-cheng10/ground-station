@@ -24,7 +24,7 @@
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=7"></script>
   <script defer src="climate-news.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=21"></script>
+  <script defer src="trend-explorer.js?v=22"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=3"></script>
   <script defer src="correlation-assistant.js?v=4"></script>
@@ -439,9 +439,17 @@
     @keyframes pulse { to { opacity: 0.3; } }
     .extra-details .chart-head, .tools #research { margin-top: 12px; }
     .section-card h3 { font-size: 1.05rem; }
-    .compare-picker { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-top: 10px; font-size: 0.9rem; }
-    .compare-picker select { flex: 1; min-width: 0; min-height: 36px; padding: 4px 8px; background: var(--sunken); border: 1px solid var(--rule); }
-    .compare-picker select:hover { border-color: var(--control); }
+    .compare-picker { margin-top: 10px; font-size: 0.9rem; }
+    .compare-hint { margin: 0 0 8px; color: var(--muted); font-size: 0.86rem; }
+    .compare-list { max-height: 240px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--rule); background: var(--sunken); padding: 4px 8px 8px; }
+    .compare-list h4 { margin: 8px 0 2px; color: var(--muted); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; }
+    .compare-list label { display: flex; align-items: center; gap: 8px; padding: 5px 2px; cursor: pointer; }
+    .compare-list label:hover { color: var(--control-hover); }
+    .compare-list input { accent-color: var(--control); }
+    /* These two lists scroll, so keep a thin visible scrollbar despite the app-wide hidden ones. */
+    .compare-list, .table-wrap { scrollbar-width: thin; scrollbar-color: var(--rule) transparent; }
+    .compare-list::-webkit-scrollbar, .table-wrap::-webkit-scrollbar { display: block; width: 6px; height: 6px; }
+    .compare-list::-webkit-scrollbar-thumb, .table-wrap::-webkit-scrollbar-thumb { background: var(--rule); }
     #correlations { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--rule); }
     #correlations .panel-info > summary { top: 8px; right: 0; }
     #correlations .info-content { --info-top: 44px; right: 0; }
@@ -865,9 +873,10 @@
               <h3 id="compare-title">Compare variables</h3>
               <button type="button" class="button secondary small" id="compare-toggle" aria-expanded="false" aria-controls="compare-picker correlations">Compare</button>
             </div>
-            <label class="compare-picker" id="compare-picker" hidden>
-              Compare with <select id="compare-variable"></select>
-            </label>
+            <div class="compare-picker" id="compare-picker" hidden>
+              <p class="compare-hint">Tick any measurements to compare with <strong id="compare-main"></strong>.</p>
+              <div class="compare-list" id="compare-variable" role="group" aria-label="Measurements to compare"></div>
+            </div>
             <div class="overlay-key" id="overlay-key-mobile" hidden></div>
             <div class="info-panel" id="correlations" hidden>
               <div class="panel-heading"><h4 id="correlations-title">Correlation</h4></div>

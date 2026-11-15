@@ -1090,6 +1090,7 @@
       body.append(row);
     }
     matrix.replaceChildren(head, body);
+    matrix.style.minWidth = variables.length > 2 ? `${130 + variables.length * 86}px` : "";
   }
 
   function renderDetails() {
@@ -1102,9 +1103,9 @@
     byId("story").hidden = story?.siteId !== site.id;
     const variable = trendMapVariable();
     const series = analysis.series[variable.id];
-    const [, otherId] = selectedIds;
-    const comparing = Boolean(series && analysis.series[otherId]);
-    if (!comparing) selectedIds = new Set([variable.id]);
+    const others = [...selectedIds].slice(1).filter((id) => id !== variable.id && analysis.series[id]);
+    const comparing = Boolean(series && others.length);
+    selectedIds = new Set([variable.id, ...(comparing ? others : [])]);
     regionResults.dataset.variables = series ? [...selectedIds].join(" ") : "";
     renderTrendMap();
 
@@ -1115,23 +1116,26 @@
       empty.textContent = `No complete record for ${variable.name.toLowerCase()} here. Choose another heatmap measurement.`;
     }
     let canCompare = false;
-    for (const option of compareVariable.options) {
-      if (!option.value) continue;
-      option.hidden = option.disabled = option.value === variable.id || !analysis.series[option.value];
-      canCompare ||= !option.disabled;
+    for (const box of compareBoxes) {
+      const available = box.value !== variable.id && Boolean(analysis.series[box.value]);
+      box.closest("label").hidden = !available;
+      box.checked = available && selectedIds.has(box.value);
+      canCompare ||= available;
     }
+    // Hide groups with nothing measured here (the ocean group at land points, for example).
+    for (const section of compareGroups.values()) section.hidden = !section.querySelector("label:not([hidden])");
+    byId("compare-main").textContent = variable.name;
     if (!series || !canCompare) compareMode = false;
     byId("compare-panel").hidden = !series;
     byId("export-bar").hidden = false;
     compareToggle.disabled = !canCompare;
     compareToggle.textContent = comparing ? "Done" : compareMode ? "Cancel" : "Compare";
     compareToggle.setAttribute("aria-expanded", String(compareMode));
-    compareVariable.value = comparing ? otherId : "";
     byId("compare-picker").hidden = !compareMode;
     byId("single-report").hidden = !series || comparing;
     byId("correlations").hidden = !comparing;
     if (comparing) {
-      renderCorrelations([variable, data.variables.find(({ id }) => id === otherId)]);
+      renderCorrelations([variable, ...others.map((id) => mapVariables.get(id))]);
     } else if (series) {
       const { trend, firstYear, lastYear, values } = series;
       const unit = trendUnit(variable);
@@ -1618,13 +1622,19 @@
       extension?.variables.includes(variable) ? "Atmosphere" :
         ["T2M", "PRECTOTCORR"].includes(variable.id) ? "Land and ocean" : "Land";
     if (!compareGroups.has(group)) {
-      const options = create("optgroup");
-      options.label = group;
-      compareGroups.set(group, options);
-      compareVariable.append(options);
+      const section = create("div", "", "compare-group");
+      section.append(create("h4", group));
+      compareGroups.set(group, section);
+      compareVariable.append(section);
     }
-    compareGroups.get(group).append(new Option(variable.name, variable.id));
+    const label = create("label");
+    const box = create("input");
+    box.type = "checkbox";
+    box.value = variable.id;
+    label.append(box, create("span", variable.name));
+    compareGroups.get(group).append(label);
   }
+  const compareBoxes = [...compareVariable.querySelectorAll("input")];
   function chooseMeasurement(id) {
     compareMode = false;
     selectedIds = new Set([id]);
@@ -1667,11 +1677,11 @@
     compareMode = !compareMode;
     if (!compareMode) selectedIds = new Set([trendMapVariable().id]);
     renderDetails();
-    if (compareMode) compareVariable.focus({ preventScroll: true });
+    if (compareMode) compareBoxes.find((box) => !box.closest("label").hidden)?.focus({ preventScroll: true });
   });
   compareVariable.addEventListener("change", () => {
-    if (!compareMode || !analysis?.series[compareVariable.value]) return;
-    selectedIds = new Set([trendMapVariable().id, compareVariable.value]);
+    if (!compareMode) return;
+    selectedIds = new Set([trendMapVariable().id, ...compareBoxes.filter((box) => box.checked).map((box) => box.value)]);
     renderDetails();
   });
   function showValueAtPointer(event) {
