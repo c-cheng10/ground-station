@@ -724,7 +724,8 @@
   }
 
   window.answerClimateArea = async (question, place) => {
-    const target = place ? (place.id ? place : assistantArea(place)) : (site?.areaIds || question.kind === "trend") && site;
+    const target = place?.kind === "point" ? pointSite(place.latitude, place.longitude) :
+      place ? (place.id ? place : assistantArea(place)) : (site?.areaIds || question.kind === "trend") && site;
     if (!target) return place ? { status: "outside_coverage" } : null;
     const { ids, lag } = question;
     compareMode = ids.length === 2;

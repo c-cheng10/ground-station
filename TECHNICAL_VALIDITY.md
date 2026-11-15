@@ -17,4 +17,4 @@ At the Southern Ontario point, GPM IMERG precipitation and GLDAS 2.0 root-zone s
 
 ## AI use
 
-Codex assisted with implementation, testing and documentation. Groq routes a question to a read-only MCP tool. SQL computes the correlation from the stored point, and the interface displays the coefficient and coverage returned by the tool. The research tool links to external sources for context. [Setup](TRAINING_DATA.md)
+Codex assisted with implementation, testing and documentation. Groq extracts a structured request from the original question. The app checks the place, measurements and lag before running the lookup. The browser calculates trends and area correlations from stored observations. A read-only MCP tool returns single-point correlations and research links. [Setup](TRAINING_DATA.md)
