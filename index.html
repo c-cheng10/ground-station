@@ -13,7 +13,6 @@
   <script defer src="world-map.js"></script>
   <script defer src="trend-config.js"></script>
   <script defer src="points-index.js"></script>
-  <script defer src="featured-stripes.js"></script>
   <script defer src="trend-map.js"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
@@ -210,20 +209,24 @@
     .stage[data-drawing] ~ .map-hud .camera-actions { visibility: hidden; }
 
     /* Welcome card */
-    .welcome { top: 92px; left: var(--map-inset); width: min(305px, calc(100vw - 32px)); max-height: calc(100dvh - 328px); overflow: auto; overscroll-behavior: contain; padding: 18px; }
-    .welcome h2 { font-size: 1.4rem; letter-spacing: -0.025em; padding-right: 30px; }
-    .welcome > p { color: var(--muted); margin: 10px 0 0; }
-    .welcome .close { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; border-color: transparent; background: transparent; }
-    .welcome h3 { font-size: 0.95rem; margin-top: 16px; }
-    .examples { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+    .welcome { position: absolute; z-index: 7; top: 92px; left: var(--map-inset); width: min(305px, calc(100vw - 32px)); max-height: max(128px, calc(100dvh - 328px)); overflow: auto; overscroll-behavior: contain; }
+    .welcome-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    .welcome h2 { max-width: 14ch; font-size: 1.48rem; letter-spacing: -0.035em; text-shadow: 0 2px 10px var(--space); }
+    .welcome .close { flex: none; font-size: 1.15rem; background: var(--glass); }
+    .examples { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
     .examples button {
-      width: 100%; text-align: left; border: 1px solid var(--rule); background: var(--surface); padding: 0; overflow: hidden;
-      transition: transform 160ms ease-out, border-color 160ms ease-out;
+      position: relative; isolation: isolate; display: flex; align-items: flex-end; width: 100%; min-height: 100px;
+      overflow: hidden; text-align: left; border: 1px solid var(--rule); background: rgb(8 11 14 / 0.55); padding: 12px 14px;
+      transition: border-color 160ms ease-out;
     }
-    .examples button:hover { transform: translateY(-2px); border-color: var(--control); }
-    .examples canvas { height: 22px; }
-    .examples span { display: block; padding: 8px 12px 10px; font-weight: 700; font-size: 0.93rem; }
-    .welcome-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .examples img, .examples button::after { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .examples img { z-index: -2; object-fit: cover; opacity: 0.78; filter: brightness(0.88); transition: opacity 160ms ease-out; }
+    .examples button::after { content: ""; z-index: -1; background: linear-gradient(180deg, rgb(8 11 14 / 0.05), rgb(8 11 14 / 0.22) 40%, rgb(8 11 14 / 0.88) 90%); }
+    .examples button:is(:hover, :focus-visible) { border-color: var(--control); }
+    .examples button:focus-visible { outline-offset: -3px; }
+    .examples button:is(:hover, :focus-visible) img { opacity: 0.94; }
+    .examples span { font-size: 0.96rem; font-weight: 750; line-height: 1.25; text-shadow: 0 1px 5px var(--space); }
+    .location-tools { margin-top: 14px; }
     .goto { margin-top: 14px; font-size: 0.9rem; }
     .goto summary { cursor: pointer; color: var(--control); font-weight: 700; }
     .goto form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
@@ -395,7 +398,8 @@
       .app[data-drawer] .camera-frame { bottom: calc(min(61dvh, 100dvh - 134px) + 17px); }
       .camera-frame > span { width: 15px; height: 12px; }
       #camera-coordinates { left: 21px; top: 4px; font-size: 0.68rem; }
-      .welcome { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); max-height: min(36dvh, calc(100dvh - 132px)); z-index: 7; }
+      .welcome { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); width: min(380px, calc(100% - 68px)); max-height: min(45dvh, calc(100dvh - 132px)); }
+      .examples button { min-height: 62px; padding-block: 9px; }
       .legend-card { bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); padding: 10px 12px; }
       .extremes { max-height: 22dvh; overflow: auto; }
       .zoom { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
@@ -467,24 +471,12 @@
 
     <p class="error" role="alert" id="data-error" hidden></p>
 
-    <section class="float welcome" id="welcome" aria-labelledby="welcome-title">
-      <button type="button" class="icon-button close" id="close-welcome" aria-label="Close the welcome card">×</button>
-      <h2 id="welcome-title">How is your climate changing?</h2>
-      <p>Rotate the globe and select a place to explore decades of NASA observations, or use Magic select to compare trends across an area.</p>
-      <div class="welcome-actions">
-        <button type="button" class="button primary small" id="explore-map">Explore the globe</button>
-        <button type="button" class="button secondary small" id="locate">Use my location</button>
+    <section class="welcome" id="welcome" aria-labelledby="welcome-title">
+      <div class="welcome-head">
+        <h2 id="welcome-title">How is your climate changing?</h2>
+        <button type="button" class="icon-button close" id="close-welcome" aria-label="Close the welcome card">×</button>
       </div>
-      <h3>Try an investigation</h3>
       <ul class="examples" id="example-list"></ul>
-      <details class="goto">
-        <summary>Go to coordinates</summary>
-        <form id="point-form">
-          <label>Latitude <input name="latitude" type="number" inputmode="decimal" autocomplete="off" min="-90" max="90" step="any" placeholder="43.7" required></label>
-          <label>Longitude <input name="longitude" type="number" inputmode="decimal" autocomplete="off" min="-180" max="180" step="any" placeholder="-79.4" required></label>
-          <button type="submit" class="button secondary small">Go</button>
-        </form>
-      </details>
     </section>
 
     <section class="float legend-card" aria-labelledby="trend-map-title">
@@ -694,6 +686,17 @@
         <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
         <p>The database holds 1,656 land points. Most sit 3° apart in latitude and longitude, with seven extra points for study areas and examples. The map shows trends where enough data is available.</p>
         <p>Use Magic select to sketch a ring around a place. The app selects the sampled points inside it. Each point counts equally, and the area chart uses months when every selected point has a value.</p>
+        <div class="location-tools">
+          <button type="button" class="button secondary small" id="locate">Use my location</button>
+          <details class="goto">
+            <summary>Go to coordinates</summary>
+            <form id="point-form">
+              <label>Latitude <input name="latitude" type="number" inputmode="decimal" autocomplete="off" min="-90" max="90" step="any" placeholder="43.7" required></label>
+              <label>Longitude <input name="longitude" type="number" inputmode="decimal" autocomplete="off" min="-180" max="180" step="any" placeholder="-79.4" required></label>
+              <button type="submit" class="button secondary small">Go</button>
+            </form>
+          </details>
+        </div>
       </div>
       <div>
         <h3>The trend test</h3>
@@ -713,6 +716,7 @@
         <p>The newer GLDAS 2.1 record runs to 2025, but its inputs changed over time and it shows false warming in places like the Sahel and India. That’s why it only appears in the “Do the datasets agree?” check. The forecast knows nothing about greenhouse gases, so it can’t say where the climate is headed decades from now.</p>
       </div>
       <p class="credits">Built for the NASA Space Apps Challenge. Data: <a id="data-source">NASA GES DISC Giovanni</a> (MERRA-2, GPM IMERG, GLDAS) and the KNMI Climate Explorer (Niño 3.4 from NOAA ERSSTv5). Trend uncertainty: <a id="method-source">Newey–West method</a>. Map outlines: <a href="https://www.naturalearthdata.com/about/terms-of-use/">Natural Earth</a>. Place search: <a href="https://open-meteo.com/en/docs/geocoding-api">Open-Meteo</a> and <a href="https://www.geonames.org/">GeoNames</a>. <a href="study-areas.csv" download>Download the study-area data (CSV)</a>.</p>
+      <p class="credits">Investigation photos, resized, cropped and darkened in the interface: <a href="https://unsplash.com/photos/rocky-shoreline-with-turquoise-water-Moi3CWlpIJ8">Rocky shoreline</a> by Jeffrey Eisen (<a href="https://unsplash.com/license">Unsplash License</a>), <a href="https://commons.wikimedia.org/wiki/File:Niger,_Niamey,_Dunes_(1),_landscape.jpg">Dunes west of Niamey</a> by Vincent van Zeijst (<a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>), and <a href="https://commons.wikimedia.org/wiki/File:Fields_of_Rain.jpg">Fields of Rain</a> by Michael Gil (<a href="https://creativecommons.org/licenses/by/2.0/">CC BY 2.0</a>).</p>
     </div>
   </dialog>
 </body>

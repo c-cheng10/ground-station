@@ -2,7 +2,7 @@
   "use strict";
 
   const data = window.TREND_CONFIG;
-  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {}, TREND_MAP: trendMap = {} } = window;
+  const { TrendStatistics, POINTS_INDEX: points = [], TREND_MAP: trendMap = {} } = window;
   const byId = (id) => document.getElementById(id);
   const explorer = byId("explorer");
   if (!data || !data.sites.length || !data.variables.length || !points.length || !TrendStatistics) {
@@ -72,28 +72,24 @@
   };
   const examples = [
     {
-      title: "Is Southern Ontario getting warmer?",
-      where: "Southern Ontario, Canada. Air temperature.",
-      preview: ["ontario-T2M", "T2M"],
-      blurb: "The classic first investigation: one place, one measurement, more than 40 years.",
+      title: "Is Southern Ontario warming?",
+      photo: "ontario-shore.webp",
+      crop: "center 72%",
       look: "Compare the stripes at the start and end of the record. Check the estimated rate of change and what each trend test found.",
       site: () => storedSites.find(({ id }) => id === "southern-ontario"),
       ids: ["T2M"],
     },
     {
-      title: "Is the Sahel in West Africa getting wetter?",
-      where: "Near Niamey, Niger. Precipitation.",
-      preview: ["sahel-PRECTOTCORR", "PRECTOTCORR"],
-      blurb: "See how rainfall changed over the years covered by GPM IMERG.",
+      title: "Is the Sahel getting wetter?",
+      photo: "niger-dunes.webp",
       look: "Read the estimated rate of change and its uncertainty. Check the dates covered by each measurement before comparing trends.",
       site: () => pointIds.has("14.125,1.875") ? pointSite(14.125, 1.875) : null,
       ids: ["PRECTOTCORR"],
     },
     {
-      title: "Does wetter soil follow rainier months?",
-      where: "Southern Ontario, Canada. Precipitation and root-zone soil moisture.",
-      preview: ["ontario-PRECTOTCORR", "PRECTOTCORR"],
-      blurb: "Compare two measurements and look for a time delay between them.",
+      title: "Does wetter soil follow rain?",
+      photo: "ontario-fields.webp",
+      crop: "center 82%",
       look: "Compare precipitation and root-zone soil moisture at zero lag and one month. The two records overlap from 1998 to 2014. How does the correlation change?",
       site: () => storedSites.find(({ id }) => id === "southern-ontario"),
       ids: ["PRECTOTCORR", "GWETROOT"],
@@ -2002,7 +1998,6 @@
   };
   byId("close-drawer").addEventListener("click", closeDrawer);
   byId("close-welcome").addEventListener("click", hideWelcome);
-  byId("explore-map").addEventListener("click", hideWelcome);
   byId("show-welcome").addEventListener("click", () => {
     if (drawingArea) setAreaMode(false);
     closeDrawer();
@@ -2036,6 +2031,7 @@
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         button.textContent = "Use my location";
+        how.close();
         choosePoint(coords.latitude, coords.longitude);
       },
       () => {
@@ -2048,6 +2044,7 @@
   byId("point-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const { latitude, longitude } = event.target.elements;
+    how.close();
     choosePoint(latitude.valueAsNumber, longitude.valueAsNumber);
   });
   retryRegion.addEventListener("click", () => selectSite(site));
@@ -2061,9 +2058,12 @@
   }
   for (const example of examples.filter(({ site }) => site())) {
     const button = create("button");
-    const preview = create("canvas");
-    preview.setAttribute("aria-hidden", "true");
-    button.append(preview, create("span", example.title));
+    const photo = create("img");
+    photo.src = `assets/investigations/${example.photo}`;
+    photo.alt = "";
+    photo.draggable = false;
+    if (example.crop) photo.style.objectPosition = example.crop;
+    button.append(photo, create("span", example.title));
     button.addEventListener("click", () => {
       const target = example.site();
       if (!target) return;
@@ -2083,8 +2083,6 @@
     const item = create("li");
     item.append(button);
     byId("example-list").append(item);
-    const values = featured[example.preview[0]];
-    if (values?.length) showStripes(preview, values, example.preview[1]);
   }
 
   observer.observe(byId("chart-stage"));
