@@ -16,9 +16,57 @@
     ["quebec city", "Québec"],
     ["washington dc", "Washington D.C."],
   ]);
+  const studyAreaAliases = {
+    cerrado: ["Brazilian Cerrado", "Cerrado savanna", "Cerrado savannah"],
+    "central-amazon": ["Amazon rainforest", "Central Amazon rainforest"],
+  };
   const unresolved = (message) => ({ kind: "unresolved", message });
+  const nameKey = (name) => normalize(name).replace(/^the /, "").replace(/\p{Pd}+/gu, " ").replace(/\s+/g, " ").trim();
   const findCountry = (key) => window.WORLD_MAP?.countries.find(({ name }) =>
     normalize(countryNames.get(key) ?? key) === normalize(name));
+
+  function nameDistance(input, label) {
+    const rows = [Array.from({ length: label.length + 1 }, (_, index) => index)];
+    for (let i = 1; i <= input.length; i++) {
+      const row = [i];
+      for (let j = 1; j <= label.length; j++) {
+        const cost = Number(input[i - 1] !== label[j - 1]);
+        row[j] = Math.min(row[j - 1] + 1, rows[i - 1][j] + 1, rows[i - 1][j - 1] + cost);
+        if (i > 1 && j > 1 && input[i - 1] === label[j - 2] && input[i - 2] === label[j - 1]) {
+          row[j] = Math.min(row[j], rows[i - 2][j - 2] + 1);
+        }
+      }
+      rows.push(row);
+    }
+    return rows[input.length][label.length];
+  }
+
+  function closestName(input, entries, labels) {
+    const limit = input.length >= 12 ? 2 : input.length >= 6 ? 1 : 0;
+    const matches = [];
+    for (const entry of entries) {
+      const distance = Math.min(...labels(entry).map((label) => {
+        const key = nameKey(label);
+        return Math.abs(key.length - input.length) > limit ? Infinity : nameDistance(input, key);
+      }));
+      if (distance <= limit) matches.push({ entry, distance });
+    }
+    matches.sort((a, b) => a.distance - b.distance);
+    const [first, second] = matches;
+    return first && first.distance === second?.distance ? { ambiguous: true } : { entry: first?.entry };
+  }
+
+  function findStudyArea(place, sites) {
+    if (!place) return {};
+    const [name, qualifier, extra] = place.split(/,|\s+in\s+/i).map(nameKey);
+    if (!name || extra !== undefined) return {};
+    const key = name.replace(/ (?:biome|ecoregion|study area)$/, "");
+    const match = closestName(key, sites, ({ id, name }) => [name, id, ...(studyAreaAliases[id] ?? [])]);
+    if (!match.entry || !qualifier) return match;
+    const region = nameKey(match.entry.region);
+    const canonicalCountry = (value) => nameKey(countryNames.get(value) ?? value);
+    return canonicalCountry(region) === canonicalCountry(qualifier) ? match : { wrongCountry: match.entry };
+  }
 
   async function resolve(name, { signal } = {}) {
     const input = typeof name === "string" ? name.trim() : "";
@@ -48,6 +96,10 @@
       return { ...result, direction: bearing, interior, displayName: interior ? `${title}ern ${label}` : `${title} of ${label}` };
     }
 
+    if (/\b(?:biome|ecoregion)$/.test(nameKey(city)) || /^(?:sahel|rain[ -]?forest|savann?ah?|tundra|taiga|desert|steppe)$/.test(key)) {
+      return unresolved(`There’s no saved study area for “${input}”. Use Magic select on the globe to choose the grid points to compare.`);
+    }
+
     const cityKey = normalize(city);
     const isWashingtonDC = cityKey === "washington" && qualifier && normalize(qualifier) === "dc";
     const searchName = isWashingtonDC ? "Washington D.C." : cityNames.get(cityKey) ?? city;
@@ -67,7 +119,12 @@
       Number.isFinite(place.longitude) && Math.abs(place.longitude) <= 180
     ).sort((a, b) => (b.population ?? 0) - (a.population ?? 0));
     const [best, second] = candidates;
-    if (!best) return unresolved(`I couldn’t find “${input}”. Check the spelling or include its state, province or country.`);
+    if (!best) {
+      const nearby = !qualifier && closestName(nameKey(input), window.WORLD_MAP?.countries ?? [], ({ name }) => [name]);
+      if (nearby?.entry) return { kind: "country", country: nearby.entry };
+      if (nearby?.ambiguous) return unresolved(`More than one country matches “${input}”. Enter the full country name.`);
+      return unresolved(`I couldn’t find “${input}”. Check the spelling, add a country or use Magic select on the globe.`);
+    }
 
     // shortcut: qualify close matches until the assistant offers a place picker.
     if (second && (!best.population || best.population < 10_000 || best.population < 10 * (second.population ?? 0))) {
@@ -79,5 +136,5 @@
     return { kind: "city", name: best.name, displayName, latitude: best.latitude, longitude: best.longitude };
   }
 
-  window.AssistantPlace = { normalize, resolve };
+  window.AssistantPlace = { findStudyArea, resolve };
 })();

@@ -14,9 +14,38 @@
   );
   const sameMonth = /\b(?:same[- ]month|same time|simultaneously)\b/gi;
   const blank = (value) => " ".repeat(value.length);
+  const cleanQuestion = (question) => question.trim().replace(/[–—‐‑]/g, "-").replace(/\s+/g, " ").replace(/[?!.]+$/, "");
+
+  function splitPlace(prompt) {
+    const leading = prompt.match(/^(?:in|near|around|across)\s+(.+?),?\s+(?=(?:what|how|which|has|have|had|is|are|does|do|did|can|could|show|tell|compare)\b)/i)
+      ?? prompt.match(/^([^:]+):\s*/);
+    if (leading) return { place: leading[1], prompt: blank(leading[0]) + prompt.slice(leading[0].length) };
+
+    const markers = [...prompt.matchAll(/\s+(?:in|near|around|across|at|for)\s+/gi)];
+    const trailing = markers.at(-1);
+    if (trailing) {
+      const start = trailing.index + trailing[0].length;
+      const wording = prompt.slice(start).replace(/[,\s]+$/, "");
+      const ending = wording.match(/\s+((?:changed|risen|fallen|increased|decreased)(?:\s+over time)?|over time)$/i);
+      const place = ending ? wording.slice(0, ending.index).trim() : wording;
+      const previous = markers.at(-2);
+      const qualified = previous && trailing[0].trim().toLowerCase() === "in" &&
+        prompt.slice(previous.index + previous[0].length, trailing.index).trim();
+      return {
+        place,
+        qualifiedPlace: qualified ? `${qualified} in ${place}` : null,
+        prompt: prompt.slice(0, trailing.index) + (ending ? ` ${ending[1]}` : ""),
+      };
+    }
+    const direction = prompt.match(/\s+((?:north|south|east|west)\s+of\s+.+?)\s*$/i);
+    return direction ? { place: direction[1], prompt: prompt.slice(0, direction.index) } : { place: null, prompt };
+  }
+
+  window.climateStudyAreaMention = (question) => splitPlace(cleanQuestion(question)
+    .replace(/(?:,|\s+(?:from|between|during|in|since|until|before|after))\s*\d{4}\b.*$/i, ""));
 
   window.parseClimateAreaQuestion = (question, variables) => {
-    const text = question.trim().replace(/[–—‐‑]/g, "-").replace(/\s+/g, " ").replace(/[?!.]+$/, "");
+    const text = cleanQuestion(question);
     if (!text || /\b(?:research|papers?|articles?|studies|citations?|sources?|forecast|predict)\b/i.test(text) ||
       /\b\d{4}s?\b|\b(?:last|past|next|previous)\b[^,.!?]*\b(?:years?|decades?|months?)\b/i.test(text) ||
       /(?:-\d+|\d+\.\d+|\d+\s+to\s+\d+)[- ]months?\b/i.test(text)) return null;
@@ -28,32 +57,12 @@
     const count = (delay?.[1] ?? delay?.[2])?.toLowerCase();
     const lag = !count ? 0 : count === "a" || count === "an" ? 1 : amounts.includes(count) ? amounts.indexOf(count) : Number(count);
     if (lag > 6 || (lag && simultaneous)) return null;
-    let prompt = text.replace(delayPattern, blank).replace(sameMonth, blank);
-    if (/\b(?:lag|lags|delay|delays|months?|weeks?|days?)\b/i.test(prompt)) return null;
+    const wording = text.replace(delayPattern, blank).replace(sameMonth, blank);
+    if (/\b(?:lag|lags|delay|delays|months?|weeks?|days?)\b/i.test(wording)) return null;
 
     // Keep the wording offsets so “earlier” and “later” apply to the right measurement.
-    let place = null;
-    const leading = prompt.match(/^(?:in|near|around|across)\s+(.+?),?\s+(?=(?:what|how|which|has|have|had|is|are|does|do|did|can|could|show|tell|compare)\b)/i)
-      ?? prompt.match(/^([^:]+):\s*/);
-    if (leading) {
-      place = leading[1];
-      prompt = blank(leading[0]) + prompt.slice(leading[0].length);
-    } else {
-      const trailing = [...prompt.matchAll(/\s+(?:in|near|around|across|at|for)\s+/gi)].at(-1);
-      if (trailing) {
-        place = prompt.slice(trailing.index + trailing[0].length).replace(/[,\s]+$/, "");
-        const ending = place.match(/\s+((?:changed|risen|fallen|increased|decreased)\s*(?:over time)?)$/i);
-        if (ending) place = place.slice(0, ending.index).trim();
-        prompt = prompt.slice(0, trailing.index);
-        if (ending) prompt += ` ${ending[1]}`;
-      } else {
-        const direction = prompt.match(/\s+((?:north|south|east|west)\s+of\s+.+?)\s*$/i);
-        if (direction) {
-          place = direction[1];
-          prompt = prompt.slice(0, direction.index);
-        }
-      }
-    }
+    const { place: extractedPlace, prompt, qualifiedPlace } = splitPlace(wording);
+    let place = extractedPlace;
     if (place && /^[-+]?\d|°/.test(place)) return null;
     if (place && /^(?:here|me|(?:this|the|my) (?:selected )?(?:area|circle|place|region|point))$/i.test(place)) place = null;
 
@@ -73,11 +82,11 @@
         const earlier = direction === "before" || direction === "earlier";
         if (secondMeasurement === earlier) ids.reverse();
       }
-      return { kind: "correlation", place, ids, lag };
+      return { kind: "correlation", place, qualifiedPlace, ids, lag };
     }
     const trend = /\b(?:trends?|chang(?:e|es|ed|ing)|ris(?:e|es|en|ing)|rose|increas\w*|decreas\w*|fall(?:s|en|ing)?|fell|declin\w*|warm(?:ed|ing)|cool(?:ed|ing))\b|\bover time\b/i.test(prompt);
     return !correlation && trend && ids.length === 1 && !delay
-      ? { kind: "trend", place, ids, lag: 0 }
+      ? { kind: "trend", place, qualifiedPlace, ids, lag: 0 }
       : null;
   };
 })();

@@ -19,12 +19,6 @@
   const regionNames = new Map(config.sites.map(({ id, name }) => [id, name]));
   const variables = new Map(config.variables.map((variable) => [variable.id, variable]));
   const monthFormat = new Intl.DateTimeFormat("en-CA", { month: "short", year: "numeric", timeZone: "UTC" });
-  const studyAreaKey = (label) => window.AssistantPlace.normalize(label).replace(/^the /, "").replace(/[-\s]+/g, " ");
-  function findStudyArea(place) {
-    if (!place) return null;
-    const key = studyAreaKey(place);
-    return config.sites.find(({ name, id }) => [name, id].some((label) => studyAreaKey(label) === key));
-  }
   const quantity = new Intl.NumberFormat("en-CA", { maximumFractionDigits: 3, signDisplay: "exceptZero" });
 
   function validMonth(yyyymm) {
@@ -61,7 +55,7 @@
       : `Pearson r = ${pearson_r.toFixed(4)} · ${lag}`;
     const xWindow = `${formatMonth(first_month_x)}–${formatMonth(last_month_x)}`;
     const yWindow = `${formatMonth(first_month_y)}–${formatMonth(last_month_y)}`;
-    resultWindow.textContent = `${paired_months} paired months · ${earlier} (${source_x}): ${xWindow} · ${later} (${source_y}): ${yWindow}`;
+    resultWindow.textContent = `1 NASA grid point · ${paired_months} paired months · ${earlier} (${source_x}): ${xWindow} · ${later} (${source_y}): ${yWindow}`;
     result.hidden = false;
   }
 
@@ -133,7 +127,17 @@
     reply.textContent = "Looking up your question…";
     try {
       const area = window.parseClimateAreaQuestion(question, config.variables);
-      const namedSite = area && findStudyArea(area.place);
+      const { place: placeName, qualifiedPlace } = area ?? window.climateStudyAreaMention(question);
+      const match = [qualifiedPlace, placeName].map((mention) => ({
+        mention, ...window.AssistantPlace.findStudyArea(mention, config.sites),
+      })).find(({ entry, ambiguous, wrongCountry }) => entry || ambiguous || wrongCountry);
+      if (match?.ambiguous || match?.wrongCountry) {
+        reply.textContent = match.wrongCountry
+          ? `The saved ${match.wrongCountry.name} study area is in ${match.wrongCountry.region}. Check the place name or use Magic select.`
+          : `More than one study area matches “${match.mention}”. Enter its full name.`;
+        return;
+      }
+      const namedSite = match?.entry;
       if (area && (!namedSite || area.kind === "trend")) {
         reply.textContent = area.place ? `Finding ${area.place} on the map…` : "Loading the selected area…";
         const place = namedSite ?? (area.place
@@ -152,13 +156,15 @@
           return;
         }
       }
+      const groundedQuestion = namedSite ? question.replace(/[–—‐‑]/g, "-").replace(/\s+/g, " ")
+        .replace(match.mention, namedSite.name) : question;
       const response = await fetch(new URL("/functions/v1/climate-assistant-giovanni", config.supabaseUrl), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${config.supabaseAnonKey}`,
         },
-        body: JSON.stringify({ question, region_id: namedSite?.id ?? region_id, point_id: namedSite ? undefined : point_id }),
+        body: JSON.stringify({ question: groundedQuestion, region_id: namedSite?.id ?? region_id, point_id: namedSite ? undefined : point_id }),
         signal: AbortSignal.timeout(45_000),
       });
       const answer = await response.json();
