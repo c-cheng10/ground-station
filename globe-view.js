@@ -11,8 +11,13 @@
   const ground = [44, 52, 61];
   const rimColour = [8, 15, 20];
   const platformLift = 0.031;
+  const platformRelief = 0.037;
   const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const unit = (v) => {
+    const length = Math.hypot(...v);
+    return v.map((value) => value / length);
+  };
   const point = (lon, lat) => [Math.cos(lat) * Math.cos(lon), Math.sin(lat), Math.cos(lat) * Math.sin(lon)];
 
   const vertexShader = `
@@ -20,9 +25,9 @@
     attribute vec3 aPoint;
     attribute vec2 aUv;
     attribute float aWallTop;
-    uniform vec3 uRight, uNorth, uFront;
+    uniform vec3 uRight, uNorth, uFront, uEye;
     uniform vec2 uScale, uShift;
-    uniform float uDistance, uRelief, uLift;
+    uniform float uRelief, uLift;
     uniform mediump int uLayer;
     uniform sampler2D uHeight, uSelection, uSurface;
     varying vec2 vUv;
@@ -59,8 +64,9 @@
       bool border = uLayer == 1 || uLayer == 3;
       vec3 displaced = border || uLayer == 4 ? borderVertex(aUv) : aPoint * (1.0 + elevation(aUv));
       if (uLayer == 4 && aWallTop < 0.5) displaced = normalize(displaced) * 0.998;
-      float w = uDistance - dot(displaced, uFront);
-      vec2 xy = vec2(dot(displaced, uRight), dot(displaced, uNorth));
+      vec3 sightline = displaced - uEye;
+      float w = -dot(sightline, uFront);
+      vec2 xy = vec2(dot(sightline, uRight), dot(sightline, uNorth));
       // Perspective depth with near 0.012 and far 16 in units of Earth radii.
       float depth = w * 1.001501 - 0.024018 - (border ? 0.00012 * w : 0.0);
       gl_Position = vec4(xy * uScale + w * uShift, depth, w);
@@ -72,9 +78,9 @@
 
   const fragmentShader = (palette) => `
     precision highp float;
-    uniform vec3 uRight, uNorth, uFront;
-    uniform float uDistance, uRelief, uRise;
-    uniform bool uHeatVisible, uFocused;
+    uniform vec3 uEye, uLight;
+    uniform float uRelief, uRise;
+    uniform bool uHeatVisible, uFocused, uHasPlatform;
     uniform mediump int uLayer;
     uniform vec2 uTexel;
     uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform;
@@ -93,11 +99,9 @@
     void main() {
       if (uLayer == 2 && texture2D(uPlatform, vUv).r < 0.46) discard;
       vec3 bodyNormal = normalize(vPoint);
-      vec3 screenNormal = vec3(dot(bodyNormal, uRight), dot(bodyNormal, uNorth), dot(bodyNormal, uFront));
-      vec3 toEye = normalize(uDistance * uFront - vPoint);
+      vec3 toEye = normalize(uEye - vPoint);
       float facing = clamp(dot(bodyNormal, toEye), 0.0, 1.0);
-      vec3 light = normalize(vec3(-0.48, 0.48, 0.73));
-      float lambert = max(0.0, dot(screenNormal, light));
+      float lambert = max(0.0, dot(bodyNormal, uLight));
       vec4 surface = texture2D(uSurface, vUv);
       float land = smoothstep(0.48, 0.62, surface.r);
       float selected = uFocused ? texture2D(uSelection, vUv).r : 1.0;
@@ -109,7 +113,8 @@
       if (uLayer == 1 || uLayer == 3) {
         float heat = uHeatVisible ? texture2D(uHeat, vUv).g : 0.0;
         vec3 ink = mix(vec3(0.61, 0.77, 0.80), vec3(0.04, 0.08, 0.11), smoothstep(0.20, 0.66, heat));
-        float contrast = uLayer == 3 ? 0.65 : uRise >= 0.0 ? 0.54 - 0.25 * uRise : mix(0.14, 0.54, smoothstep(0.02, 0.94, selected));
+        float emphasis = smoothstep(0.02, 0.94, selected);
+        float contrast = uLayer == 3 ? 0.65 : 0.54 - uRise * (uHasPlatform ? 0.25 : 0.40 * (1.0 - emphasis));
         gl_FragColor = vec4(ink, contrast * smoothstep(0.0, 0.09, facing));
         return;
       }
@@ -128,14 +133,13 @@
           float slopeX = (peak(vUv + dx) - peak(vUv - dx)) / (12.56637 * uTexel.x * latitudeScale);
           float slopeY = (peak(vUv - dy) - peak(vUv + dy)) / (6.2831853 * uTexel.y);
           vec3 normal = normalize(bodyNormal - (east * slopeX + north * slopeY) * uRelief);
-          vec3 worldLight = uRight * light.x + uNorth * light.y + uFront * light.z;
-          grade = 0.61 + 0.49 * max(0.0, dot(normal, worldLight));
+          grade = 0.48 + 0.65 * max(0.0, dot(normal, uLight));
         }
         float value = heat.r / max(heat.g, 1.0 / 255.0);
         color = mix(color, bandColour(value) * grade, heat.g * land);
       }
       float brightness = uLayer == 2 ? mix(0.92, 1.03, selected) :
-        uRise >= 0.0 ? 1.0 - 0.38 * uRise : mix(0.34, 1.0, smoothstep(0.02, 0.94, selected));
+        1.0 - uRise * (uHasPlatform ? 0.38 : 0.66 * (1.0 - smoothstep(0.02, 0.94, selected)));
       color *= brightness;
       float edge = pow(1.0 - facing, 5.0);
       color += (vec3(${rimColour}) / 255.0) * edge * brightness;
@@ -326,7 +330,7 @@
     let borderVertexCount = 0;
     return ({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise }) => {
       if (gl.isContextLost()) return;
-      const { width, height, front, right, north, distance, focal, offsetX, offsetY } = frame;
+      const { width, height, front, right, north, eye, light, focal, offsetX, offsetY, reliefHeight } = frame;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const pixelWidth = Math.round(width * dpr);
       const pixelHeight = Math.round(height * dpr);
@@ -339,16 +343,18 @@
       gl.uniform3fv(uniform("uRight"), right);
       gl.uniform3fv(uniform("uNorth"), north);
       gl.uniform3fv(uniform("uFront"), front);
+      gl.uniform3fv(uniform("uEye"), eye);
+      gl.uniform3fv(uniform("uLight"), light);
       gl.uniform2f(uniform("uScale"), 2 * focal / width, 2 * focal / height);
       gl.uniform2f(uniform("uShift"), 2 * offsetX / width, -2 * offsetY / height);
-      gl.uniform1f(uniform("uDistance"), distance);
       gl.uniform1i(uniform("uHeatVisible"), heat !== null);
       gl.uniform1i(uniform("uFocused"), selection !== null);
       gl.uniform2f(uniform("uTexel"), 1 / (heightMap?.width || 1), 1 / (heightMap?.height || 1));
       const hasPlatform = platform !== null;
-      gl.uniform1f(uniform("uRise"), hasPlatform ? rise : -1);
+      gl.uniform1i(uniform("uHasPlatform"), hasPlatform);
+      gl.uniform1f(uniform("uRise"), rise);
       gl.uniform1f(uniform("uLift"), hasPlatform ? platformLift * rise : 0);
-      gl.uniform1f(uniform("uRelief"), !hasPlatform && heat && selection && heightMap ? 0.030 * relief : 0);
+      gl.uniform1f(uniform("uRelief"), !hasPlatform && heat && selection && heightMap ? 0.030 * Math.min(rise, relief) : 0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       bindVertices(mesh.buffer);
       gl.uniform1i(uniform("uLayer"), 0);
@@ -365,7 +371,7 @@
         liftedCountries = platformCountries;
       }
 
-      gl.uniform1f(uniform("uRelief"), heat && heightMap ? 0.019 * Math.min(rise, relief) : 0);
+      gl.uniform1f(uniform("uRelief"), reliefHeight);
       if (platformWall) {
         bindVertices(platformWall, true);
         gl.uniform1i(uniform("uLayer"), 4);
@@ -415,6 +421,7 @@
       const heatTexture = pixels(heat);
       const selectionTexture = pixels(selection);
       const platformTexture = pixels(platform);
+      const focusTexture = platformTexture ?? selectionTexture;
       const textureIndex = (texture, u, v) =>
         4 * (Math.min(texture.width - 1, Math.floor(u * texture.width)) +
           texture.width * Math.min(texture.height - 1, Math.floor(v * texture.height)));
@@ -436,9 +443,8 @@
           const at = 4 * (y * w + x);
           const landI = landTexture ? textureIndex(landTexture, u, v) : 0;
           const land = (landTexture?.data[landI] ?? 0) / 255;
-          const weight = platformTexture
-            ? 1 - 0.38 * rise * (1 - platformTexture.data[textureIndex(platformTexture, u, v)] / 255)
-            : selectionTexture ? 0.34 + 0.66 * selectionTexture.data[textureIndex(selectionTexture, u, v)] / 255 : 1;
+          const emphasis = focusTexture ? focusTexture.data[textureIndex(focusTexture, u, v)] / 255 : 1;
+          const weight = 1 - (platformTexture ? 0.38 : 0.66) * rise * (1 - emphasis);
           const light = 0.70 + 0.49 * Math.max(0, -0.48 * localX + 0.48 * localY + 0.73 * z);
           const heatI = heatTexture && land > 0.5 ? textureIndex(heatTexture, u, v) : 0;
           const coverage = heatTexture && land > 0.5 ? heatTexture.data[heatI + 1] : 0;
@@ -476,15 +482,16 @@
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
         const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
-        const dim = platformTexture ? rise > 0.25 && platformTexture.data[textureIndex(platformTexture, u, v)] < 128
-          : selectionTexture && selectionTexture.data[textureIndex(selectionTexture, u, v)] < 128;
+        const dim = focusTexture && focusTexture.data[textureIndex(focusTexture, u, v)] < 128;
         const path = paths[(dim ? 2 : 0) + (dark ? 1 : 0)];
         path.moveTo(...project(visible(a, b)));
         path.lineTo(...project(visible(b, a)));
       }
       ctx.lineWidth = 1;
       ctx.lineCap = "round";
-      const inks = ["rgba(155,196,204,.54)", "rgba(10,20,28,.54)", "rgba(155,196,204,.14)", "rgba(10,20,28,.14)"];
+      const dimAlpha = 0.54 - (platformTexture ? 0.25 : 0.40) * rise;
+      const inks = ["rgba(155,196,204,.54)", "rgba(10,20,28,.54)",
+        `rgba(155,196,204,${dimAlpha})`, `rgba(10,20,28,${dimAlpha})`];
       paths.forEach((path, index) => {
         ctx.strokeStyle = inks[index];
         ctx.stroke(path);
@@ -503,21 +510,32 @@
     const gl = canvas.getContext("webgl", { alpha: true, antialias: true, depth: true, preserveDrawingBuffer: true });
     const draw = gl ? webglRenderer(canvas, gl, borders, palette) : softwareRenderer(canvas, borders, palette);
     if (!draw) return null;
+    const reliefAvailable = Boolean(gl && gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) >= 3);
+    const textures = new WeakMap();
     let frame;
-    let maskSource;
-    let maskPixels;
 
-    function onPlatform(longitude, latitude) {
-      const mask = frame?.platform;
-      if (!mask || !frame.lift) return false;
-      if (mask !== maskSource) {
-        maskSource = mask;
-        maskPixels = mask.data ? mask : mask.getContext("2d").getImageData(0, 0, mask.width, mask.height);
+    function readTexture(source, longitude, latitude) {
+      if (!source) return 0;
+      if (!textures.has(source)) {
+        const { width, height } = source;
+        textures.set(source, source.data ? source : source.getContext("2d").getImageData(0, 0, width, height));
       }
-      const { width, height, data } = maskPixels;
-      const x = Math.min(width - 1, Math.max(0, Math.floor(width * (longitude + 180) / 360)));
-      const y = Math.min(height - 1, Math.max(0, Math.floor(height * (90 - latitude) / 180)));
-      return data[4 * (x + width * y)] >= 118;
+      const { width, height, data } = textures.get(source);
+      const x = width * (longitude + 180) / 360 - 0.5;
+      const y = height * (90 - latitude) / 180 - 0.5;
+      const col = Math.floor(x);
+      const row = Math.floor(y);
+      const sample = (column, line) => data[4 * (Math.min(width - 1, Math.max(0, column)) +
+        width * Math.min(height - 1, Math.max(0, line)))] / 255;
+      const mix = (a, b, t) => a + (b - a) * t;
+      return mix(mix(sample(col, row), sample(col + 1, row), x - col),
+        mix(sample(col, row + 1), sample(col + 1, row + 1), x - col), y - row);
+    }
+
+    function raisedRadius(longitude, latitude) {
+      const { lift, platform, reliefHeight, heightMap } = frame;
+      if (!lift || readTexture(platform, longitude, latitude) < 0.46) return 1;
+      return 1 + lift + reliefHeight * readTexture(heightMap, longitude, latitude);
     }
 
     function render({ longitude, latitude, zoom = 1, lens = 1, offsetX = 0, offsetY = 0,
@@ -533,53 +551,81 @@
       const shortSide = Math.min(width, height);
       const nominalFocal = focalScale * shortSide;
       const nominalRadius = radiusScale * shortSide * zoom;
-      const distance = Math.hypot(1, nominalFocal / nominalRadius);
       const focal = nominalFocal * lens;
       rise = Math.max(0, Math.min(1, rise));
       const lift = gl && platform ? platformLift * rise : 0;
-      // Rotate around the aim point and keep that point centred on the elevated shell.
-      const pitch = gl && platform ? Math.min(15 * rad, 0.48 * (distance - 1 - lift)) * tilt : 0;
+      const reliefHeight = reliefAvailable && heat && heightMap ? platformRelief * Math.min(rise, relief) : 0;
+      const distance = Math.hypot(1, nominalFocal / nominalRadius) + lift;
+      const aimRadius = 1 + lift + (lift && readTexture(platform, longitude, latitude) >= 0.46
+        ? reliefHeight * readTexture(heightMap, longitude, latitude) : 0);
+      // Solve for the orbit angle that produces the requested viewing angle at the target.
+      const sightAngle = lift ? 68 * rad * Math.max(0, Math.min(1, tilt)) : 0;
+      const pitch = sightAngle - Math.asin(aimRadius / distance * Math.sin(sightAngle));
       const azimuth = orbitAzimuth * rad;
-      const front = aim.map((value, i) => value * Math.cos(pitch) - Math.sin(pitch) *
-        (aimNorth[i] * Math.cos(azimuth) + aimRight[i] * Math.sin(azimuth)));
-      const horizon = Math.hypot(front[0], front[2]);
-      const right = horizon > 1e-8 ? [-front[2] / horizon, 0, front[0] / horizon] : aimRight;
+      const eye = aim.map((value, i) => distance * (value * Math.cos(pitch) - Math.sin(pitch) *
+        (aimNorth[i] * Math.cos(azimuth) + aimRight[i] * Math.sin(azimuth))));
+      const front = unit(eye.map((value, i) => value - aim[i] * aimRadius));
+      const right = unit(cross(front, aimNorth));
       const north = cross(right, front);
-      const aimScale = focal * (1 + lift) / (distance - (1 + lift) * dot(aim, front));
-      offsetX -= aimScale * dot(aim, right);
-      offsetY += aimScale * dot(aim, north);
-      frame = { front, right, north, distance, focal, cx: width / 2 + offsetX, cy: height / 2 + offsetY,
-        width, height, offsetX, offsetY, lift, platform };
+      const platformLight = gl && platform ? rise : 0;
+      const key = [-0.48 - 0.15 * platformLight, 0.48 + 0.15 * platformLight, 0.73 - 0.27 * platformLight];
+      const light = unit(aim.map((value, i) => key[0] * aimRight[i] + key[1] * aimNorth[i] + key[2] * value));
+      frame = { front, right, north, eye, light, distance, focal, cx: width / 2 + offsetX, cy: height / 2 + offsetY,
+        width, height, offsetX, offsetY, lift, platform, reliefHeight, heightMap };
       draw({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise });
     }
 
     function project(longitude, latitude) {
       if (!frame) return null;
-      const { front, right, north, distance, focal, cx, cy } = frame;
-      const radius = onPlatform(longitude, latitude) ? 1 + frame.lift : 1;
+      const { front, right, north, eye, focal, cx, cy } = frame;
+      const radius = raisedRadius(longitude, latitude);
       const target = point(longitude * rad, latitude * rad).map((value) => value * radius);
-      const z = dot(target, front);
-      if (z * distance < radius * radius) return null;
-      const scale = focal / (distance - z);
-      return [cx + scale * dot(target, right), cy - scale * dot(target, north)];
+      if (dot(target, eye) < radius * radius) return null;
+      const sightline = target.map((value, i) => value - eye[i]);
+      const depth = -dot(sightline, front);
+      if (depth <= 0.012) return null;
+      const scale = focal / depth;
+      return [cx + scale * dot(sightline, right), cy - scale * dot(sightline, north)];
     }
 
     function invert(x, y) {
       if (!frame) return null;
-      const { front, right, north, distance, focal, cx, cy } = frame;
+      const { front, right, north, eye, focal, cx, cy, lift, reliefHeight } = frame;
       const px = (x - cx) / focal;
       const py = (cy - y) / focal;
-      function geographicHit(radius) {
-        const t = surfaceDistance(px, py, distance, radius);
-        if (t === null) return null;
-        const p = front.map((value, index) => value * (distance - t) + t * (right[index] * px + north[index] * py));
-        return [Math.atan2(p[2], p[0]) / rad, Math.asin(Math.max(-1, Math.min(1, p[1] / radius))) / rad];
+      const ray = front.map((value, i) => px * right[i] + py * north[i] - value);
+      const speedSquared = dot(ray, ray);
+      const closest = -dot(ray, eye) / speedSquared;
+      const minimumRadiusSquared = dot(eye, eye) - speedSquared * closest ** 2;
+      const hit = (radius) => radius ** 2 >= minimumRadiusSquared
+        ? closest - Math.sqrt((radius ** 2 - minimumRadiusSquared) / speedSquared) : null;
+      function geographic(t) {
+        const [px, py, pz] = eye.map((value, i) => value + ray[i] * t);
+        return [Math.atan2(pz, px) / rad, Math.atan2(py, Math.hypot(px, pz)) / rad];
       }
-      if (frame.lift) {
-        const raised = geographicHit(1 + frame.lift);
-        if (raised && onPlatform(...raised)) return raised;
+      const base = hit(1);
+      const first = lift ? hit(1 + lift + reliefHeight) : null;
+      if (first !== null && first > 0) {
+        const last = base ?? closest;
+        const step = (last - first) / 12;
+        const underPlateau = (t) => {
+          const radius = raisedRadius(...geographic(t));
+          return radius > 1 && radius ** 2 >= minimumRadiusSquared + speedSquared * (closest - t) ** 2 - 1e-10;
+        };
+        // Search the raised surface first so clicks follow the relief at shallow angles.
+        for (let i = 0; i <= 12; i += 1) {
+          let high = first + step * i;
+          if (!underPlateau(high)) continue;
+          let low = Math.max(first, high - step);
+          for (let pass = 0; pass < 7; pass += 1) {
+            const mid = (low + high) / 2;
+            if (underPlateau(mid)) high = mid;
+            else low = mid;
+          }
+          return geographic(high);
+        }
       }
-      return geographicHit(1);
+      return base !== null && base > 0 ? geographic(base) : null;
     }
 
     function zoomFor(degrees, pixels) {
@@ -594,7 +640,7 @@
     }
 
     return { render, project, invert, zoomFor,
-      reliefAvailable: Boolean(gl && gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) >= 3),
+      reliefAvailable,
       get radius() {
       return frame ? frame.focal / Math.sqrt(frame.distance ** 2 - 1) : 0;
     } };

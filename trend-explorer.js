@@ -12,6 +12,7 @@
     return;
   }
   const pointId = ({ latitude, longitude }) => `${latitude},${longitude}`;
+  const gridSpacing = 3;
   const pointIds = new Set(points.map(([lat, lon]) => `${lat},${lon}`));
   const storedSites = data.sites.filter((item) => pointIds.has(pointId(item)));
 
@@ -334,10 +335,6 @@
     regionRequest = request;
     site = nextSite;
     if (!site.platformCountries) site.platformCountries = selectedCountries(site);
-    loweringCountries = null;
-    mapView.rise = 0;
-    mapView.orbitAzimuth = 0;
-    mapView.orbitTilt = 0.86;
     deselectButton.hidden = false;
     analysis = null;
     delete regionResults.dataset.site;
@@ -350,7 +347,7 @@
     byId("story").hidden = true;
     explorer.scrollTop = 0;
     openDrawer();
-    flyTo(nextSite.latitude, nextSite.longitude, focusZoom(nextSite));
+    flyTo(nextSite.latitude, nextSite.longitude, focusZoom(nextSite), { selection: nextSite });
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
@@ -636,8 +633,9 @@
     drawTrendMap();
   }
 
-  function choosePoint(latitude, longitude) {
-    const target = pointSite(latitude, longitude);
+  function choosePoint(latitude, longitude, useGridCell = false) {
+    const sample = useGridCell ? points[gridPointIndex(latitude, longitude)] : [latitude, longitude];
+    const target = sample && pointSite(...sample);
     if (target) {
       selectSite(target);
       return;
@@ -646,19 +644,19 @@
     regionRequest = null;
     site = null;
     deselectButton.hidden = true;
-    mapView.rise = 0;
-    loweringCountries = null;
     analysis = null;
     chartLayout = null;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
-    byId("drawer-place").textContent = "No land data here";
+    byId("drawer-place").textContent = useGridCell ? "No data for this cell" : "No land data here";
     byId("site-description").textContent = "";
     regionResults.hidden = true;
     byId("story").hidden = true;
     openDrawer();
-    drawTrendMap();
-    setRegionStatus("No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
+    flyTo(mapView.lat, mapView.lon, mapView.zoom, { selection: null });
+    setRegionStatus(useGridCell
+      ? "There’s no stored NASA point for this 3° cell. Select a nearby cell or use Magic select to cover more ground."
+      : "No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
   }
 
   function latLon(item) {
@@ -1233,7 +1231,8 @@
     return;
   }
   const home = { lat: 17, lon: -18, zoom: 1 };
-  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, orbitAzimuth: 0, orbitTilt: 0.86 };
+  const initialOrbitTilt = 0.9;
+  const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
   let heatVisible = true;
   let displayedVariable;
   let lensStarted = 0;
@@ -1244,7 +1243,7 @@
   let staticTimer = 0;
   let grainIndex = 0;
   let grainTiles;
-  let loweringCountries = null;
+  let viewedSite = null;
   let drawingArea = false;
   let magicPath = [];
   let magicPointer = null;
@@ -1280,13 +1279,13 @@
         for (const [lon, lat] of outline) countrySpread = Math.max(countrySpread, angularDistance(lat, lon));
       }
     }
-    const spread = Math.max(2.5, Math.min(countrySpread, 14), ...samples);
+    const spread = Math.max(2.5, Math.min(countrySpread, 7), ...samples);
     const [width, height] = mapSize();
     const mobile = width <= 760;
     const visibleWidth = mobile ? width : width - byId("drawer").offsetWidth;
     const visibleHeight = mobile ? height - byId("drawer").offsetHeight - byId("map-toolbar").offsetHeight - 38 : height;
     const available = Math.min(visibleWidth, visibleHeight);
-    return clampZoom(globe.zoomFor(spread + 2.5, Math.max(30, available * 0.44)));
+    return clampZoom(globe.zoomFor(spread + 1.25, Math.max(30, available * (mobile ? 0.54 : 0.58))));
   }
 
   function drawMagicEffects(now) {
@@ -1358,20 +1357,19 @@
     if (lensProgress >= 0.42) displayedVariable = variableId;
     const texture = heatVisible && trendMap[variableId]
       ? fields.measurement(trendMap[variableId]) : {};
-    const platformCountries = drawingArea ? null : site?.platformCountries ?? (mapView.rise > 0 ? loweringCountries : null);
+    const platformCountries = viewedSite?.platformCountries;
     const platform = fields.platform(platformCountries);
-    const hasRelief = Boolean(heatVisible && !drawingArea && (platform || site?.areaIds));
+    const hasRelief = Boolean(heatVisible && mapView.rise > 0 && (platform || viewedSite?.areaIds));
     globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
       ...texture, platform, platformCountries, rise: mapView.rise,
-      tilt: mapView.orbitTilt * mapView.rise, orbitAzimuth: mapView.orbitAzimuth,
-      selection: site ? platform ?? fields.select(drawingArea ? null : site) : null,
-      relief: hasRelief ? mapView.relief ?? 1 : 0 });
+      tilt: platform ? mapView.orbitTilt * mapView.rise : 0, orbitAzimuth: mapView.orbitAzimuth,
+      selection: platform ?? fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
     updateViewfinder();
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
     drawMagicEffects(now);
-    const anchor = !drawingArea && site && !site.areaIds && globe.project(site.longitude, site.latitude);
+    const anchor = !drawingArea && viewedSite === site && site && !site.areaIds && globe.project(site.longitude, site.latitude);
     pin.hidden = !anchor;
     if (anchor) {
       pin.style.left = `${anchor[0]}px`;
@@ -1465,7 +1463,7 @@
     lensStarted = performance.now();
     refocus(105);
     const step = (now) => {
-      drawTrendMap(now);
+      if (!flight) drawTrendMap(now);
       if (now - lensStarted < sensorSweep) lensFrame = requestAnimationFrame(step);
       else {
         lensStarted = 0;
@@ -1480,27 +1478,33 @@
     return [width / 2 + mapView.offsetX, height / 2 + mapView.offsetY];
   }
 
-  function stopFlight(keepLowering = false) {
+  function stopFlight() {
     cancelAnimationFrame(flight);
-    if (!keepLowering && !site && loweringCountries) {
-      mapView.rise = 0;
-      loweringCountries = null;
-    }
+    flight = 0;
     if (focusAnimation?.playState === "running" && focusAnimation.currentTime < focusAnimation.effect.getTiming().delay) {
       focusAnimation.cancel();
     }
   }
 
-  function flyTo(lat, lon, zoom, avoidPanel = true) {
+  function flyTo(lat, lon, zoom, { avoidPanel = true, selection = viewedSite } = {}) {
     const [width] = mapSize();
     const open = avoidPanel && app.hasAttribute("data-drawer");
     const panel = byId("drawer");
     const offsetX = open && width > 760 ? -panel.offsetWidth / 2 : 0;
     const toolbar = open && width <= 760 ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
     const offsetY = toolbar ? (toolbar - panel.offsetHeight) / 2 : 0;
-    const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY, relief: 1,
-      rise: site?.platformCountries?.length ? 1 : 0 };
     const from = { ...mapView };
+    const previous = viewedSite;
+    const changingSite = previous?.id !== selection?.id;
+    const previousCountries = previous?.platformCountries ?? [];
+    const nextCountries = selection?.platformCountries ?? [];
+    const keepPlatform = previousCountries.length > 0 && previousCountries.length === nextCountries.length &&
+      previousCountries.every((country) => nextCountries.includes(country));
+    if (keepPlatform) selection.platformCountries = previousCountries;
+    const swapAt = changingSite && !keepPlatform && from.rise > 0 && selection ? 0.34 : 0;
+    const target = { lat: clampLatitude(lat), lon, zoom: clampZoom(zoom), offsetX, offsetY,
+      rise: selection ? 1 : 0, orbitAzimuth: changingSite ? 0 : from.orbitAzimuth,
+      orbitTilt: changingSite ? initialOrbitTilt : from.orbitTilt };
     const startVector = toVector(from.lat, from.lon);
     const endVector = toVector(target.lat, target.lon);
     const dot = Math.max(-1, Math.min(1, startVector.reduce((sum, n, i) => sum + n * endVector[i], 0)));
@@ -1508,11 +1512,11 @@
     const side = [-Math.sin(from.lon * radians), 0, Math.cos(from.lon * radians)];
     const tangent = Math.sin(angle) > 1e-5 ? endVector.map((n, i) => (n - startVector[i] * dot) / Math.sin(angle)) : side;
     const orbitFirst = angle > Math.PI * 0.42;
-    stopFlight(true);
+    stopFlight();
     mapTip.hidden = true;
     if (motion.matches) {
       Object.assign(mapView, target);
-      if (!target.rise) loweringCountries = null;
+      viewedSite = selection;
       drawTrendMap();
       return;
     }
@@ -1524,24 +1528,36 @@
     }
     const step = (now) => {
       const t = Math.min(1, Math.max(0, (now - start) / duration));
-      const turn = angle * ease(orbitFirst ? Math.min(1, t / 0.66) : t);
+      const progress = ease(t);
+      const turn = angle * (orbitFirst ? ease(Math.min(1, t / 0.66)) : progress);
       const [x, y, z] = startVector.map((n, i) => Math.cos(turn) * n + Math.sin(turn) * tangent[i]);
       mapView.lat = clampLatitude(Math.atan2(y, Math.hypot(x, z)) / radians);
       mapView.lon = Math.atan2(z, x) / radians;
       const zoomed = (a, b, fraction) => a * (b / a) ** ease(fraction);
       mapView.zoom = orbitFirst && t < 0.66 ? zoomed(from.zoom, 1, Math.min(1, t / 0.36)) :
         zoomed(orbitFirst ? 1 : from.zoom, target.zoom, orbitFirst ? (t - 0.66) / 0.34 : t);
-      mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * ease(t);
-      mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * ease(t);
-      const lift = ease(Math.max(0, (t - (orbitFirst ? 0.4 : 0.14)) / (orbitFirst ? 0.6 : 0.86)));
-      mapView.rise = from.rise + (target.rise - from.rise) * lift;
-      mapView.relief = (from.relief ?? 0) + (target.relief - (from.relief ?? 0)) * lift;
+      mapView.offsetX = from.offsetX + (offsetX - from.offsetX) * progress;
+      mapView.offsetY = from.offsetY + (offsetY - from.offsetY) * progress;
+      mapView.orbitAzimuth = signedLongitude(from.orbitAzimuth + signedLongitude(target.orbitAzimuth - from.orbitAzimuth) * progress);
+      mapView.orbitTilt = from.orbitTilt + (target.orbitTilt - from.orbitTilt) * progress;
+      const liftStart = Math.max(swapAt, orbitFirst ? 0.6 : 0.14);
+      const lift = ease(Math.max(0, (t - liftStart) / (1 - liftStart)));
+      if (t < swapAt) {
+        mapView.rise = from.rise * (1 - ease(t / swapAt));
+      } else if (selection) {
+        viewedSite = selection;
+        const startRise = swapAt ? 0 : from.rise;
+        mapView.rise = startRise + (1 - startRise) * lift;
+      } else {
+        mapView.rise = from.rise * (1 - ease(Math.min(1, t / 0.5)));
+        if (!mapView.rise) viewedSite = null;
+      }
       if (t === 1) {
         Object.assign(mapView, target);
-        if (!target.rise) loweringCountries = null;
+        viewedSite = selection;
       }
       drawTrendMap(now);
-      if (t < 1) flight = requestAnimationFrame(step);
+      flight = t < 1 ? requestAnimationFrame(step) : 0;
     };
     flight = requestAnimationFrame(step);
   }
@@ -1554,15 +1570,12 @@
     drawTrendMap();
   }
 
-  function pointIndexAt(x, y) {
-    const coords = globe.invert(x, y);
-    if (!coords) return -1;
-    const [lon, lat] = coords;
+  function gridPointIndex(lat, lon) {
     let best = -1;
-    let bestDistance = 1.55;
+    let bestDistance = Infinity;
     points.forEach(([pLat, pLon], index) => {
       const distance = Math.max(Math.abs(pLat - lat), Math.abs(signedLongitude(pLon - lon)));
-      if (distance < bestDistance) [best, bestDistance] = [index, distance];
+      if (distance <= gridSpacing / 2 && distance < bestDistance) [best, bestDistance] = [index, distance];
     });
     return best;
   }
@@ -1570,7 +1583,8 @@
   function showTip(x, y) {
     const variable = trendMapVariable();
     const entry = trendMap[variable.id];
-    const index = pointIndexAt(x, y);
+    const coords = globe.invert(x, y);
+    const index = coords ? gridPointIndex(coords[1], coords[0]) : -1;
     if (!entry || index < 0 || entry.slope[index] === null) {
       mapTip.hidden = true;
       return;
@@ -1598,7 +1612,7 @@
   function closeDrawer() {
     app.removeAttribute("data-drawer");
     for (const option of mapVariable.options) option.disabled = false;
-    if (mapView.offsetX || mapView.offsetY) flyTo(mapView.lat, mapView.lon, mapView.zoom, false);
+    if (mapView.offsetX || mapView.offsetY) flyTo(mapView.lat, mapView.lon, mapView.zoom, { avoidPanel: false });
     world.focus({ preventScroll: true });
   }
 
@@ -1702,12 +1716,10 @@
   }
 
   function orbitRegion(dx, dy) {
-    if (drawingArea || !site?.platformCountries?.length) return false;
-    mapView.lon = site.longitude;
-    mapView.lat = site.latitude;
-    mapView.rise = mapView.relief = 1;
-    mapView.orbitAzimuth = signedLongitude(mapView.orbitAzimuth + dx * 0.75);
-    mapView.orbitTilt = Math.max(0.15, Math.min(1, mapView.orbitTilt + dy * 0.005));
+    if (drawingArea || !viewedSite?.platformCountries?.length ||
+        Math.abs(mapView.lat - viewedSite.latitude) > 0.1 || Math.abs(signedLongitude(mapView.lon - viewedSite.longitude)) > 0.1) return false;
+    mapView.orbitAzimuth = signedLongitude(mapView.orbitAzimuth - dx * 0.75);
+    mapView.orbitTilt = Math.max(0.15, Math.min(1, mapView.orbitTilt - dy * 0.005));
     return true;
   }
 
@@ -1727,11 +1739,11 @@
       magicPointer = { id: event.pointerId, start: point, tracing: false };
       return;
     }
-    stopFlight();
     stage.setPointerCapture(event.pointerId);
     pointers.set(event.pointerId, point);
     const [a, b] = [...pointers.values()];
     if (b) {
+      stopFlight();
       drag.pinch = Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1]));
       drag.zoom = mapView.zoom;
       drag.moved = true;
@@ -1768,6 +1780,7 @@
       mapView.zoom = zoom;
     } else {
       if (!drag.moved && Math.hypot(point[0] - drag.point[0], point[1] - drag.point[1]) < 5) return;
+      if (!drag.moved) stopFlight();
       drag.moved = true;
       stage.classList.add("dragging");
       const dx = point[0] - drag.last[0];
@@ -1804,12 +1817,8 @@
     drag = null;
     stage.classList.remove("dragging");
     if (clicked) {
-      const index = pointIndexAt(event.offsetX, event.offsetY);
-      if (index >= 0) choosePoint(...points[index]);
-      else {
-        const coords = globe.invert(event.offsetX, event.offsetY);
-        if (coords) choosePoint(coords[1], coords[0]);
-      }
+      const coords = globe.invert(event.offsetX, event.offsetY);
+      if (coords) choosePoint(coords[1], coords[0], true);
     }
   };
   stage.addEventListener("pointerup", endPointer);
@@ -1840,7 +1849,7 @@
         drawMagicEffects(performance.now());
       } else zoomBy(factor);
     } else if (event.key === "Enter") {
-      if (!drawingArea) choosePoint(mapView.lat, mapView.lon);
+      if (!drawingArea) choosePoint(mapView.lat, mapView.lon, true);
       else if (magicCentre) completeMagicCircle([...magicCentre, magicRadius]);
       else magicTap(...viewCentre());
     } else return;
@@ -1853,14 +1862,13 @@
     if (app.hasAttribute("data-drawer")) closeDrawer();
     regionRequest?.abort();
     regionRequest = null;
-    loweringCountries = site?.platformCountries ?? null;
     site = null;
     analysis = null;
     deselectButton.hidden = true;
     regionResults.hidden = true;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
-    flyTo(view.lat, view.lon, view.zoom, false);
+    flyTo(view.lat, view.lon, view.zoom, { avoidPanel: false, selection: null });
     world.focus({ preventScroll: true });
   }
   byId("zoom-reset").addEventListener("click", () => clearSelection(home));
