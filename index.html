@@ -23,7 +23,7 @@
   <script defer src="globe-fields.js?v=5"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=6"></script>
-  <script defer src="trend-explorer.js?v=14"></script>
+  <script defer src="trend-explorer.js?v=19"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=3"></script>
@@ -412,6 +412,27 @@
     .extra-details { border-top: 1px solid var(--rule); margin-top: 12px; padding-top: 8px; }
     .extra-details > summary { cursor: pointer; color: var(--control); font-size: 0.9rem; font-weight: 700; }
     .extra-details > summary:hover { color: var(--control-hover); }
+    .news > summary { cursor: pointer; font-weight: 700; font-size: 1rem; }
+    .news > summary:hover { color: var(--control-hover); }
+    .news-list { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 10px; }
+    .news-list a { color: var(--ink); font-weight: 600; }
+    .news-list .description { margin: 2px 0 0; font-size: 0.8rem; }
+    .export-bar { position: sticky; bottom: 0; z-index: 3; padding: 10px 0 2px; background: linear-gradient(transparent, var(--space) 40%); }
+    .export-bar .button { width: 100%; min-height: 44px; }
+    .export-dialog { width: min(520px, calc(100vw - 28px)); }
+    .export-body { padding: 14px 26px 22px; }
+    .export-body fieldset { border: 0; margin: 10px 0; padding: 0; display: grid; gap: 4px; }
+    .export-body legend { font-weight: 700; margin-bottom: 6px; }
+    .export-body label { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--rule); cursor: pointer; }
+    .export-body label:hover { border-color: var(--control); }
+    .export-body label:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+    .export-body label span { color: var(--muted); font-size: 0.88rem; }
+    .export-body label strong { display: block; color: var(--ink); font-size: 0.95rem; }
+    .export-body input { margin-top: 3px; accent-color: var(--control); }
+    .export-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+    .news-more { display: inline-block; margin-top: 12px; color: var(--control); font-size: 0.88rem; font-weight: 700; }
+    #locate-me[aria-busy="true"] svg { animation: pulse 0.9s ease-in-out infinite alternate; }
+    @keyframes pulse { to { opacity: 0.3; } }
     .extra-details .chart-head, .tools #research { margin-top: 12px; }
     .section-card h3 { font-size: 1.05rem; }
     .compare-picker { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; margin-top: 10px; font-size: 0.9rem; }
@@ -621,6 +642,9 @@
     </section>
 
     <div class="zoom" role="group" aria-label="Map zoom">
+      <button type="button" class="icon-button" id="locate-me" aria-label="Go to my location" title="Go to my location">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+      </button>
       <button type="button" class="icon-button" id="zoom-in" aria-label="Zoom in">+</button>
       <button type="button" class="icon-button" id="zoom-out" aria-label="Zoom out">−</button>
       <button type="button" class="icon-button" id="zoom-reset" aria-label="Show the whole world">
@@ -821,6 +845,20 @@
             </div>
           </section>
 
+          <section class="drawer-panel" id="news-panel" aria-labelledby="news-title">
+            <details class="news" id="news">
+              <summary id="news-title">News</summary>
+              <p class="description" id="news-scope"></p>
+              <p class="description research-status" id="news-status" role="status"></p>
+              <ol class="research-sources news-list" id="news-list" aria-label="News articles" hidden></ol>
+              <a class="news-more" id="news-more" target="_blank" rel="noopener noreferrer">More on Google News ↗</a>
+            </details>
+          </section>
+
+          <div class="export-bar" id="export-bar" hidden>
+            <button type="button" class="button primary small" id="open-export" aria-haspopup="dialog">Export data</button>
+          </div>
+
         </div>
       </div>
     </aside>
@@ -857,6 +895,34 @@
       </div>
       <button class="button secondary small" type="button" id="assistant-view-area" hidden>View selected area on map</button>
     </div>
+  </dialog>
+
+  <dialog id="export-dialog" class="export-dialog" aria-labelledby="export-title">
+    <form method="dialog" id="export-form">
+      <div class="dialog-head">
+        <h2 id="export-title">Export data</h2>
+        <button type="button" class="icon-button" id="close-export" aria-label="Close">×</button>
+      </div>
+      <div class="export-body">
+        <p class="description" id="export-scope"></p>
+        <fieldset>
+          <legend>Choose what to download</legend>
+          <label><input type="checkbox" name="trends" checked> <span><strong>Trend summary</strong> Change per decade, 95% interval, p-values and verdict for every measurement</span></label>
+          <label><input type="checkbox" name="annual" checked> <span><strong>Yearly averages</strong> One row per year, one column per measurement</span></label>
+          <label><input type="checkbox" name="monthly"> <span><strong>Monthly values</strong> Every month in the record</span></label>
+          <label><input type="checkbox" name="anomalies"> <span><strong>Monthly anomalies</strong> How far each month was from its usual value</span></label>
+          <label><input type="checkbox" name="forecast"> <span><strong>Forecast</strong> <span id="export-forecast-note">The next 12 months with the 90% range</span></span></label>
+          <label><input type="checkbox" name="news"> <span><strong>News articles</strong> <span id="export-news-note">Headlines and links from the News panel</span></span></label>
+          <label><input type="checkbox" name="sources" checked> <span><strong>Sources and methods</strong> Where every number came from and how it was tested</span></label>
+        </fieldset>
+        <p class="description">Each choice downloads as its own CSV file (the sources as a text file). Your browser may ask once to allow several downloads.</p>
+        <p class="description export-status" id="export-status" role="status"></p>
+        <div class="export-actions">
+          <button type="button" class="button secondary small" id="cancel-export">Cancel</button>
+          <button type="submit" class="button primary small" id="confirm-export">Download</button>
+        </div>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="help" aria-labelledby="help-title">
@@ -956,7 +1022,7 @@
       </div>
       <div>
         <h3>The trend test</h3>
-        <p>A fitted line through the yearly averages gives the change per decade. The t-test and 95% confidence interval allow for correlation between nearby years. Mann–Kendall checks whether yearly values tend to rise or fall, using the Hamed–Rao correction when needed. Both p-values use the Holm adjustment for testing multiple measurements.</p>
+        <p>A fitted line through the yearly averages gives the change per decade. The t-test and 95% confidence interval allow for correlation between nearby years. Mann–Kendall checks whether yearly values tend to rise or fall, using the Hamed–Rao correction when needed. Both p-values use the Holm adjustment for testing several measurements at once, applied separately to the surface measurements and the air measurements.</p>
         <p>The heatmap estimates trends between nearby sampled points and groups them into nine bands. The map corrects the trend test for checking many places at once. The results panel corrects for testing several measurements at one place.</p>
         <p>On the Land layer, countries lift when you select an area and taller peaks show larger changes. Water and Air show a selection outline. The charts use the grid points in the selection.</p>
       </div>

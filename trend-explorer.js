@@ -288,10 +288,13 @@
   }
 
   function adjustRegionTests(series) {
-    const trends = Object.values(series).map(({ trend }) => trend);
-    holmAdjust(trends, "pValue", "adjustedPValue");
-    holmAdjust(trends, "mkPValue", "mkAdjustedPValue");
-    for (const trend of trends) {
+    // Surface and air measurements answer separate questions, so each group is corrected on its own.
+    for (const group of [true, false]) {
+      const family = Object.entries(series).filter(([id]) => layers.air.includes(id) === group).map(([, { trend }]) => trend);
+      holmAdjust(family, "pValue", "adjustedPValue");
+      holmAdjust(family, "mkPValue", "mkAdjustedPValue");
+    }
+    for (const { trend } of Object.values(series)) {
       trend.verdict = trend.adjustedPValue <= 0.05 ? (trend.slope > 0 ? "rising" : "falling") : "inconclusive";
     }
   }
@@ -1027,6 +1030,8 @@
     }
     if (!series || !canCompare) compareMode = false;
     byId("compare-panel").hidden = !series;
+    byId("export-bar").hidden = false;
+    updateNews(variable);
     compareToggle.disabled = !canCompare;
     compareToggle.textContent = comparing ? "Done" : compareMode ? "Cancel" : "Compare";
     compareToggle.setAttribute("aria-expanded", String(compareMode));
@@ -1083,6 +1088,224 @@
       renderForecast(variable);
     }
   }
+
+  // ---- News: recent articles about the measurement in the selected place (GDELT, opened on demand) ----
+  const newsTopics = {
+    T2M: ["heatwave", "temperature", "heat wave"], TS: ["heatwave", "temperature", "heat wave"],
+    PRECTOTCORR: ["rainfall", "drought", "flooding"], QV2M: ["humidity", "heatwave"], RH2M: ["humidity", "heatwave"],
+    GWETROOT: ["drought", "soil moisture", "crops"], EVLAND: ["drought", "evaporation", "water shortage"],
+    WS10M: ["wind", "storm"], SNOW: ["snow", "snowfall", "snowpack"],
+    OZONE_COLUMN: ["ozone layer", "ozone hole"], TROPOPAUSE_TEMP: ["stratosphere", "upper atmosphere"],
+    COLUMN_WATER_VAPOUR: ["water vapour", "atmospheric river", "humidity"], CLOUD_FRACTION: ["cloud cover", "clouds"],
+    OUTGOING_LONGWAVE: ["heat", "climate"], OCEAN_SKIN_TEMP: ["marine heatwave", "ocean temperature", "sea temperature"],
+  };
+  const newsCache = new Map();
+  let newsQuery = "";
+  const quoted = (term) => term.includes(" ") ? `"${term}"` : term;
+  // GDELT only accepts parentheses around OR'd terms.
+  const anyOf = (terms) => terms.length > 1 ? `(${terms.map(quoted).join(" OR ")})` : quoted(terms[0]);
+
+  function newsPlaces(target) {
+    if (!target || selectionSamples(target).every(([lat, lon]) => oceanIds.has(`${lat},${lon}`))) return [];
+    const near = /^Near (.+)$/.exec(target.name)?.[1];
+    const named = storedSites.includes(target) ? target.name.replace(/^(Central|Southern|Northern|Eastern|Western) /, "") : null;
+    const countriesHere = sampledCountryCounts(selectionSamples(target)).slice(0, 2).map(([country]) => countryLabel(country));
+    return [...new Set([near, named, ...countriesHere].filter(Boolean))];
+  }
+
+  function updateNews(variable) {
+    const places = newsPlaces(site);
+    const topics = newsTopics[variable.id] ?? [variable.name.toLowerCase()];
+    const where = places.length ? places : ["ocean"];
+    byId("news-scope").textContent = `Recent articles about ${topics.slice(0, 2).join(" and ")} in ${places.join(" or ") || "the oceans"}.`;
+    byId("news-more").href = `https://news.google.com/search?q=${encodeURIComponent(`${topics[0]} ${where[0]}`)}`;
+    if (!byId("news").open) return;
+    const query = `${anyOf(topics)} ${anyOf(where)} sourcelang:english`;
+    if (query === newsQuery) return;
+    newsQuery = query;
+    if (newsCache.has(query)) return showNews(newsCache.get(query));
+    byId("news-status").textContent = "Finding articles…";
+    byId("news-list").hidden = true;
+    fetchNews(topics.slice(0, 4), where.slice(0, 3), query)
+      .then((articles) => {
+        newsCache.set(query, articles);
+        if (newsQuery === query) showNews(articles);
+      })
+      .catch(() => {
+        if (newsQuery !== query) return;
+        newsQuery = "";
+        byId("news-status").textContent = "The news index didn’t answer. Try again in a moment, or use Google News below.";
+      });
+  }
+
+  // The Supabase function (Guardian, cached) is the reliable path; calling GDELT from the browser is the backup.
+  async function fetchNews(topics, places, query) {
+    try {
+      const response = await fetch(new URL("/functions/v1/climate-news", data.supabaseUrl), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.supabaseAnonKey}` },
+        body: JSON.stringify({ topics, places }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const body = await response.json().catch(() => null);
+      if (response.ok && Array.isArray(body?.articles)) return body.articles;
+    } catch { /* not deployed or unreachable: fall through to GDELT */ }
+    const url = new URL("https://api.gdeltproject.org/api/v2/doc/doc");
+    url.search = new URLSearchParams({ query, mode: "artlist", maxrecords: "6", format: "json", sort: "hybridrel", timespan: "3months" });
+    const response = await fetch(url, { signal: AbortSignal.timeout(12000) });
+    if (!response.ok) throw new Error(String(response.status));
+    const body = await response.json();
+    return (Array.isArray(body.articles) ? body.articles : []).map((item) => {
+      const day = /^(\d{4})(\d{2})(\d{2})/.exec(item.seendate ?? "");
+      return { title: item.title, url: item.url, source: item.domain, date: day ? `${day[1]}-${day[2]}-${day[3]}` : "" };
+    });
+  }
+
+  let shownNews = [];
+  function showNews(articles) {
+    shownNews = articles;
+    const items = articles.map((article) => {
+      let url;
+      try { url = new URL(article.url); } catch { return null; }
+      if (!/^https?:$/.test(url.protocol) || typeof article.title !== "string") return null;
+      const item = create("li");
+      const link = create("a", article.title.trim());
+      link.href = url.href;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      const when = /^\d{4}-\d{2}-\d{2}$/.test(article.date ?? "")
+        ? new Date(`${article.date}T00:00:00Z`).toLocaleDateString("en-CA", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }) : "";
+      item.append(link, create("p", [article.source, when].filter(Boolean).join(" · "), "description"));
+      return item;
+    }).filter(Boolean).slice(0, 5);
+    byId("news-list").replaceChildren(...items);
+    byId("news-list").hidden = !items.length;
+    byId("news-status").textContent = items.length ? "" : "No recent articles found. Try Google News below.";
+  }
+  byId("news").addEventListener("toggle", () => { if (byId("news").open && analysis) updateNews(trendMapVariable()); });
+
+  // ---- Export: the selected place's numbers as CSV files the user picks in a dialog ----
+  const exportDialog = byId("export-dialog");
+  const exportForm = byId("export-form");
+  // Quote every text cell, and defuse text that a spreadsheet would run as a formula.
+  const cell = (value) => typeof value === "number" ? (Number.isFinite(value) ? String(value) : "")
+    : value == null ? "" : `"${String(value).replace(/^([=+\-@])/, "'$1").replaceAll('"', '""')}"`;
+  const toCsv = (rows) => rows.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n";
+  const round = (value, places = 4) => Number.isFinite(value) ? Number(value.toFixed(places)) : null;
+  const monthLabel = (index) => `${data.startYear + Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, "0")}`;
+  const exportVariables = () => data.variables.filter((variable) => analysis?.series[variable.id]);
+  const column = (variable) => `${variable.name} (${variable.unit})`;
+
+  function exportForecast() {
+    const variable = trendMapVariable();
+    const index = model ? model.variables.indexOf(variable.id) : -1;
+    const result = index >= 0 && !site.areaIds ? forecastData() : null;
+    return result ? { variable, index, result } : null;
+  }
+
+  function byPeriod(header, key, period) {
+    const variables = exportVariables();
+    const rows = new Map();
+    variables.forEach((variable, v) => {
+      const series = analysis.series[variable.id];
+      series[key].forEach((value, i) => {
+        const at = period(series.firstYear, i);
+        if (!rows.has(at)) rows.set(at, Array(variables.length).fill(null));
+        rows.get(at)[v] = round(value);
+      });
+    });
+    return [[header, ...variables.map(column)], ...[...rows].sort(([a], [b]) => a - b)
+      .map(([at, values]) => [header === "month" ? monthLabel(at) : at, ...values])];
+  }
+  const monthOf = (firstYear, i) => (firstYear - data.startYear) * 12 + i;
+
+  const exportFiles = {
+    trends: () => [["measurement", "unit per decade", "source", "first year", "last year", "change per decade", "95% low", "95% high",
+      "t-test p (raw)", "t-test p (Holm-adjusted)", "Theil-Sen per decade", "Mann-Kendall p (Holm-adjusted)", "verdict"],
+      ...exportVariables().map((variable) => {
+        const { trend, firstYear, lastYear } = analysis.series[variable.id];
+        return [variable.name, trendUnit(variable), variable.source, firstYear, lastYear, round(trend.slope), round(trend.ciLow),
+          round(trend.ciHigh), round(trend.pValue, 6), round(trend.adjustedPValue, 6), round(trend.senSlope),
+          round(trend.mkAdjustedPValue, 6), verdictLabels[trend.verdict]];
+      })],
+    annual: () => byPeriod("year", "values", (firstYear, i) => firstYear + i),
+    monthly: () => byPeriod("month", "monthlyValues", monthOf),
+    anomalies: () => byPeriod("month", "monthlyAnomalies", monthOf),
+    forecast: () => {
+      const { variable, index, result } = exportForecast();
+      return [["month", `${variable.name} forecast anomaly (${variable.unit})`, "90% low", "90% high", "normal period"],
+        ...result.ahead.map((row, k) => {
+          const spread = 1.645 * model.rmse[k][index];
+          return [monthLabel(result.months + k), round(row[index]), round(row[index] - spread), round(row[index] + spread), model.normal.join("-")];
+        })];
+    },
+    news: () => [["title", "source", "date", "url"], ...shownNews.map(({ title, source, date, url }) => [title, source, date, url])],
+  };
+
+  function sourcesText() {
+    const where = site.areaIds ? `${site.areaIds.length} NASA grid points, averaged with equal weight` : `NASA grid point at ${latLon(site)}`;
+    return [
+      `Climate Trend Explorer export: ${site.name}`,
+      `Exported ${new Date().toISOString().slice(0, 10)} from ${location.origin}${location.pathname}`,
+      `Selection: ${where}.`, "",
+      "Measurements and sources (all through NASA GES DISC Giovanni):",
+      ...exportVariables().map((variable) => {
+        const { firstYear, lastYear } = analysis.series[variable.id];
+        return `- ${variable.name} (${variable.unit}): ${variable.source}, ${firstYear}-${lastYear}`;
+      }),
+      "", "Methods:",
+      "- Yearly averages use complete calendar years only.",
+      "- Change per decade: least-squares straight line through the yearly averages, times 10.",
+      "- 95% interval and t-test p-value use Newey-West standard errors (3 years of lag) and Student's t with n-2 degrees of freedom.",
+      "- p-values are Holm-adjusted within each group tested at this place: surface measurements together, air measurements (ozone, tropopause, water vapour, clouds, outgoing longwave) together. Rising/Falling means adjusted p <= 0.05.",
+      "- Mann-Kendall (with the Hamed-Rao correction) and Theil-Sen give a second, rank-based check.",
+      "- Monthly anomalies are the difference from each calendar month's average over the record.",
+      "- Forecast: ridge world model on monthly anomalies with El Nino (KNMI Climate Explorer, Nino 3.4); the 90% range is 1.645 x test error.",
+      "- News articles (if included) come from The Guardian or GDELT and are context only, not data.",
+    ].join("\r\n") + "\r\n";
+  }
+
+  function download(name, text, type) {
+    const link = create("a");
+    link.href = URL.createObjectURL(new Blob([text], { type }));
+    link.download = name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+  }
+
+  byId("open-export").addEventListener("click", () => {
+    if (!analysis || !site) return;
+    const forecast = exportForecast();
+    const elements = exportForm.elements;
+    elements.forecast.disabled = !forecast;
+    if (!forecast) elements.forecast.checked = false;
+    byId("export-forecast-note").textContent = forecast ? `${forecast.variable.name}, the next 12 months with the 90% range`
+      : "Only for single points with air temperature, humidity or rain selected";
+    elements.news.disabled = !shownNews.length;
+    if (!shownNews.length) elements.news.checked = false;
+    byId("export-news-note").textContent = shownNews.length ? `${shownNews.length} headlines from the News panel` : "Open the News panel first";
+    byId("export-scope").textContent = `${site.name} · ${exportVariables().length} measurements`;
+    byId("export-status").textContent = "";
+    exportDialog.showModal();
+  });
+  for (const id of ["close-export", "cancel-export"]) byId(id).addEventListener("click", () => exportDialog.close());
+  exportDialog.addEventListener("click", (event) => { if (event.target === exportDialog) exportDialog.close(); });
+  exportForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const chosen = [...exportForm.querySelectorAll("input:checked:not(:disabled)")].map((input) => input.name);
+    if (!chosen.length) {
+      byId("export-status").textContent = "Pick at least one thing to download.";
+      return;
+    }
+    const slug = site.name.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "selection";
+    // Space the downloads out so browsers treat them as separate files.
+    chosen.forEach((name, i) => setTimeout(() => name === "sources"
+      ? download(`${slug}-sources-and-methods.txt`, sourcesText(), "text/plain;charset=utf-8")
+      : download(`${slug}-${name}.csv`, "﻿" + toCsv(exportFiles[name]()), "text/csv;charset=utf-8"), i * 350));
+    exportDialog.close();
+  });
 
   // Air temperature only: compare MERRA-2 with GLDAS 2.1 over the years both cover.
   function renderAgreement(variable) {
@@ -2355,7 +2578,7 @@
     });
   }
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || how.open || help.open || assistantDialog.open) return;
+    if (event.key !== "Escape" || how.open || help.open || assistantDialog.open || exportDialog.open) return;
     const info = explorer.querySelector("details[open] > .info-icon, #point-tools[open] > summary");
     if (info && app.hasAttribute("data-drawer")) {
       info.parentElement.open = false;
@@ -2366,26 +2589,30 @@
     } else if (site || app.hasAttribute("data-drawer")) clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
     else if (!welcome.inert) hideWelcome();
   });
-  byId("locate").addEventListener("click", () => {
-    const button = byId("locate");
-    if (!navigator.geolocation) {
-      button.textContent = "Location unavailable";
-      return;
-    }
-    button.textContent = "Finding you…";
+  // The position stays in the browser; only the nearest grid point is selected.
+  function findMe(onState) {
+    if (!navigator.geolocation) return onState("unavailable");
+    onState("finding");
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        button.textContent = "Use my location";
+        onState("found");
         how.close();
         choosePoint(coords.latitude, coords.longitude);
       },
-      () => {
-        button.textContent = "Location unavailable";
-        setTimeout(() => { button.textContent = "Use my location"; }, 2500);
-      },
+      () => onState("unavailable"),
       { timeout: 10000 },
     );
-  });
+  }
+  byId("locate").addEventListener("click", () => findMe((state) => {
+    const button = byId("locate");
+    button.textContent = { finding: "Finding you…", unavailable: "Location unavailable" }[state] ?? "Use my location";
+    if (state === "unavailable") setTimeout(() => { button.textContent = "Use my location"; }, 2500);
+  }));
+  byId("locate-me").addEventListener("click", () => findMe((state) => {
+    const button = byId("locate-me");
+    button.setAttribute("aria-busy", String(state === "finding"));
+    button.title = state === "unavailable" ? "Location unavailable. Check the browser's location permission." : "Go to my location";
+  }));
   byId("point-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const { latitude, longitude } = event.target.elements;
