@@ -81,7 +81,7 @@
     submit.disabled = !variables.length;
     scope.textContent = region
       ? [region.name, variables.map(({ name }) => name).join(", ")].filter(Boolean).join(" · ")
-      : "Choose one of the six named study areas to find research.";
+      : "Choose a named study area to find research.";
   }
 
   form.addEventListener("submit", async (event) => {
