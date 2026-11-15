@@ -22,7 +22,6 @@
     policymaker: { name: "policymaker", variable: "T2M" },
     researcher: { name: "student researcher", variable: "PRECTOTCORR" },
   };
-  const seenKey = "climate-explorer-onboarding-seen";
   let step = 0;
   let coordinates;
   let locationRequest;
@@ -114,7 +113,6 @@
   function dismiss() {
     stopLocating();
     dialog.close();
-    try { localStorage.setItem(seenKey, "1"); } catch { /* Storage can be unavailable. */ }
   }
 
   function skip() {
@@ -193,7 +191,5 @@
     }
   });
 
-  let seen;
-  try { seen = localStorage.getItem(seenKey); } catch { /* Storage can be unavailable. */ }
-  if (!seen) open();
+  open();
 })();
