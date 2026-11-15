@@ -13,6 +13,7 @@
   <script defer src="world-map.js"></script>
   <script defer src="trend-config.js"></script>
   <script defer src="points-index.js"></script>
+  <script defer src="featured-stripes.js"></script>
   <script defer src="trend-map.js"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
@@ -215,8 +216,8 @@
     .welcome .close { flex: none; font-size: 1.15rem; background: var(--glass); }
     .examples { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
     .examples button {
-      position: relative; isolation: isolate; display: flex; align-items: flex-end; width: 100%; min-height: 100px;
-      overflow: hidden; text-align: left; border: 1px solid var(--rule); background: rgb(8 11 14 / 0.55); padding: 12px 14px;
+      position: relative; isolation: isolate; display: flex; align-items: flex-end; width: 100%; min-height: clamp(100px, 14dvh, 116px);
+      overflow: hidden; text-align: left; border: 1px solid var(--rule); background: rgb(8 11 14 / 0.55); padding: 12px 14px 42px;
       transition: border-color 160ms ease-out;
     }
     .examples img, .examples button::after { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
@@ -226,6 +227,7 @@
     .examples button:focus-visible { outline-offset: -3px; }
     .examples button:is(:hover, :focus-visible) img { opacity: 0.94; }
     .examples span { font-size: 0.96rem; font-weight: 750; line-height: 1.25; text-shadow: 0 1px 5px var(--space); }
+    .examples canvas { position: absolute; inset: auto 0 0; height: 34px; background: var(--surface); pointer-events: none; }
     .location-tools { margin-top: 14px; }
     .goto { margin-top: 14px; font-size: 0.9rem; }
     .goto summary { cursor: pointer; color: var(--control); font-weight: 700; }
@@ -398,8 +400,8 @@
       .app[data-drawer] .camera-frame { bottom: calc(min(61dvh, 100dvh - 134px) + 17px); }
       .camera-frame > span { width: 15px; height: 12px; }
       #camera-coordinates { left: 21px; top: 4px; font-size: 0.68rem; }
-      .welcome { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); width: min(380px, calc(100% - 68px)); max-height: min(45dvh, calc(100dvh - 132px)); }
-      .examples button { min-height: 62px; padding-block: 9px; }
+      .welcome { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); width: min(380px, calc(100% - 68px)); max-height: min(50dvh, calc(100dvh - 132px)); }
+      .examples button { min-height: clamp(76px, 11dvh, 88px); padding-block: 8px 39px; }
       .legend-card { bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); padding: 10px 12px; }
       .extremes { max-height: 22dvh; overflow: auto; }
       .zoom { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }

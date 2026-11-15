@@ -2,7 +2,7 @@
   "use strict";
 
   const data = window.TREND_CONFIG;
-  const { TrendStatistics, POINTS_INDEX: points = [], TREND_MAP: trendMap = {} } = window;
+  const { TrendStatistics, POINTS_INDEX: points = [], FEATURED_STRIPES: featured = {}, TREND_MAP: trendMap = {} } = window;
   const byId = (id) => document.getElementById(id);
   const explorer = byId("explorer");
   if (!data || !data.sites.length || !data.variables.length || !points.length || !TrendStatistics) {
@@ -74,6 +74,7 @@
     {
       title: "Is Southern Ontario warming?",
       photo: "ontario-shore.webp",
+      stripeKey: "ontario-T2M",
       crop: "center 72%",
       look: "Compare the stripes at the start and end of the record. Check the estimated rate of change and what each trend test found.",
       site: () => storedSites.find(({ id }) => id === "southern-ontario"),
@@ -82,6 +83,7 @@
     {
       title: "Is the Sahel getting wetter?",
       photo: "niger-dunes.webp",
+      stripeKey: "sahel-PRECTOTCORR",
       look: "Read the estimated rate of change and its uncertainty. Check the dates covered by each measurement before comparing trends.",
       site: () => pointIds.has("14.125,1.875") ? pointSite(14.125, 1.875) : null,
       ids: ["PRECTOTCORR"],
@@ -89,6 +91,7 @@
     {
       title: "Does wetter soil follow rain?",
       photo: "ontario-fields.webp",
+      stripeKey: "ontario-PRECTOTCORR",
       crop: "center 82%",
       look: "Compare precipitation and root-zone soil moisture at zero lag and one month. The two records overlap from 1998 to 2014. How does the correlation change?",
       site: () => storedSites.find(({ id }) => id === "southern-ontario"),
@@ -2083,6 +2086,16 @@
     const item = create("li");
     item.append(button);
     byId("example-list").append(item);
+    const values = featured[example.stripeKey];
+    if (values?.length) {
+      const variable = data.variables.find(({ id }) => id === example.ids[0]);
+      const firstYear = data.startYear + Math.ceil(variable.firstMonth / 12);
+      const preview = create("canvas");
+      preview.setAttribute("aria-hidden", "true");
+      button.setAttribute("aria-description", `${variable.name}, ${firstYear}–${firstYear + values.length - 1}.`);
+      button.append(preview);
+      showStripes(preview, values, variable.id, firstYear);
+    }
   }
 
   observer.observe(byId("chart-stage"));
