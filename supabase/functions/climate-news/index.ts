@@ -8,13 +8,13 @@ const cors = {
 };
 // Letters, spaces and a little punctuation only, so nothing can change the shape of the search query.
 const safeTerm = /^[\p{L}\p{M}][\p{L}\p{M} .'-]{1,59}$/u;
-const cache = new Map<string, { at: number; articles: Article[] }>();
+const cache = new Map<string, { expires: number; result: Promise<Article[]> }>();
 const cacheMs = 6 * 60 * 60 * 1000;
 
 type Article = { title: string; url: string; source: string; date: string };
 
 const json = (body: object, status = 200) => Response.json(body, { status, headers: cors });
-const quoted = (term: string) => term.includes(" ") ? `"${term}"` : term;
+const quoted = (term: string) => `"${term}"`;
 const anyOf = (terms: string[]) => terms.length > 1 ? `(${terms.map(quoted).join(" OR ")})` : quoted(terms[0]);
 
 function httpsUrl(value: unknown) {
@@ -50,28 +50,16 @@ async function gdelt(topics: string[], places: string[]): Promise<Article[]> {
   }).toString();
   const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
   if (!response.ok) throw new Error(`GDELT HTTP ${response.status}`);
-  const body = await response.json().catch(() => ({}));
-  return (body.articles ?? []).flatMap((item: Record<string, string>) => {
+  const body = await response.json();
+  if (!Array.isArray(body.articles)) return [];
+  return body.articles.flatMap((item: Record<string, string>) => {
     const link = httpsUrl(item.url);
     const day = /^(\d{4})(\d{2})(\d{2})/.exec(item.seendate ?? "");
     return link && item.title ? [{ title: item.title, url: link, source: item.domain ?? "", date: day ? `${day[1]}-${day[2]}-${day[3]}` : "" }] : [];
   });
 }
 
-export async function climateNews(request: Request) {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-  if (request.method !== "POST") return json({ error: "Use POST." }, 405);
-  if (Number(request.headers.get("Content-Length")) > 2048) return json({ error: "Search is too large." }, 413);
-  const body = await request.json().catch(() => null);
-  const topics = body?.topics, places = body?.places;
-  const valid = (list: unknown, max: number) => Array.isArray(list) && list.length >= 1 && list.length <= max &&
-    list.every((term) => typeof term === "string" && safeTerm.test(term));
-  if (!valid(topics, 4) || !valid(places, 3)) return json({ error: "Send 1–4 topics and 1–3 places." }, 400);
-
-  const key = JSON.stringify([topics, places]).toLowerCase();
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < cacheMs) return json({ articles: hit.articles });
-
+async function search(topics: string[], places: string[]) {
   const guardianKey = Deno.env.get("GUARDIAN_API_KEY");
   let articles: Article[] = [];
   try {
@@ -79,17 +67,39 @@ export async function climateNews(request: Request) {
   } catch (error) {
     console.error("Guardian lookup failed", error instanceof Error ? error.message : "unknown error");
   }
-  if (!articles.length) {
-    try {
-      articles = await gdelt(topics, places);
-    } catch (error) {
-      console.error("GDELT lookup failed", error instanceof Error ? error.message : "unknown error");
-      return json({ error: "News search is temporarily unavailable." }, 502);
-    }
+  if (!articles.length) articles = await gdelt(topics, places);
+  return [...new Map(articles.map((article) => [article.url, article])).values()].slice(0, 5);
+}
+
+export async function climateNews(request: Request) {
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+  if (request.method !== "POST") return json({ error: "Use POST." }, 405);
+  if (Number(request.headers.get("Content-Length")) > 2048) return json({ error: "Search is too large." }, 413);
+  const raw = await request.text();
+  if (raw.length > 2048) return json({ error: "Search is too large." }, 413);
+  let body;
+  try { body = JSON.parse(raw); } catch { return json({ error: "Send valid JSON." }, 400); }
+  const topics = body?.topics, places = body?.places;
+  const valid = (list: unknown, max: number) => Array.isArray(list) && list.length >= 1 && list.length <= max &&
+    list.every((term) => typeof term === "string" && safeTerm.test(term));
+  if (!valid(topics, 4) || !valid(places, 3)) return json({ error: "Send 1–4 topics and 1–3 places." }, 400);
+
+  const key = JSON.stringify([topics, places]).toLowerCase();
+  const hit = cache.get(key);
+  const result = hit && hit.expires > Date.now() ? hit.result : search(topics, places);
+  if (result !== hit?.result) {
+    cache.delete(key);
+    cache.set(key, { expires: Date.now() + cacheMs, result });
+    const oldest = cache.keys().next().value;
+    if (cache.size > 128 && oldest !== undefined) cache.delete(oldest);
   }
-  articles = articles.slice(0, 5);
-  cache.set(key, { at: Date.now(), articles });
-  return json({ articles });
+  try {
+    return json({ articles: await result });
+  } catch (error) {
+    if (cache.get(key)?.result === result) cache.delete(key);
+    console.error("GDELT lookup failed", error instanceof Error ? error.message : "unknown error");
+    return json({ error: "News search is temporarily unavailable." }, 502);
+  }
 }
 
 Deno.serve(climateNews);
