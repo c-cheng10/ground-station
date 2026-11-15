@@ -120,7 +120,16 @@
 
   const chart = byId("chart");
   const tooltip = byId("chart-tooltip");
-  const mapVariable = byId("map-variable");
+  const mapSelector = byId("map-selector");
+  const previousMap = byId("previous-map");
+  const nextMap = byId("next-map");
+  const currentMap = byId("current-map");
+  const mapLabels = data.variables.map(({ name }) => {
+    const slide = create("div", "", "map-label");
+    slide.append(create("span", name, "map-name"));
+    return slide;
+  });
+  byId("map-labels").append(...mapLabels);
   const compareToggle = byId("compare-toggle");
   const compareVariable = byId("compare-variable");
   const viewButtons = new Map();
@@ -361,6 +370,7 @@
   async function selectSite(nextSite) {
     if (regionRequest && site.id === nextSite.id) {
       openDrawer();
+      renderTrendMap();
       if (nextSite.mapAnchor) {
         site.mapAnchor = nextSite.mapAnchor;
         flyTo(focusZoom(site));
@@ -391,8 +401,8 @@
     byId("point-tools").hidden = true;
     byId("point-tools").open = false;
     explorer.scrollTop = 0;
-    mapVariable.value = trendMapVariable().id;
     openDrawer();
+    renderTrendMap();
     flyTo(focusZoom(nextSite));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
@@ -765,24 +775,48 @@
     return data.variables.find((item) => item.id === [...selectedIds][0]) || data.variables[0];
   }
 
+  function neighbourMap(variable, direction) {
+    const count = data.variables.length;
+    return data.variables[(data.variables.indexOf(variable) + count + direction) % count];
+  }
+
   function renderTrendMap() {
     const variable = trendMapVariable();
+    if (currentMap.textContent !== variable.name || !mapLabels[0].hasAttribute("data-slot")) {
+      currentMap.textContent = variable.name;
+      const count = mapLabels.length;
+      const centre = data.variables.indexOf(variable);
+      const half = Math.floor(count / 2);
+      mapLabels.forEach((label, index) => {
+        const slot = (index - centre + count + half) % count - half;
+        label.dataset.slot = slot;
+        label.style.setProperty("--map-slot", slot);
+        label.toggleAttribute("data-offscreen", Math.abs(slot) > 2);
+      });
+      const previous = neighbourMap(variable, -1).name;
+      const next = neighbourMap(variable, 1).name;
+      previousMap.setAttribute("aria-label", `Previous heatmap: ${previous}`);
+      nextMap.setAttribute("aria-label", `Next heatmap: ${next}`);
+    }
+    drawTrendMap();
+  }
+
+  function renderTrendLegend(variable, palette) {
     const entry = trendMap[variable.id];
-    mapVariable.value = variable.id;
     if (!entry) return;
-    const unit = `${trendUnit(variable)} per decade`;
+    const unit = trendUnit(variable);
+    byId("trend-map-title").textContent = `Change per decade (${unit})`;
     byId("trend-map-sub").textContent = `${variable.name}, ${entry.years[0]}–${entry.years[1]}, from ${variable.source}.`;
-    byId("trend-ramp").parentElement.hidden = !heatVisible;
-    const note = byId("heatmap-note");
-    if (note) note.textContent = heatVisible ? "Fainter colour marks weaker evidence or the edge of coverage." : "Heatmap off. You can still select grid points.";
-    byId("trend-low").textContent = `${format(-entry.scale, variable.decimals + 1, true)}`;
-    byId("trend-high").textContent = `${format(entry.scale, variable.decimals + 1, true)} ${unit}`;
-    runLensChange();
+    const bandStops = palette.map((colour, i) =>
+      `rgb(${colour}) ${100 * i / palette.length}% ${100 * (i + 1) / palette.length}%`);
+    byId("trend-ramp").style.background = `linear-gradient(90deg, ${bandStops.join(", ")})`;
+    byId("trend-low").textContent = format(-entry.scale, variable.decimals + 1, true);
+    byId("trend-high").textContent = format(entry.scale, variable.decimals + 1, true);
     const ranked = points.map(([lat, lon], k) => ({ lat, lon, slope: entry.slope[k], significant: entry.significant[k] }))
       .filter((item) => item.significant && item.slope !== null);
     const list = (id, items) => byId(id).replaceChildren(...(items.length ? items.map((item) => {
       const button = create("button", "", "pick-variable");
-      button.textContent = `${(countryAt(item.lat, item.lon) || "Coastal area")}: ${format(item.slope, variable.decimals + 1, true)} ${unit}`;
+      button.textContent = `${(countryAt(item.lat, item.lon) || "Coastal area")}: ${format(item.slope, variable.decimals + 1, true)} ${unit} per decade`;
       button.addEventListener("click", () => choosePoint(item.lat, item.lon));
       const li = create("li");
       li.append(button);
@@ -790,7 +824,6 @@
     }) : [create("li", "No place passes the significance test.")]));
     list("rising-list", ranked.filter((item) => item.slope > 0).sort((a, b) => b.slope - a.slope).slice(0, 5));
     list("falling-list", ranked.filter((item) => item.slope < 0).sort((a, b) => a.slope - b.slope).slice(0, 5));
-    drawTrendMap();
   }
 
   function choosePoint(latitude, longitude, useGridCell = false) {
@@ -1261,14 +1294,20 @@
   }
 
   for (const variable of data.variables) {
-    mapVariable.add(new Option(variable.name, variable.id));
     compareVariable.add(new Option(variable.name, variable.id));
   }
-  mapVariable.addEventListener("change", () => {
+  function cycleMap(direction) {
     compareMode = false;
-    selectedIds = new Set([mapVariable.value]);
+    selectedIds = new Set([neighbourMap(trendMapVariable(), direction).id]);
     if (app.hasAttribute("data-drawer")) renderDetails();
     else renderTrendMap();
+  }
+  previousMap.addEventListener("click", () => cycleMap(-1));
+  nextMap.addEventListener("click", () => cycleMap(1));
+  mapSelector.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    cycleMap(event.key === "ArrowLeft" ? -1 : 1);
   });
   for (const [id, label] of Object.entries(forecastViews)) {
     const button = create("button", label);
@@ -1343,6 +1382,8 @@
 
   // ---- Satellite globe and input ----
   const app = byId("app");
+  const welcome = byId("welcome");
+  const welcomeTab = byId("show-welcome");
   const stage = byId("trend-map-stage");
   const world = byId("trend-map");
   const effects = byId("globe-effects");
@@ -1350,20 +1391,32 @@
   const pin = byId("map-pin");
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
-  const heatButton = byId("toggle-heat");
+  const filterEdge = byId("filter-edge");
   const deselectButton = byId("deselect-area");
   const grain = byId("camera-grain");
   const cameraCoordinates = byId("camera-coordinates");
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const countries = window.WORLD_MAP.countries;
-  const heatPalette = [
-    [45, 112, 174], [48, 144, 184], [60, 171, 179], [91, 182, 151], [131, 185, 111],
-    [176, 194, 98], [215, 190, 85], [230, 157, 76], [213, 101, 66],
-  ];
-  const bandStops = heatPalette.map((colour, i) =>
-    `rgb(${colour}) ${100 * i / heatPalette.length}% ${100 * (i + 1) / heatPalette.length}%`);
-  byId("trend-ramp").style.background = `linear-gradient(90deg, ${bandStops.join(", ")})`;
-  const globe = window.createGlobeView(world, countries, heatPalette);
+  // Pair ColorBrewer-inspired sequential ramps around a shared near-zero band.
+  const ivory = [231, 232, 209];
+  const blue = [[33, 113, 181], [66, 146, 198], [107, 174, 214], [158, 202, 225]];
+  const tan = [[150, 93, 44], [184, 124, 68], [216, 157, 96], [239, 198, 147]];
+  const teal = [[20, 130, 124], [45, 164, 147], [102, 194, 177], [153, 216, 201]];
+  const makePalette = (falling, rising) => [...falling, ivory, ...rising.slice().reverse()];
+  const temperaturePalette = makePalette(blue, [[198, 80, 37], [235, 116, 50], [253, 157, 86], [253, 199, 147]]);
+  const humidityPalette = makePalette(tan, teal);
+  const heatPalettes = {
+    T2M: temperaturePalette,
+    TS: temperaturePalette,
+    PRECTOTCORR: makePalette(tan, [[36, 115, 162], [43, 140, 190], [78, 179, 211], [123, 204, 196]]),
+    QV2M: humidityPalette,
+    RH2M: humidityPalette,
+    GWETROOT: makePalette(tan, [[35, 139, 69], [65, 171, 93], [116, 196, 118], [161, 217, 155]]),
+    EVLAND: humidityPalette,
+    WS10M: makePalette(teal, [[117, 74, 170], [150, 111, 193], [176, 155, 209], [198, 187, 223]]),
+    SNOW: makePalette(tan, blue),
+  };
+  const globe = window.createGlobeView(world, countries);
   if (!globe) {
     byId("data-error").textContent = "This browser couldn’t start the globe. Reload the page or try another browser.";
     byId("data-error").hidden = false;
@@ -1374,11 +1427,10 @@
   const initialOrbitTilt = 0.9;
   const mapView = { ...home, offsetX: 0, offsetY: 0, rise: 0, outlineOpacity: 0,
     cameraFocus: 0, cameraLift: 0, orbitAzimuth: 0, orbitTilt: initialOrbitTilt };
-  let heatVisible = true;
   let displayedVariable;
-  let lensStarted = 0;
-  let lensFrame = 0;
-  const sensorSweep = 620;
+  let filter;
+  let filterFrame = 0;
+  const filterDuration = 460;
   let flight = 0;
   let focusAnimation;
   let staticTimer = 0;
@@ -1492,20 +1544,44 @@
     sparkleFrame = requestAnimationFrame(update);
   }
 
+  function mapLayer(variable) {
+    return { ...fields.measurement(trendMap[variable.id]), palette: heatPalettes[variable.id] ?? temperaturePalette };
+  }
+
+  function drawFilterFrame(now) {
+    filterFrame = 0;
+    if (!flight) drawTrendMap(now);
+  }
+
   function drawTrendMap(now = performance.now()) {
-    const elapsed = lensStarted ? Math.max(0, now - lensStarted) : Infinity;
-    const lensProgress = Math.min(1, elapsed / sensorSweep);
-    const lens = 1 - 0.115 * Math.sin(Math.PI * lensProgress) ** 2;
-    const variableId = lensProgress < 0.42 && displayedVariable ? displayedVariable : trendMapVariable().id;
-    if (lensProgress >= 0.42) displayedVariable = variableId;
-    const texture = heatVisible && trendMap[variableId]
-      ? fields.measurement(trendMap[variableId]) : {};
+    const target = trendMapVariable();
+    if (!displayedVariable || motion.matches || (filter && now - filter.started >= filterDuration)) {
+      const settled = !displayedVariable || motion.matches ? target : filter.variable;
+      filter = null;
+      if (settled !== displayedVariable) {
+        displayedVariable = settled;
+        renderTrendLegend(settled, heatPalettes[settled.id] ?? temperaturePalette);
+      }
+    }
+    if (!filter && target !== displayedVariable) {
+      const previous = mapLayer(displayedVariable);
+      const layer = mapLayer(target);
+      filter = { variable: target, previous, layer, started: performance.now(), wipe: 0 };
+      mapTip.hidden = true;
+    }
+    if (filter) {
+      filter.wipe = ease(Math.max(0, (now - filter.started) / filterDuration));
+      filterEdge.style.transform = `translateY(${filter.wipe * world.clientHeight}px)`;
+      if (!filterFrame) filterFrame = requestAnimationFrame(drawFilterFrame);
+    }
+    filterEdge.hidden = !filter;
     const platformCountries = viewedSite?.platformCountries;
     const platform = fields.platform(platformCountries);
-    const hasRelief = Boolean(heatVisible && mapView.rise > 0 && (platform || viewedSite?.areaIds));
-    globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom, lens,
+    const hasRelief = Boolean(mapView.rise > 0 && (platform || viewedSite?.areaIds));
+    globe.render({ longitude: mapView.lon, latitude: mapView.lat, zoom: mapView.zoom,
       offsetX: mapView.offsetX, offsetY: mapView.offsetY, surface: fields.surface,
-      ...texture, platform, platformCountries, rise: mapView.rise,
+      ...(filter?.layer ?? mapLayer(displayedVariable)), previous: filter?.previous, wipe: filter?.wipe,
+      platform, platformCountries, rise: mapView.rise,
       tilt: mapView.orbitTilt * mapView.cameraFocus, orbitAzimuth: mapView.orbitAzimuth * mapView.cameraFocus,
       cameraLift: mapView.cameraLift,
       selectionSegments: viewedSite?.selectionSegments, outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
@@ -1574,37 +1650,13 @@
 
   document.addEventListener("visibilitychange", syncStatic);
   motion.addEventListener("change", () => {
-    if (motion.matches) focusAnimation?.cancel();
+    if (motion.matches) {
+      focusAnimation?.cancel();
+      drawTrendMap();
+    }
     syncStatic();
   });
   syncStatic();
-
-  function runLensChange() {
-    if (!heatVisible || motion.matches || !displayedVariable || displayedVariable === trendMapVariable().id) {
-      if (lensStarted) {
-        lensStarted = 0;
-        cancelAnimationFrame(lensFrame);
-        stage.removeAttribute("data-lens-change");
-      }
-      return;
-    }
-    if (lensStarted && stage.dataset.lensChange === trendMapVariable().id) return;
-    cancelAnimationFrame(lensFrame);
-    stage.removeAttribute("data-lens-change");
-    void stage.offsetWidth;
-    stage.dataset.lensChange = trendMapVariable().id;
-    lensStarted = performance.now();
-    refocus(105);
-    const step = (now) => {
-      if (!flight) drawTrendMap(now);
-      if (now - lensStarted < sensorSweep) lensFrame = requestAnimationFrame(step);
-      else {
-        lensStarted = 0;
-        stage.removeAttribute("data-lens-change");
-      }
-    };
-    lensFrame = requestAnimationFrame(step);
-  }
 
   function viewCentre() {
     const [width, height] = mapSize();
@@ -1628,7 +1680,7 @@
     const panel = byId("drawer");
     const offsetX = open && width > 760 ? -panel.offsetWidth / 2 : 0;
     const toolbar = open && width <= 760 ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
-    const offsetY = toolbar ? (toolbar - panel.offsetHeight) / 2 : 0;
+    const offsetY = toolbar ? (toolbar - panel.offsetHeight - mapSelector.offsetHeight - 8) / 2 : 0;
     const from = { ...mapView };
     const previous = viewedSite;
     const changingSite = previous?.id !== selection?.id;
@@ -1730,7 +1782,7 @@
   }
 
   function showTip(x, y) {
-    const variable = trendMapVariable();
+    const variable = filter && y < filter.wipe * world.clientHeight ? filter.variable : displayedVariable ?? trendMapVariable();
     const entry = trendMap[variable.id];
     const coords = globe.invert(x, y);
     const index = coords ? gridPointIndex(coords[1], coords[0]) : -1;
@@ -1753,7 +1805,7 @@
   function openDrawer() {
     if (drawingArea) setAreaMode(false);
     app.setAttribute("data-drawer", "");
-    byId("welcome").hidden = true;
+    setWelcomeOpen(false);
     byId("drawer-title").focus({ preventScroll: true });
   }
 
@@ -1779,7 +1831,7 @@
       stopFlight();
       app.removeAttribute("data-drawer");
       mapView.offsetX = mapView.offsetY = 0;
-      byId("welcome").hidden = true;
+      setWelcomeOpen(false);
       world.focus({ preventScroll: true });
     }
     drawTrendMap();
@@ -1891,12 +1943,6 @@
     return true;
   }
 
-  heatButton.addEventListener("click", () => {
-    heatVisible = !heatVisible;
-    heatButton.setAttribute("aria-pressed", String(heatVisible));
-    runLensChange();
-    renderTrendMap();
-  });
   areaButton.addEventListener("click", () => setAreaMode(!drawingArea));
   stage.addEventListener("pointerdown", (event) => {
     if (event.button > 0) return;
@@ -2052,17 +2098,45 @@
   deselectButton.addEventListener("click", () => clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 }));
 
   // ---- Panels: results, welcome, how it works ----
-  const hideWelcome = () => {
-    byId("welcome").hidden = true;
-    world.focus({ preventScroll: true });
-  };
-  byId("close-drawer").addEventListener("click", closeDrawer);
-  byId("close-welcome").addEventListener("click", hideWelcome);
-  byId("show-welcome").addEventListener("click", () => {
+  function setWelcomeOpen(open) {
+    welcome.inert = !open;
+    welcomeTab.inert = open;
+    welcomeTab.setAttribute("aria-expanded", String(open));
+  }
+
+  function hideWelcome() {
+    setWelcomeOpen(false);
+    welcomeTab.focus({ preventScroll: true });
+  }
+
+  function showWelcome() {
+    if (!welcome.inert) return;
     if (drawingArea) setAreaMode(false);
     closeDrawer();
-    byId("welcome").hidden = false;
-    byId("close-welcome").focus();
+    setWelcomeOpen(true);
+    byId("close-welcome").focus({ preventScroll: true });
+  }
+
+  byId("close-drawer").addEventListener("click", closeDrawer);
+  byId("close-welcome").addEventListener("click", hideWelcome);
+  let welcomeTouch;
+  let suppressWelcomeClick = false;
+  welcomeTab.addEventListener("pointerdown", (event) => {
+    if (!event.isPrimary) return;
+    suppressWelcomeClick = false;
+    if (event.pointerType !== "mouse") welcomeTouch = event;
+  });
+  welcomeTab.addEventListener("pointerup", (event) => {
+    if (welcomeTouch?.pointerId !== event.pointerId) return;
+    const dx = event.clientX - welcomeTouch.clientX;
+    const dy = Math.abs(event.clientY - welcomeTouch.clientY);
+    welcomeTouch = null;
+    suppressWelcomeClick = Math.hypot(dx, dy) > 12;
+    if (dx >= 40 && dx > dy) showWelcome();
+  });
+  welcomeTab.addEventListener("pointercancel", () => { welcomeTouch = null; });
+  welcomeTab.addEventListener("click", (event) => {
+    if (!suppressWelcomeClick || event.detail === 0) showWelcome();
   });
   const how = byId("how");
   const assistantDialog = byId("assistant-dialog");
@@ -2119,7 +2193,7 @@
       setAreaMode(false);
       areaButton.focus();
     } else if (app.hasAttribute("data-drawer")) closeDrawer();
-    else if (!byId("welcome").hidden) hideWelcome();
+    else if (!welcome.inert) hideWelcome();
   });
   byId("locate").addEventListener("click", () => {
     const button = byId("locate");

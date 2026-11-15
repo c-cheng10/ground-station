@@ -19,10 +19,10 @@
   <script defer src="trend-map.js"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
-  <script defer src="globe-fields.js?v=2"></script>
+  <script defer src="globe-fields.js?v=3"></script>
   <script defer src="globe-selection-outline.js"></script>
-  <script defer src="globe-view.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=9"></script>
+  <script defer src="globe-view.js?v=5"></script>
+  <script defer src="trend-explorer.js?v=13"></script>
   <script defer src="research.js?v=2"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=3"></script>
@@ -43,6 +43,8 @@
       --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
       --drawer: min(510px, 43vw);
       --map-inset: 16px;
+      --filter-height: 54px;
+      --filter-space: calc(var(--filter-height) + 10px);
       --numbers: "Space Mono", ui-monospace, monospace;
       font-family: "Geist", system-ui, sans-serif;
       color: var(--ink);
@@ -90,6 +92,7 @@
 
     /* The map is the page */
     .app { position: fixed; inset: 0; }
+    .app[data-drawer] { --selector-drawer: var(--drawer); --filter-lift: var(--filter-space); }
     .stage {
       position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab;
       background:
@@ -128,17 +131,10 @@
       font: 0.72rem/1.2 var(--numbers); text-shadow: 0 1px 3px #080b0e, 0 0 5px #080b0e;
     }
     #globe-effects { z-index: 3; pointer-events: none; }
-    #lens-transition { position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden; }
-    #lens-transition::before {
-      content: ""; position: absolute; inset: 0 0 auto; height: 35%; opacity: 0;
-      background: linear-gradient(rgb(156 238 255 / 0), rgb(156 238 255 / 0.15) 94%, rgb(201 247 255 / 0.38));
-      mix-blend-mode: screen;
-    }
-    .stage[data-lens-change] #lens-transition::before { animation: lens-sweep 620ms cubic-bezier(0.28, 0.04, 0.26, 1) both; }
-    @keyframes lens-sweep {
-      0% { opacity: 0; transform: translateY(-105%); }
-      12%, 64% { opacity: 1; }
-      100% { opacity: 0; transform: translateY(290%); }
+    #filter-edge {
+      position: absolute; z-index: 2; top: -14px; left: 0; right: 0; height: 14px; pointer-events: none;
+      background: linear-gradient(transparent, rgb(164 227 244 / 0.12));
+      border-bottom: 1px solid rgb(184 239 255 / 0.35);
     }
     .pin { position: absolute; z-index: 4; width: 6px; height: 6px; margin: -3px 0 0 -3px; background: #fff; box-shadow: 0 0 0 1px rgb(8 16 24 / 0.7), 0 0 7px rgb(246 251 255 / 0.72); pointer-events: none; }
     .tip {
@@ -150,41 +146,23 @@
     .tip small { color: var(--muted); }
 
     .map-hud {
-      position: absolute; z-index: 8; pointer-events: none; container-type: inline-size;
+      position: absolute; z-index: 8; pointer-events: none;
       top: max(var(--map-inset), env(safe-area-inset-top)); left: max(var(--map-inset), env(safe-area-inset-left));
       right: max(var(--map-inset), env(safe-area-inset-right));
     }
     .app[data-drawer] .map-hud { right: calc(var(--drawer) + var(--map-inset)); }
-    .hud-layout {
-      display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-      grid-template-areas: "brand tools actions"; align-items: center; gap: 8px 12px;
-    }
+    .hud-layout { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; }
     .brand {
-      grid-area: brand; font: 700 0.98rem/1.2 var(--numbers); text-wrap: wrap;
+      font: 700 0.98rem/1.2 var(--numbers); text-wrap: wrap;
       letter-spacing: -0.04em; text-shadow: 0 2px 6px var(--space);
     }
-    .map-tools, .hud-actions { display: flex; gap: 6px; pointer-events: auto; }
-    .map-tools { grid-area: tools; justify-self: center; }
-    .hud-actions { grid-area: actions; justify-self: end; }
-    .map-tools :is(.button, .icon-button, select), .hud-actions :is(.button, .icon-button) {
+    .hud-actions { display: flex; gap: 6px; pointer-events: auto; }
+    .hud-actions :is(.button, .icon-button) {
       min-height: 44px; background: var(--glass); backdrop-filter: blur(12px);
     }
-    .map-field select {
-      max-width: min(41vw, 13.5rem); min-height: 44px; padding: 5px 8px; border: 1px solid var(--rule);
-      color: var(--ink); font-size: 0.9rem; font-weight: 600;
-    }
-    .map-field select:hover { border-color: var(--control); }
-    @container (max-width: 730px) {
-      .hud-layout { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "brand actions" "tools tools"; }
-      .brand { font-size: 0.87rem; }
-    }
-    .hud-actions .icon-button:hover, .map-tools .icon-button:hover { background: var(--tint); border-color: var(--control); }
+    .hud-actions .icon-button:hover { background: var(--tint); border-color: var(--control); }
     #show-assistant { color: var(--control-hover); }
     #draw-circle[aria-pressed="true"] { background: var(--ink); color: var(--space); border-color: var(--ink); }
-    #toggle-heat::before {
-      content: ""; flex: none; width: 7px; height: 7px; border: 1px solid var(--muted);
-    }
-    #toggle-heat[aria-pressed="true"]::before { background: var(--control); border-color: var(--control); }
     .circle-hint {
       position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
       width: max-content; max-width: min(100%, 34rem); margin: 0; padding: 9px 12px;
@@ -202,8 +180,73 @@
     }
     .stage[data-drawing] ~ .map-hud .camera-actions { visibility: hidden; }
 
-    /* Welcome card */
-    .welcome { position: absolute; z-index: 7; top: 92px; left: var(--map-inset); width: min(305px, calc(100vw - 32px)); max-height: max(128px, calc(100dvh - 328px)); overflow: auto; overscroll-behavior: contain; }
+    .map-selector {
+      position: absolute; z-index: 8; bottom: max(var(--map-inset), env(safe-area-inset-bottom));
+      left: calc((100% - var(--selector-drawer, 0px)) / 2); translate: -50% 0;
+      width: min(580px, calc(100% - var(--selector-drawer, 0px) - 2 * var(--map-inset)));
+      min-height: var(--filter-height); display: grid; grid-template-columns: minmax(0, 1fr) minmax(108px, 1.35fr) minmax(0, 1fr);
+      text-shadow: 0 1px 6px var(--space);
+    }
+    .map-selector button {
+      display: flex; align-items: center; min-width: 0;
+      padding: 3px 12px; border: 0; background: transparent; color: var(--control-hover);
+    }
+    #next-map { grid-column: 3; justify-content: flex-end; }
+    .map-selector button:is(:hover, :focus-visible) { color: var(--ink); }
+    .map-selector button:focus-visible { outline: none; }
+    .map-selector button:focus-visible svg { outline: 2px solid var(--control-hover); outline-offset: 5px; }
+    .map-selector svg { flex: none; width: 16px; height: 16px; }
+    .map-labels {
+      position: absolute; inset: 0 32px; overflow: hidden; pointer-events: none;
+      mask-image: linear-gradient(90deg, transparent 3%, #000 29% 71%, transparent 97%);
+    }
+    .map-label {
+      position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+      transform: translateX(calc(var(--map-slot, 0) * 33.333%));
+      color: var(--muted); opacity: 0;
+      transition: transform 280ms var(--ease-out), opacity 280ms var(--ease-out), color 220ms ease-out;
+    }
+    .map-label[data-offscreen] { visibility: hidden; transition: none; }
+    .map-label:is([data-slot="-1"], [data-slot="1"]) { opacity: 0.78; }
+    .map-label[data-slot="0"] { color: var(--ink); opacity: 1; }
+    .map-name {
+      max-width: 40%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      font-size: 0.96rem; font-weight: 700; line-height: 1.18;
+      transform: scale(0.85); transition: transform 280ms var(--ease-out);
+    }
+    .map-label[data-slot="0"] .map-name { transform: none; }
+    .map-selector:has(#previous-map:is(:hover, :focus-visible)) .map-label[data-slot="-1"],
+    .map-selector:has(#next-map:is(:hover, :focus-visible)) .map-label[data-slot="1"] { opacity: 1; }
+
+    /* Recommendations */
+    .welcome {
+      position: absolute; z-index: 7; top: 92px; left: var(--map-inset); width: min(305px, calc(100vw - 32px));
+      max-height: max(128px, calc(100dvh - 328px - var(--filter-lift, 0px))); overflow: auto; overscroll-behavior: contain;
+      transition: transform 320ms var(--ease-out), visibility 0s;
+    }
+    .welcome[inert] {
+      transform: translateX(calc(-100% - var(--map-inset))); visibility: hidden;
+      transition: transform 260ms var(--ease-out), visibility 0s 260ms;
+    }
+    .welcome-tab {
+      position: absolute; z-index: 7; top: 92px; left: env(safe-area-inset-left, 0px); width: 44px;
+      display: grid; place-items: center; padding: 10px 0; border: 0; background: transparent;
+      color: var(--ink); visibility: hidden; opacity: 0; user-select: none; touch-action: pan-y;
+      transition: opacity 150ms ease-out, visibility 0s 150ms;
+    }
+    .welcome[inert] + .welcome-tab { visibility: visible; opacity: 1; transition: opacity 180ms ease-out 130ms; }
+    .welcome-tab-content {
+      display: grid; justify-items: center; gap: 7px; opacity: 0.62;
+      font-size: 0.76rem; font-weight: 650; letter-spacing: 0.035em;
+      text-shadow: 0 1px 5px var(--space); transition: opacity 180ms ease-out;
+    }
+    .welcome-tab-label { writing-mode: vertical-rl; }
+    .welcome-tab svg { width: 14px; height: 14px; }
+    .welcome-tab:focus-visible { outline-offset: -3px; }
+    .welcome-tab:is(:focus-visible, :active) .welcome-tab-content { opacity: 1; }
+    @media (hover: hover) {
+      .welcome-tab:hover .welcome-tab-content { opacity: 1; }
+    }
     .welcome-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
     .welcome h2 { max-width: 14ch; font-size: 1.48rem; letter-spacing: -0.035em; text-shadow: 0 2px 10px var(--space); }
     .welcome .close { flex: none; font-size: 1.15rem; background: var(--glass); }
@@ -231,11 +274,13 @@
     @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 
     /* Legend and biggest changes, bottom left */
-    .legend-card { left: var(--map-inset); bottom: max(var(--map-inset), env(safe-area-inset-bottom)); width: min(305px, calc(100vw - 32px)); padding: 12px 14px; }
+    .legend-card { left: var(--map-inset); bottom: calc(max(var(--map-inset), env(safe-area-inset-bottom)) + var(--filter-lift, 0px)); width: min(305px, calc(100vw - 32px)); padding: 12px 14px; }
     .legend-card h2 { font-size: 0.98rem; }
     .legend-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
-    .trend-key { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; font: 0.74rem var(--numbers); color: var(--muted); font-variant-numeric: tabular-nums; }
-    .trend-key .ramp { flex: 1; min-width: 24px; height: 7px; }
+    .trend-key { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 10px 0 6px; font: 0.74rem var(--numbers); color: var(--muted); font-variant-numeric: tabular-nums; }
+    .trend-key .ramp { grid-column: 1 / -1; height: 8px; }
+    #trend-zero { text-align: center; }
+    #trend-high { text-align: right; }
     .changes { margin-top: 10px; border-top: 1px solid var(--rule); padding-top: 8px; }
     .changes summary { cursor: pointer; font-weight: 700; color: var(--control); font-size: 0.9rem; min-height: 28px; }
     .extremes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 6px; }
@@ -246,7 +291,7 @@
     .link-button:hover { text-decoration: underline; text-underline-offset: 0.2em; }
 
     /* Zoom controls, bottom right (they move left when the panel opens) */
-    .zoom { position: absolute; z-index: 5; right: 14px; bottom: max(14px, env(safe-area-inset-bottom)); display: grid; gap: 6px; transition: right 380ms var(--ease-out); }
+    .zoom { position: absolute; z-index: 5; right: 14px; bottom: calc(max(14px, env(safe-area-inset-bottom)) + var(--filter-lift, 0px)); display: grid; gap: 6px; transition: right 380ms var(--ease-out); }
     .app[data-drawer] .zoom { right: calc(var(--drawer) + 28px); }
 
     /* Floating results */
@@ -410,21 +455,36 @@
 
     .error { position: absolute; z-index: 30; top: 90px; left: 14px; right: 14px; padding: 16px; background: var(--surface); border: 1px solid var(--warm); }
 
+    @media (max-width: 1230px) {
+      .app { --filter-lift: var(--filter-space); }
+    }
     @media (max-width: 760px) {
       :root { --drawer: 100%; --map-inset: 8px; }
+      .app { --mobile-drawer-height: min(61dvh, calc(100dvh - 134px)); }
+      .app[data-drawer] { --selector-drawer: 0px; }
       .app[data-drawer] .map-hud { right: max(var(--map-inset), env(safe-area-inset-right)); }
-      #toggle-heat { gap: 5px; padding-inline: 9px; font-size: 0.85rem; }
-      .camera-frame, .app[data-drawer] .camera-frame { inset: 156px 16px 39px; }
-      .app[data-drawer] .camera-frame { bottom: calc(min(61dvh, 100dvh - 134px) + 17px); }
+      .app[data-drawer] .map-selector { bottom: calc(var(--mobile-drawer-height) + var(--map-inset)); }
+      .map-selector button { padding-inline: 7px; }
+      .map-labels { inset-inline: 24px; }
+      .map-name {
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal;
+        text-wrap: balance; overflow-wrap: anywhere; font-size: 0.84rem; line-height: 1.13;
+      }
+      .brand { font-size: 0.87rem; }
+      .camera-frame, .app[data-drawer] .camera-frame { inset: 98px 16px calc(39px + var(--filter-space)); }
+      .app[data-drawer] .camera-frame { bottom: calc(var(--mobile-drawer-height) + var(--filter-space) + 17px); }
       .camera-frame > span { width: 15px; height: 12px; }
       #camera-coordinates { left: 21px; top: 4px; font-size: 0.68rem; }
-      .welcome { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); width: min(380px, calc(100% - 68px)); max-height: min(50dvh, calc(100dvh - 132px)); }
+      .welcome { top: auto; bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--filter-space)); width: min(380px, calc(100% - 68px)); max-height: min(50dvh, calc(100dvh - 132px)); }
+      .welcome-tab { top: max(112px, calc(50% - 80px)); }
+      .app[data-drawer] .welcome-tab { top: max(54px, calc(env(safe-area-inset-top) + 46px)); }
+      .welcome-tab-content { font-size: 0.72rem; }
       .examples button { min-height: clamp(76px, 11dvh, 88px); padding-block: 8px 39px; }
-      .legend-card { bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100% - 68px); padding: 10px 12px; }
+      .legend-card { width: calc(100% - 68px); padding: 10px 12px; }
       .extremes { max-height: 22dvh; overflow: auto; }
-      .zoom { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
-      .app[data-drawer] :is(.zoom, .legend-card), .app:has(.welcome:not([hidden])) .legend-card { visibility: hidden; }
-      .drawer { top: auto; height: min(61dvh, calc(100dvh - 134px)); transform: translateY(105%); }
+      .zoom { right: 8px; bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--filter-space)); }
+      .app[data-drawer] :is(.zoom, .legend-card), .app:has(.welcome:not([inert])) .legend-card { visibility: hidden; }
+      .drawer { top: auto; height: var(--mobile-drawer-height); transform: translateY(105%); }
       .drawer-body { padding: 0 var(--map-inset) max(12px, env(safe-area-inset-bottom)); }
       .drawer-panel { padding: 12px; }
       .panel-info > summary { top: 12px; right: 12px; }
@@ -434,11 +494,11 @@
     @media (max-width: 390px) {
       .hud-actions { gap: 4px; }
       #show-assistant { padding-inline: 9px; }
-      .map-field select { padding-inline: 5px; font-size: 0.82rem; }
     }
     @media (max-width: 760px) and (max-height: 500px) {
       .camera-frame { display: none; }
-      .drawer { height: min(61dvh, max(95px, 100dvh - 184px)); }
+      .app { --mobile-drawer-height: min(61dvh, max(95px, 100dvh - 184px)); }
+      .legend-card { left: calc(44px + env(safe-area-inset-left)); width: calc(100% - 104px - env(safe-area-inset-left)); }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -446,7 +506,7 @@
   </style>
 </head>
 <body>
-  <a class="skip" href="#map-variable">Skip to globe measurements</a>
+  <a class="skip" href="#map-selector">Skip to globe measurements</a>
   <div class="app" id="app">
     <div class="stage" id="trend-map-stage">
       <canvas id="trend-map" tabindex="0" role="img" aria-label="Interactive climate globe" aria-describedby="map-help circle-hint"></canvas>
@@ -457,7 +517,7 @@
         <output id="camera-coordinates"></output>
       </div>
       <canvas id="globe-effects" aria-hidden="true"></canvas>
-      <div id="lens-transition" aria-hidden="true"></div>
+      <div id="filter-edge" aria-hidden="true" hidden></div>
       <div class="pin" id="map-pin" hidden></div>
       <div class="tip" id="map-tip" hidden></div>
     </div>
@@ -466,20 +526,13 @@
     <header class="map-hud" id="map-toolbar">
       <div class="hud-layout">
         <h1 class="brand">Climate Trend Explorer</h1>
-        <div class="map-tools" role="group" aria-label="Map controls">
-          <label class="map-field" for="map-variable"><span class="sr-only">Measurement</span><select id="map-variable" name="measurement"></select></label>
-          <button type="button" class="button secondary small" id="toggle-heat" aria-pressed="true" aria-controls="trend-map">Heatmap</button>
+        <div class="hud-actions" role="group" aria-label="Map controls">
           <button type="button" class="icon-button" id="draw-circle" aria-label="Magic select" title="Magic select" aria-pressed="false" aria-controls="trend-map">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
               <path d="M13.5 8.5a7 7 0 1 0 4 6.5" stroke-dasharray="2.2 2.8"/><path d="M18 3v8m-4-4h8"/>
             </svg>
           </button>
-        </div>
-        <div class="hud-actions">
           <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
-          <button type="button" class="icon-button" id="show-welcome" aria-label="Start here: examples and tips">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
-          </button>
           <button type="button" class="icon-button" id="show-how" aria-label="How it works">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg>
           </button>
@@ -491,21 +544,41 @@
       </div>
     </header>
 
+    <nav class="map-selector" id="map-selector" aria-label="Heatmap measurements" tabindex="-1">
+      <button type="button" id="previous-map" aria-label="Previous heatmap" aria-controls="trend-map">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>
+      </button>
+      <div class="map-labels" id="map-labels" aria-hidden="true"></div>
+      <span class="sr-only" id="current-map" role="status">Air temperature</span>
+      <button type="button" id="next-map" aria-label="Next heatmap" aria-controls="trend-map">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+      </button>
+    </nav>
+
     <p class="error" role="alert" id="data-error" hidden></p>
 
     <section class="welcome" id="welcome" aria-labelledby="welcome-title">
       <div class="welcome-head">
         <h2 id="welcome-title">How is your climate changing?</h2>
-        <button type="button" class="icon-button close" id="close-welcome" aria-label="Close the welcome card">×</button>
+        <button type="button" class="icon-button close" id="close-welcome" aria-label="Close recommendations">×</button>
       </div>
       <ul class="examples" id="example-list"></ul>
     </section>
+    <button type="button" class="welcome-tab" id="show-welcome" aria-controls="welcome" aria-expanded="true" inert>
+      <span class="welcome-tab-content">
+        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3l-4 4 4 4"/></svg>
+        <span class="welcome-tab-label">Get started</span>
+      </span>
+    </button>
 
     <section class="float legend-card" aria-labelledby="trend-map-title">
       <h2 id="trend-map-title">Change per decade</h2>
       <p id="trend-map-sub"></p>
-      <div class="trend-key"><span id="trend-low"></span><span class="ramp" id="trend-ramp" aria-hidden="true"></span><span id="trend-high"></span></div>
-      <p id="heatmap-note">Fainter colour marks weaker evidence or the edge of coverage.</p>
+      <div class="trend-key" id="trend-key">
+        <span class="ramp" id="trend-ramp" aria-hidden="true"></span>
+        <span id="trend-low"></span><span id="trend-zero">0</span><span id="trend-high"></span>
+      </div>
+      <p id="heatmap-note">Grey land is outside data coverage. Select a point for trend evidence.</p>
       <p id="relief-note" hidden>Peak height shows the size of the change. Drag to orbit the selected area.</p>
       <details class="changes">
         <summary>Biggest changes</summary>

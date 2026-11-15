@@ -93,7 +93,7 @@
     }
   `;
 
-  const fragmentShader = (palette) => `
+  const fragmentShader = `
     precision highp float;
     uniform vec3 uEye, uLight;
     uniform float uRelief, uRise, uOutlineOpacity;
@@ -101,16 +101,10 @@
     uniform mediump int uLayer;
     uniform vec2 uTexel;
     uniform vec4 uPlatformBounds;
-    uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform;
+    uniform sampler2D uSurface, uHeat, uSelection, uHeight, uPlatform, uPalette;
     varying vec2 vUv;
     varying vec3 vPoint;
     varying float vWallTop;
-    vec3 bandColour(float value) {
-      ${palette.slice(0, -1).map((colour, index) =>
-        `if (value < ${((index + 1) / palette.length).toFixed(8)}) return vec3(${colour}) / 255.0;`
-      ).join("\n      ")}
-      return vec3(${palette.at(-1)}) / 255.0;
-    }
     float peak(vec2 uv) {
       return texture2D(uHeight, uv).r * (uLayer == 2 ? 1.0 : texture2D(uSelection, uv).r);
     }
@@ -154,8 +148,9 @@
       color *= 0.70 + 0.49 * lambert;
       if (uHeatVisible && land > 0.0) {
         vec2 heat = texture2D(uHeat, vUv).rg;
+        float covered = step(0.5, heat.g);
         float grade = 0.86 + 0.14 * lambert;
-        if (uRelief > 0.0 && (uLayer == 2 || selected > 0.01) && heat.g > 0.005) {
+        if (uRelief > 0.0 && (uLayer == 2 || selected > 0.01) && covered > 0.0) {
           vec2 dx = vec2(uTexel.x, 0.0);
           vec2 dy = vec2(0.0, uTexel.y);
           float longitude = (vUv.x - 0.5) * 6.2831853;
@@ -168,7 +163,8 @@
           grade = 0.48 + 0.65 * max(0.0, dot(normal, uLight));
         }
         float value = heat.r / max(heat.g, 1.0 / 255.0);
-        color = mix(color, bandColour(value) * grade, heat.g * land);
+        vec3 band = texture2D(uPalette, vec2(value, 0.5)).rgb;
+        color = mix(color, band * grade, covered * land);
       }
       float brightness = uLayer == 2 ? mix(0.92, 1.03, selected) :
         1.0 - uRise * (uHasPlatform ? 0.38 : 0.66 * (1.0 - smoothstep(0.02, 0.94, selected)));
@@ -179,12 +175,12 @@
     }
   `;
 
-  function shaderProgram(gl, palette) {
+  function shaderProgram(gl) {
     const heightSupported = gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) >= 3;
     const precision = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT).precision ? "highp" : "mediump";
     const program = gl.createProgram();
     const vertex = heightSupported ? vertexShader : vertexShader.replace("uRelief > 0.0", "false");
-    for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragmentShader(palette)]]) {
+    for (const [type, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragmentShader]]) {
       const shader = gl.createShader(type);
       gl.shaderSource(shader, source.replace("precision highp float", `precision ${precision} float`));
       gl.compileShader(shader);
@@ -307,10 +303,10 @@
     return { buffer: vertexBuffer(gl, vertices), count: indices.length };
   }
 
-  function webglRenderer(canvas, gl, borders, palette) {
+  function webglRenderer(canvas, gl, borders) {
     let program;
     try {
-      program = shaderProgram(gl, palette);
+      program = shaderProgram(gl);
     } catch (error) {
       console.warn("Globe shader unavailable:", error);
       return null;
@@ -347,24 +343,28 @@
       if (!locations.has(name)) locations.set(name, gl.getUniformLocation(program, name));
       return locations.get(name);
     };
-    const names = ["uSurface", "uHeat", "uSelection", "uHeight", "uPlatform"];
+    const names = ["uSurface", "uHeat", "uSelection", "uHeight", "uPlatform", "uPalette"];
     const textures = names.map((name, unit) => {
-      const texture = gl.createTexture();
-      gl.activeTexture(gl.TEXTURE0 + unit);
-      gl.bindTexture(gl.TEXTURE_2D, texture);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.uniform1i(uniform(name), unit);
-      return { texture };
+      return { filter: name === "uPalette" ? gl.NEAREST : gl.LINEAR, entries: [], bound: null };
     });
     const blank = new Uint8Array([0, 0, 0, 255]);
-    function setTexture(unit, source) {
-      const entry = textures[unit];
-      if (entry.source === source) return;
+    function setTexture(unit, source, variant = 0) {
+      const slot = textures[unit];
+      let entry = slot.entries[variant];
+      if (entry && slot.bound === entry && entry.source === source) return;
       gl.activeTexture(gl.TEXTURE0 + unit);
-      gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+      if (!entry) {
+        entry = { texture: gl.createTexture() };
+        slot.entries[variant] = entry;
+        gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, slot.filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, slot.filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      } else if (slot.bound !== entry) gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+      slot.bound = entry;
+      if (entry.source === source) return;
       if (source) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
       else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, blank);
       entry.source = source;
@@ -396,19 +396,20 @@
     let previousSegments;
     let outlineBuffer;
     let outlineVertexCount = 0;
-    return ({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise,
-      selectionSegments, outlineOpacity }) => {
-      if (gl.isContextLost()) return;
+    const paletteImages = new WeakMap();
+    function drawScene({ frame, surface, selection, relief, platform, platformCountries, rise, selectionSegments,
+      outlineOpacity }, { heat, palette, heightMap }, dpr, variant) {
       const { width, height, front, right, north, eye, light, focal, offsetX, offsetY, reliefHeight } = frame;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const pixelWidth = Math.round(width * dpr);
-      const pixelHeight = Math.round(height * dpr);
-      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-        canvas.width = pixelWidth;
-        canvas.height = pixelHeight;
+      if (!paletteImages.has(palette)) {
+        const rgba = new Uint8ClampedArray(palette.flatMap((colour) => [...colour, 255]));
+        paletteImages.set(palette, new ImageData(rgba, palette.length, 1));
       }
-      [surface, heat, selection, heightMap, platform?.canvas ?? null].forEach((texture, unit) => setTexture(unit, texture));
-      gl.viewport(0, 0, pixelWidth, pixelHeight);
+      setTexture(0, surface);
+      setTexture(1, heat, variant);
+      setTexture(2, selection);
+      setTexture(3, heightMap, variant);
+      setTexture(4, platform?.canvas ?? null);
+      setTexture(5, paletteImages.get(palette), variant);
       gl.uniform3fv(uniform("uRight"), right);
       gl.uniform3fv(uniform("uNorth"), north);
       gl.uniform3fv(uniform("uFront"), front);
@@ -443,7 +444,7 @@
           liftedCountries = platformCountries;
         }
 
-        gl.uniform1f(uniform("uRelief"), reliefHeight);
+        gl.uniform1f(uniform("uRelief"), heightMap ? reliefHeight : 0);
         if (platformWall) {
           bindVertices(platformWall, true);
           gl.uniform1i(uniform("uLayer"), 4);
@@ -471,12 +472,35 @@
         // Selection segments were already clipped to the platform's vector polygons.
         drawBorders(outlineBuffer, outlineVertexCount, hasCap ? 6 : 5, dpr);
       }
+    }
+
+    return (scene) => {
+      if (gl.isContextLost()) return;
+      const { frame, previous } = scene;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const width = Math.round(frame.width * dpr);
+      const height = Math.round(frame.height * dpr);
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      gl.viewport(0, 0, width, height);
+      const top = previous ? Math.round(frame.wipeY * dpr) : height;
+      if (top <= 0) return drawScene(scene, previous, dpr, 1);
+      if (top >= height) return drawScene(scene, scene, dpr, 0);
+      // Both measurements share a camera. Scissor each pass so its terrain has its own depth.
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, 0, width, height - top);
+      drawScene(scene, previous, dpr, 1);
+      gl.scissor(0, height - top, width, top);
+      drawScene(scene, scene, dpr, 0);
+      gl.disable(gl.SCISSOR_TEST);
     };
   }
 
 
   // shortcut: the Canvas fallback highlights the selected countries without displacing their surface.
-  function softwareRenderer(canvas, borders, palette) {
+  function softwareRenderer(canvas, borders) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     const raster = document.createElement("canvas");
@@ -494,7 +518,7 @@
       return textures.get(source);
     }
 
-    return ({ frame, surface, heat, selection, platform, rise, selectionSegments, outlineOpacity }) => {
+    return ({ frame, surface, heat, palette, previous, selection, platform, rise, selectionSegments, outlineOpacity }) => {
       const { width, height, cx, cy, focal, eye, front, right, north } = frame;
       const scale = Math.min(1, 500 / Math.max(width, height));
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -508,7 +532,9 @@
       if (raster.width !== w || raster.height !== h) Object.assign(raster, { width: w, height: h });
       const image = rasterContext.createImageData(w, h);
       const landTexture = pixels(surface);
-      const heatTexture = pixels(heat);
+      const nextHeat = pixels(heat);
+      const previousHeat = pixels(previous?.heat);
+      const showingPrevious = (y) => previous && y >= frame.wipeY;
       const selectionTexture = pixels(selection);
       const platformTexture = pixels(platform?.canvas);
       const [left, top, spanU, spanV] = platform?.bounds ?? [0, 0, 1, 1];
@@ -527,7 +553,11 @@
       const eyeRadiusSquared = dot(eye, eye);
       const pxs = Array.from({ length: w }, (_, x) => ((x + 0.5) / scale - cx) / focal);
       for (let y = 0; y < h; y += 1) {
-        const py = (cy - (y + 0.5) / scale) / focal;
+        const row = (y + 0.5) / scale;
+        const py = (cy - row) / focal;
+        const oldLayer = showingPrevious(row);
+        const heatTexture = oldLayer ? previousHeat : nextHeat;
+        const colours = oldLayer ? previous.palette : palette;
         for (let x = 0; x < w; x += 1) {
           const px = pxs[x];
           const rayLengthSquared = 1 + px * px + py * py;
@@ -552,8 +582,8 @@
           const heatI = heatTexture && land > 0 ? textureIndex(heatTexture, u, v) : 0;
           const coverage = heatTexture && land > 0 ? heatTexture.data[heatI + 1] : 0;
           const value = coverage ? heatTexture.data[heatI] / coverage : 0;
-          const band = Math.min(palette.length - 1, Math.floor(value * palette.length));
-          const heatColour = palette[band];
+          const band = Math.min(colours.length - 1, Math.floor(value * colours.length));
+          const heatColour = colours[band];
           const blend = land * coverage / 255;
           const facing = Math.sqrt(discriminant / rayLengthSquared);
           const rim = Math.max(0, 1 - facing) ** 5;
@@ -588,6 +618,8 @@
         if (a[3] < 0 && b[3] < 0) continue;
         const u = (borders[i + 3] + borders[i + 8]) / 2;
         const v = (borders[i + 4] + borders[i + 9]) / 2;
+        const heatTexture = previous && showingPrevious((project(visible(a, b))[1] + project(visible(b, a))[1]) / 2)
+          ? previousHeat : nextHeat;
         const dark = heatTexture && heatTexture.data[textureIndex(heatTexture, u, v) + 1] > 120;
         const dim = emphasisAt(u, v) < 0.5;
         trace(paths[(dim ? 2 : 0) + (dark ? 1 : 0)], a, b);
@@ -624,10 +656,10 @@
     };
   }
 
-  window.createGlobeView = (canvas, countries, palette) => {
+  window.createGlobeView = (canvas, countries) => {
     const borders = borderSegments(countries);
     const gl = canvas.getContext("webgl", { alpha: true, antialias: true, depth: true, preserveDrawingBuffer: true });
-    const draw = gl ? webglRenderer(canvas, gl, borders, palette) : softwareRenderer(canvas, borders, palette);
+    const draw = gl ? webglRenderer(canvas, gl, borders) : softwareRenderer(canvas, borders);
     if (!draw) return null;
     const reliefAvailable = Boolean(gl && gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS) >= 3);
     const textures = new WeakMap();
@@ -654,14 +686,14 @@
         mix(sample(col, row + 1), sample(col + 1, row + 1), x - col), y - row);
     }
 
-    function raisedRadius(longitude, latitude) {
-      const { lift, platform, reliefHeight, heightMap } = frame;
+    function raisedRadius(longitude, latitude, heightMap) {
+      const { lift, platform, reliefHeight } = frame;
       if (!lift || readTexture(platform.canvas, longitude, latitude, platform.bounds) < platformEdge) return 1;
       return 1 + lift + reliefHeight * readTexture(heightMap, longitude, latitude);
     }
 
-    function render({ longitude, latitude, zoom = 1, lens = 1, offsetX = 0, offsetY = 0,
-      surface = null, heat = null, selection = null, heightMap = null, relief = 0,
+    function render({ longitude, latitude, zoom = 1, offsetX = 0, offsetY = 0,
+      surface = null, heat = null, palette, previous = null, wipe = 1, selection = null, heightMap = null, relief = 0,
       platform = null, platformCountries = [], rise = 0, tilt = 0, orbitAzimuth = 0, cameraLift = platform ? rise : 0,
       selectionSegments = null, outlineOpacity = 0 }) {
       const { clientWidth: width, clientHeight: height } = canvas;
@@ -672,15 +704,14 @@
       const aimRight = [-Math.sin(lon), 0, Math.cos(lon)];
       const aimNorth = cross(aimRight, aim);
       const shortSide = Math.min(width, height);
-      const nominalFocal = focalScale * shortSide;
+      const focal = focalScale * shortSide;
       const nominalRadius = radiusScale * shortSide * zoom;
-      const focal = nominalFocal * lens;
       rise = Math.max(0, Math.min(1, rise));
       const lift = gl && platform ? platformLift * rise : 0;
-      const reliefHeight = reliefAvailable && heat && heightMap ? platformRelief * Math.min(rise, relief) : 0;
-      const distance = Math.hypot(1, nominalFocal / nominalRadius) + (gl ? platformLift * cameraLift : 0);
+      const reliefHeight = reliefAvailable && (heightMap || previous?.heightMap) ? platformRelief * Math.min(rise, relief) : 0;
+      const distance = Math.hypot(1, focal / nominalRadius) + (gl ? platformLift * cameraLift : 0);
       const aimRadius = 1 + (lift && readTexture(platform.canvas, longitude, latitude, platform.bounds) >= platformEdge
-        ? lift + reliefHeight * readTexture(heightMap, longitude, latitude) : 0);
+        ? lift : 0);
       // Solve for the orbit angle that produces the requested viewing angle at the target.
       const sightAngle = 68 * rad * Math.max(0, Math.min(1, tilt));
       const pitch = sightAngle - Math.asin(aimRadius / distance * Math.sin(sightAngle));
@@ -695,15 +726,14 @@
       const key = [-0.48 - 0.15 * platformLight, 0.48 + 0.15 * platformLight, 0.73 - 0.27 * platformLight];
       const light = unit(aim.map((value, i) => key[0] * aimRight[i] + key[1] * aimNorth[i] + key[2] * value));
       frame = { front, right, north, eye, light, distance, focal, cx: width / 2 + offsetX, cy: height / 2 + offsetY,
-        width, height, offsetX, offsetY, lift, platform, reliefHeight, heightMap };
-      draw({ frame, surface, heat, selection, heightMap, relief, platform, platformCountries, rise,
-        selectionSegments, outlineOpacity });
+        width, height, offsetX, offsetY, lift, platform, reliefHeight, heightMap, previous, wipeY: wipe * height };
+      draw({ frame, surface, heat, palette, selection, heightMap, relief, platform, platformCountries, rise,
+        selectionSegments, outlineOpacity, previous });
     }
 
-    function project(longitude, latitude) {
-      if (!frame) return null;
+    function projectSurface(longitude, latitude, heightMap) {
       const { front, right, north, eye, focal, cx, cy } = frame;
-      const radius = raisedRadius(longitude, latitude);
+      const radius = raisedRadius(longitude, latitude, heightMap);
       const target = point(longitude * rad, latitude * rad).map((value) => value * radius);
       if (dot(target, eye) < radius * radius) return null;
       const sightline = target.map((value, i) => value - eye[i]);
@@ -713,9 +743,18 @@
       return [cx + scale * dot(sightline, right), cy - scale * dot(sightline, north)];
     }
 
+    function project(longitude, latitude) {
+      if (!frame) return null;
+      const incoming = projectSurface(longitude, latitude, frame.heightMap);
+      if (!frame.previous || (incoming && incoming[1] < frame.wipeY)) return incoming;
+      const outgoing = projectSurface(longitude, latitude, frame.previous.heightMap);
+      return outgoing && outgoing[1] >= frame.wipeY ? outgoing : null;
+    }
+
     function invert(x, y) {
       if (!frame) return null;
       const { front, right, north, eye, focal, cx, cy, lift, reliefHeight } = frame;
+      const heightMap = frame.previous && y >= frame.wipeY ? frame.previous.heightMap : frame.heightMap;
       const px = (x - cx) / focal;
       const py = (cy - y) / focal;
       const ray = front.map((value, i) => px * right[i] + py * north[i] - value);
@@ -734,7 +773,7 @@
         const last = base ?? closest;
         const step = (last - first) / 12;
         const underPlateau = (t) => {
-          const radius = raisedRadius(...geographic(t));
+          const radius = raisedRadius(...geographic(t), heightMap);
           return radius > 1 && radius ** 2 >= minimumRadiusSquared + speedSquared * (closest - t) ** 2 - 1e-10;
         };
         // Search the raised surface first so clicks follow the relief at shallow angles.

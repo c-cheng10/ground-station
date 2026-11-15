@@ -99,23 +99,20 @@
 
   function makeMeasurement(entry, points) {
     const range = 3.6;
-    const fullCoverage = (3.25 / range) ** 2;
+    const fullRelief = (3.25 / range) ** 2;
     const falloff = range ** 2 / (2 * 1.65 ** 2);
     const weights = new Float32Array(size);
     const slopes = new Float32Array(size);
-    const confidences = new Float32Array(size);
     const distances = new Float32Array(size);
     distances.fill(1);
     points.forEach(([lat, lon], index) => {
       const slope = entry.slope[index];
       if (!Number.isFinite(slope)) return;
-      const confidence = entry.significant[index] ? 1 : 0;
-      // Blend across the 3° sample spacing, with a soft cutoff before wider gaps.
+      // Blend nearby trends without extending coverage across wider gaps.
       footprint(lon, lat, range, (pixel, distance) => {
         const weight = Math.exp(-falloff * distance) * (1 - smooth(clamp01((distance - 0.60) / 0.40)));
         weights[pixel] += weight;
         slopes[pixel] += weight * slope;
-        confidences[pixel] += weight * confidence;
         distances[pixel] = Math.min(distances[pixel], distance);
       });
     });
@@ -132,13 +129,11 @@
       if (!weights[pixel]) continue;
       const trend = slopes[pixel] / weights[pixel] / scale;
       const magnitude = clamp01(Math.abs(trend));
-      const coverage = 1 - smooth(clamp01((distances[pixel] - fullCoverage) / (1 - fullCoverage)));
-      const opacity = coverage * (0.68 + 0.32 * confidences[pixel] / weights[pixel]);
-      // Weight the trend by opacity so texture filtering beside a gap preserves the rate of change.
-      values.data[i] = 255 * opacity * clamp01((trend + 1) / 2);
-      values.data[i + 1] = 255 * opacity;
-      // A narrow island may sit between ocean vertices. Clip the surface after displacing the mesh.
-      relief.data[i] = 255 * coverage * magnitude;
+      values.data[i] = 255 * clamp01((trend + 1) / 2);
+      values.data[i + 1] = 255;
+      // Taper height at coverage boundaries so the mesh does not form a cliff there.
+      const heightWeight = 1 - smooth(clamp01((distances[pixel] - fullRelief) / (1 - fullRelief)));
+      relief.data[i] = 255 * heightWeight * magnitude;
     }
     heat.putImageData(values, 0, 0);
     heights.putImageData(relief, 0, 0);
