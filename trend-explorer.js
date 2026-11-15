@@ -863,11 +863,10 @@
         }
       }
     } else {
-      const location = /^ontario(?:,\s*canada)?$/i.test(place) ? "Southern Ontario" : place;
-      const match = window.AssistantPlace.findStudyArea(location, data.sites);
+      const match = window.AssistantPlace.findStudyArea(place, data.sites);
       if (match.ambiguous) throw new Error("More than one study area matches. Enter the full place name.");
       if (match.wrongCountry) throw new Error(`${match.wrongCountry.name} is in ${match.wrongCountry.region}. Check the place name.`);
-      const resolved = match.entry ?? await window.AssistantPlace.resolve(location, { signal });
+      const resolved = match.entry ?? await window.AssistantPlace.resolve(place, { signal });
       if (resolved.kind === "unresolved") throw new Error(resolved.message);
       target = match.entry ? pointSite(resolved.latitude, resolved.longitude) : assistantArea(resolved, coveredPoints(name));
     }

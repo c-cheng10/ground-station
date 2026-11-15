@@ -61,10 +61,12 @@
     const [name, qualifier, extra] = place.split(/,|\s+in\s+/i).map(nameKey);
     if (!name || extra !== undefined) return {};
     const key = name.replace(/ (?:biome|ecoregion|study area)$/, "");
-    const match = closestName(key, sites, ({ id, name }) => [name, id, ...(studyAreaAliases[id] ?? [])]);
+    const canonicalCountry = (value) => nameKey(countryNames.get(value) ?? value);
+    const ontarioAlias = !qualifier || canonicalCountry(qualifier) === "canada" ? ["Ontario"] : [];
+    const match = closestName(key, sites, ({ id, name }) =>
+      [name, id, ...(id === "southern-ontario" ? ontarioAlias : studyAreaAliases[id] ?? [])]);
     if (!match.entry || !qualifier) return match;
     const region = nameKey(match.entry.region);
-    const canonicalCountry = (value) => nameKey(countryNames.get(value) ?? value);
     return canonicalCountry(region) === canonicalCountry(qualifier) ? match : { wrongCountry: match.entry };
   }
 

@@ -45,6 +45,11 @@ test("saved sites accept close spelling and aliases but check country qualifiers
   assert.equal(find("Cerado, Canada").wrongCountry?.id, "cerrado");
   assert.equal(find("rainforest").entry, undefined);
   assert.equal(find("Sahel").entry, undefined);
+  for (const name of ["Ontario", "Ontario, Canada", "Ontario in Canada", "Onatrio, Canada"]) {
+    assert.equal(find(name).entry?.id, "southern-ontario");
+  }
+  assert.equal(find("Ontario, California").entry, undefined);
+  assert.equal(find("Ontario, California").wrongCountry, undefined);
 });
 
 test("country typos preserve exact countries, directions and ambiguity", async () => {
@@ -111,6 +116,22 @@ test("Ask AI submits casual wording as written and uses the interpreted place ah
   assert.equal(requests[0].mode, "interpret");
   assert.equal(requests[0].question, "tell me about madagascar's rain");
   assert.match(element("assistant-reply").textContent, /grid points in Madagascar/);
+});
+
+test("Ask AI resolves the Ontario soil question to the saved Southern Ontario sample", async () => {
+  const question = "tell me about ontario, Canada and its soil levels";
+  const { window, element, ask } = loadAssistant(async (url, options) => {
+    assert.equal(url.pathname, "/functions/v1/climate-assistant-giovanni");
+    assert.equal(JSON.parse(options.body).question, question);
+    return respond(interpret({ place: "Ontario, Canada", variable_ids: ["gwetroot"] }));
+  });
+  window.answerClimateArea = async (intent, place) => {
+    assert.equal(intent.ids.join(","), "GWETROOT");
+    assert.equal(place.id, "southern-ontario");
+    return { status: "no_data", name: place.name };
+  };
+  await ask(question);
+  assert.match(element("assistant-reply").textContent, /grid points in Southern Ontario/);
 });
 
 test("Ask AI stops on invalid measurements, time windows or unclear intent", async () => {
