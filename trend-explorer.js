@@ -387,7 +387,8 @@
     explorer.scrollTop = 0;
     mapVariable.value = trendMapVariable().id;
     openDrawer();
-    flyTo(focusZoom(nextSite));
+    if (nextSite.keepCamera) drawTrendMap();
+    else flyTo(focusZoom(nextSite));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
@@ -1911,9 +1912,43 @@
     stage.classList.remove("dragging");
     if (clicked) {
       const coords = globe.invert(event.offsetX, event.offsetY);
-      if (coords) choosePoint(coords[1], coords[0], true);
+      if (!coords) return;
+      if (event.ctrlKey || event.metaKey) chooseCountry(coords[1], coords[0], event.shiftKey);
+      else if (event.shiftKey && site) toggleCell(coords[1], coords[0]);
+      else choosePoint(coords[1], coords[0], true);
     }
   };
+
+  // Shift-click and Ctrl-click build an area out of grid squares, like Magic select does.
+  function selectCells(ids, name, keepCamera = false) {
+    if (!ids.length) return clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: mapView.zoom });
+    if (ids.length === 1) return selectSite({ ...pointSite(...ids[0].split(",").map(Number)), keepCamera });
+    const cells = ids.map((id) => id.split(",").map(Number));
+    const latitudes = cells.map(([lat]) => lat);
+    const longitudes = cells.map(([, lon]) => lon);
+    const places = new Set(cells.map((cell) => countryAt(...cell)).filter(Boolean));
+    selectSite({ id: `area:${ids.join(";")}`, areaIds: ids,
+      name: name ?? (places.size === 1 ? [...places][0] : "Selected area"),
+      latitude: (Math.min(...latitudes) + Math.max(...latitudes)) / 2,
+      longitude: (Math.min(...longitudes) + Math.max(...longitudes)) / 2, keepCamera });
+  }
+  const selectedCells = () => site ? site.areaIds ?? [pointId(site)] : [];
+
+  function toggleCell(latitude, longitude) {
+    const sample = points[gridPointIndex(latitude, longitude)];
+    if (!sample) return;
+    const id = sample.join(",");
+    const ids = selectedCells();
+    // Keep the camera still so the next shift-click lands where the user aimed.
+    selectCells(ids.includes(id) ? ids.filter((item) => item !== id) : [...ids, id], undefined, true);
+  }
+
+  function chooseCountry(latitude, longitude, add) {
+    const country = countries.find((item) => inCountry(item, latitude, longitude));
+    const inside = country ? points.filter(([lat, lon]) => countryForSample(lat, lon) === country).map((cell) => cell.join(",")) : [];
+    if (!inside.length) return choosePoint(latitude, longitude, true);
+    selectCells(add ? [...new Set([...selectedCells(), ...inside])] : inside, add ? undefined : country.name);
+  }
   stage.addEventListener("pointerup", endPointer);
   stage.addEventListener("pointercancel", endPointer);
   stage.addEventListener("pointerleave", () => { mapTip.hidden = true; });
@@ -2034,7 +2069,7 @@
     } else if (drawingArea) {
       setAreaMode(false);
       areaButton.focus();
-    } else if (app.hasAttribute("data-drawer")) closeDrawer();
+    } else if (site || app.hasAttribute("data-drawer")) clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
     else if (!byId("welcome").hidden) hideWelcome();
   });
   byId("locate").addEventListener("click", () => {

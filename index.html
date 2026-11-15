@@ -20,8 +20,8 @@
   <script defer src="globe-fields.js"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js"></script>
-  <script defer src="trend-explorer.js?v=3"></script>
-  <script defer src="research.js?v=2"></script>
+  <script defer src="trend-explorer.js?v=4"></script>
+  <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="assistant-question.js?v=2"></script>
   <script defer src="correlation-assistant.js?v=2"></script>
@@ -494,7 +494,7 @@
       </div>
       <p class="circle-hint" id="circle-hint" role="status" hidden></p>
       <div class="camera-actions">
-        <button type="button" class="button secondary small" id="deselect-area" aria-controls="trend-map drawer" hidden>Deselect</button>
+        <button type="button" class="icon-button" id="deselect-area" aria-label="Deselect" title="Deselect (Esc)" aria-controls="trend-map drawer" hidden>×</button>
       </div>
     </header>
 
@@ -513,7 +513,7 @@
       <p id="trend-map-sub"></p>
       <div class="trend-key"><span id="trend-low"></span><span class="ramp" id="trend-ramp" aria-hidden="true"></span><span id="trend-high"></span></div>
       <p id="heatmap-note">Fainter colour means weaker evidence.</p>
-      <p id="relief-note" hidden>Peak height shows the size of the change. Drag to orbit the selected area.</p>
+      <p id="relief-note" hidden>Peak height shows the size of the change. Drag to orbit the selected area. Shift-click adds squares, Ctrl-click picks a whole country, Esc deselects.</p>
       <details class="changes">
         <summary>Biggest changes</summary>
         <div class="extremes">
