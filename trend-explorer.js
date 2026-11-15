@@ -387,8 +387,15 @@
     explorer.scrollTop = 0;
     mapVariable.value = trendMapVariable().id;
     openDrawer();
-    if (nextSite.keepCamera) drawTrendMap();
-    else flyTo(focusZoom(nextSite));
+    if (nextSite.keepCamera) {
+      // No flight, so swap the outlined selection in place; reuse the lifted countries when unchanged.
+      const lifted = viewedSite?.platformCountries ?? [];
+      if (lifted.length === site.platformCountries.length && lifted.every((country) => site.platformCountries.includes(country))) {
+        site.platformCountries = lifted;
+      }
+      viewedSite = site;
+      drawTrendMap();
+    } else flyTo(focusZoom(nextSite));
     regionResults.hidden = true;
     setRegionStatus(`Loading NASA data for ${nextSite.name}…`, false, true);
     try {
@@ -2015,6 +2022,19 @@
     byId("welcome").hidden = false;
     byId("close-welcome").focus();
   });
+  const help = byId("help");
+  const helpTabs = [...help.querySelectorAll('[role="tab"]')];
+  for (const tab of helpTabs) {
+    tab.addEventListener("click", () => {
+      for (const other of helpTabs) {
+        other.setAttribute("aria-selected", String(other === tab));
+        byId(other.getAttribute("aria-controls")).hidden = other !== tab;
+      }
+    });
+  }
+  byId("show-help").addEventListener("click", () => help.showModal());
+  byId("close-help").addEventListener("click", () => help.close());
+  help.addEventListener("click", (event) => { if (event.target === help) help.close(); });
   const how = byId("how");
   const assistantDialog = byId("assistant-dialog");
   for (const id of ["show-assistant", "ask-at-point"]) {
@@ -2061,7 +2081,7 @@
     });
   }
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || how.open || assistantDialog.open) return;
+    if (event.key !== "Escape" || how.open || help.open || assistantDialog.open) return;
     const info = explorer.querySelector("details[open] > .info-icon, #point-tools[open] > summary");
     if (info && app.hasAttribute("data-drawer")) {
       info.parentElement.open = false;

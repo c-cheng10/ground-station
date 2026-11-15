@@ -20,7 +20,7 @@
   <script defer src="globe-fields.js"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js"></script>
-  <script defer src="trend-explorer.js?v=4"></script>
+  <script defer src="trend-explorer.js?v=5"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="assistant-question.js?v=2"></script>
@@ -232,6 +232,17 @@
     /* Legend and biggest changes, bottom left */
     .legend-card { left: var(--map-inset); bottom: max(var(--map-inset), env(safe-area-inset-bottom)); width: min(305px, calc(100vw - 32px)); padding: 12px 14px; }
     .legend-card h2 { font-size: 0.98rem; }
+    .get-started { width: 100%; margin-bottom: 12px; }
+    .help-body { padding: 14px 26px 26px; }
+    .help-tabs { margin-bottom: 6px; }
+    .help-body h3 { font-size: 1.02rem; margin: 16px 0 6px; }
+    .help-body p, .help-body li { color: var(--muted); font-size: 0.94rem; }
+    .help-body .steps { padding-left: 20px; display: grid; gap: 8px; }
+    .help-body .steps strong { color: var(--ink); }
+    .keys { display: grid; grid-template-columns: 210px 1fr; gap: 8px 18px; margin: 0; font-size: 0.92rem; }
+    .keys dt { color: var(--ink); font-weight: 600; }
+    .keys dd { margin: 0; color: var(--muted); }
+    kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--rule); border-bottom-width: 2px; background: var(--sunken); font: 600 0.8rem var(--numbers); text-align: center; color: var(--ink); }
     .legend-card p { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
     .trend-key { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; font: 0.74rem var(--numbers); color: var(--muted); font-variant-numeric: tabular-nums; }
     .trend-key .ramp { flex: 1; min-width: 24px; height: 7px; }
@@ -316,7 +327,8 @@
     .segmented { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; background: var(--sunken); border: 1px solid var(--rule); }
     .segmented button { border: 0; background: transparent; padding: 4px 11px; color: var(--muted); font-size: 0.84rem; min-height: 32px; transition: background-color 160ms ease-out, color 160ms ease-out; }
     .segmented button:hover { color: var(--ink); }
-    .segmented button[aria-pressed="true"] { background: var(--control); color: var(--space); }
+    .segmented button[aria-pressed="true"], .segmented button[aria-selected="true"] { background: var(--control); color: var(--space); }
+    @media (max-width: 560px) { .keys { grid-template-columns: 1fr; gap: 2px; } .keys dd { margin-bottom: 8px; } }
     .chart-stage { position: relative; height: 220px; margin-top: 12px; }
     .chart-tooltip { position: absolute; z-index: 1; pointer-events: none; white-space: nowrap; border: 1px solid var(--rule); background: var(--surface); color: var(--ink); padding: 6px 10px; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
     .legend { display: flex; flex-wrap: wrap; gap: 16px; color: var(--muted); font-size: 0.84rem; margin-top: 8px; }
@@ -484,9 +496,7 @@
         </div>
         <div class="hud-actions">
           <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
-          <button type="button" class="icon-button" id="show-welcome" aria-label="Start here: examples and tips">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
-          </button>
+          <button type="button" class="button secondary small" id="show-help" aria-haspopup="dialog">Help</button>
           <button type="button" class="icon-button" id="show-how" aria-label="How it works">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01"/></svg>
           </button>
@@ -509,6 +519,7 @@
     </section>
 
     <section class="float legend-card" aria-labelledby="trend-map-title">
+      <button type="button" class="button secondary small get-started" id="show-welcome">Get started</button>
       <h2 id="trend-map-title">Change per decade</h2>
       <p id="trend-map-sub"></p>
       <div class="trend-key"><span id="trend-low"></span><span class="ramp" id="trend-ramp" aria-hidden="true"></span><span id="trend-high"></span></div>
@@ -723,6 +734,77 @@
         <ol class="research-sources" id="assistant-research-sources" aria-label="Research sources" hidden></ol>
       </div>
       <button class="button secondary small" type="button" id="assistant-view-area" hidden>View selected area on map</button>
+    </div>
+  </dialog>
+
+  <dialog id="help" aria-labelledby="help-title">
+    <div class="dialog-head">
+      <h2 id="help-title">Help</h2>
+      <button type="button" class="icon-button" id="close-help" aria-label="Close">×</button>
+    </div>
+    <div class="help-body">
+      <div class="segmented help-tabs" role="tablist" aria-label="Help sections">
+        <button type="button" role="tab" aria-selected="true" aria-controls="help-controls" id="tab-controls">Controls</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="help-start" id="tab-start">Getting started</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="help-results" id="tab-results">Reading results</button>
+      </div>
+
+      <section role="tabpanel" id="help-controls" aria-labelledby="tab-controls">
+        <h3>Mouse</h3>
+        <dl class="keys">
+          <dt>Click a square</dt><dd>Select it and open its results</dd>
+          <dt><kbd>Shift</kbd> + click</dt><dd>Add a square to the selection, or remove one that’s already in it</dd>
+          <dt><kbd>Ctrl</kbd> + click</dt><dd>Select a whole country (<kbd>⌘</kbd> on a Mac)</dd>
+          <dt><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + click</dt><dd>Add a whole country to the selection</dd>
+          <dt>Drag</dt><dd>Spin the globe, or orbit around what you selected</dd>
+          <dt>Scroll</dt><dd>Zoom in and out</dd>
+        </dl>
+        <h3>Keyboard</h3>
+        <dl class="keys">
+          <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Spin the globe or orbit the selection</dd>
+          <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom in and out</dd>
+          <dt><kbd>Enter</kbd></dt><dd>Select the square in the middle of the view</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Close a popup, leave Magic select, or deselect</dd>
+        </dl>
+        <h3>Touch</h3>
+        <dl class="keys">
+          <dt>Tap</dt><dd>Select a square</dd>
+          <dt>Drag / pinch</dt><dd>Spin / zoom</dd>
+        </dl>
+        <h3>Buttons</h3>
+        <dl class="keys">
+          <dt>Measurement menu</dt><dd>Choose what the globe and results show</dd>
+          <dt>Heatmap</dt><dd>Show or hide the trend colours</dd>
+          <dt>Magic select</dt><dd>Draw a circle around an area, or tap its centre then its edge</dd>
+          <dt>×</dt><dd>Deselect (same as <kbd>Esc</kbd>)</dd>
+          <dt>Globe button</dt><dd>Reset the view to the whole Earth</dd>
+          <dt>Ask AI</dt><dd>Ask a question in plain words, like “Is it getting wetter in Kenya?”</dd>
+        </dl>
+      </section>
+
+      <section role="tabpanel" id="help-start" aria-labelledby="tab-start" hidden>
+        <ol class="steps">
+          <li><strong>Pick a measurement</strong> from the menu at the top, such as air temperature or rain.</li>
+          <li><strong>Look at the colours.</strong> Warm colours mean rising, cool colours mean falling. Faint colour means the evidence is weak.</li>
+          <li><strong>Click a place</strong>, a whole country (<kbd>Ctrl</kbd> + click), or draw around an area with Magic select.</li>
+          <li><strong>Read the results panel</strong> on the right: is it changing, by how much, and how sure are we?</li>
+        </ol>
+        <p>Not sure where to start? Press <strong>Get started</strong> in the bottom-left corner for example investigations.</p>
+      </section>
+
+      <section role="tabpanel" id="help-results" aria-labelledby="tab-results" hidden>
+        <dl class="keys">
+          <dt>Rising / Falling / No clear trend</dt><dd>Whether the change is strong enough to stand out from normal year-to-year ups and downs.</dd>
+          <dt>Change per decade</dt><dd>How much the value goes up or down every 10 years.</dd>
+          <dt>95% interval</dt><dd>The likely range for that change. If it crosses zero, the direction isn’t certain.</dd>
+          <dt>Adjusted p-value</dt><dd>How unusual a trend this strong would be if nothing were changing. 0.05 or lower counts as clear.</dd>
+          <dt>Graph</dt><dd>Annual shows yearly averages with the trend line. Monthly anomaly shows how far each month was from normal.</dd>
+          <dt>Climate stripes</dt><dd>One stripe per year, coloured warmer or cooler than average.</dd>
+          <dt>Forecast</dt><dd>The world model’s guess for the next 12 months, with a shaded range.</dd>
+          <dt>Compare variables</dt><dd>See whether two measurements rise and fall together, even with a delay.</dd>
+        </dl>
+        <p>Hover over any number in the results panel to see where it came from and how it was worked out. The <strong>?</strong> button explains the data and methods in full.</p>
+      </section>
     </div>
   </dialog>
 
