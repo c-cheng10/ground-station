@@ -9,6 +9,26 @@
   const oceanIds = new Set(oceanPoints.map((point) => point.join(",")));
   const trendMap = { ...landTrends, ...extension?.trends };
   if (data && extension) data.variables.push(...extension.variables);
+  // The globe shows one layer at a time; each layer lists its own measurements.
+  const layers = {
+    land: ["T2M", "TS", "PRECTOTCORR", "QV2M", "RH2M", "GWETROOT", "EVLAND", "WS10M", "SNOW"],
+    water: ["OCEAN_SKIN_TEMP", "T2M", "PRECTOTCORR"],
+    air: ["OZONE_COLUMN", "TROPOPAUSE_TEMP", "COLUMN_WATER_VAPOUR", "CLOUD_FRACTION", "OUTGOING_LONGWAVE"],
+  };
+  let layer = "land";
+  const layerEntries = new Map();
+  // Hide the other surface's points so land and ocean heatmaps never draw together.
+  function mapEntry(id) {
+    const entry = trendMap[id];
+    if (!entry || layer === "air") return entry;
+    const key = `${layer}:${id}`;
+    if (!layerEntries.has(key)) {
+      const oceanStart = entry.oceanStart ?? entry.slope.length;
+      const keep = (index) => (index >= oceanStart) === (layer === "water");
+      layerEntries.set(key, { ...entry, slope: entry.slope.map((value, index) => keep(index) ? value : null) });
+    }
+    return layerEntries.get(key);
+  }
   const byId = (id) => document.getElementById(id);
   const explorer = byId("explorer");
   if (!data || !data.sites.length || !data.variables.length || !points.length || !TrendStatistics) {
@@ -783,7 +803,8 @@
 
   function renderTrendMap() {
     const variable = trendMapVariable();
-    const entry = trendMap[variable.id];
+    if (!layers[layer].includes(variable.id)) setLayer(Object.keys(layers).find((name) => layers[name].includes(variable.id)) ?? layer);
+    const entry = mapEntry(variable.id);
     mapVariable.value = variable.id;
     if (!entry) return;
     const unit = `${trendUnit(variable)} per decade`;
@@ -1299,7 +1320,23 @@
     }
   }
 
-  for (const select of [mapVariable, compareVariable]) {
+  function setLayer(name) {
+    layer = name;
+    for (const button of byId("layer-switch").querySelectorAll("button")) {
+      button.setAttribute("aria-pressed", String(button.dataset.layer === name));
+    }
+    mapVariable.replaceChildren(...layers[name].map((id) => data.variables.find((item) => item.id === id))
+      .filter((variable) => variable && trendMap[variable.id]).map((variable) => new Option(variable.name, variable.id)));
+  }
+  setLayer(layer);
+  byId("layer-switch").addEventListener("click", (event) => {
+    const name = event.target.closest("[data-layer]")?.dataset.layer;
+    if (!name || name === layer) return;
+    setLayer(name);
+    mapVariable.value = mapVariable.options[0].value;
+    mapVariable.dispatchEvent(new Event("change"));
+  });
+  for (const select of [compareVariable]) {
     const groups = new Map();
     for (const variable of data.variables) {
       const group = variable.id === "OCEAN_SKIN_TEMP" ? "Ocean" :
@@ -1400,7 +1437,6 @@
   const pin = byId("map-pin");
   const areaButton = byId("draw-circle");
   const areaHint = byId("circle-hint");
-  const heatButton = byId("toggle-heat");
   const deselectButton = byId("deselect-area");
   const grain = byId("camera-grain");
   const cameraCoordinates = byId("camera-coordinates");
@@ -1547,8 +1583,8 @@
     const lens = 1 - 0.115 * Math.sin(Math.PI * lensProgress) ** 2;
     const variableId = lensProgress < 0.42 && displayedVariable ? displayedVariable : trendMapVariable().id;
     if (lensProgress >= 0.42) displayedVariable = variableId;
-    const texture = heatVisible && trendMap[variableId]
-      ? fields.measurement(trendMap[variableId]) : {};
+    const texture = heatVisible && mapEntry(variableId)
+      ? fields.measurement(mapEntry(variableId)) : {};
     const platformCountries = viewedSite?.platformCountries;
     const platform = fields.platform(platformCountries);
     const hasRelief = Boolean(heatVisible && mapView.rise > 0 && (platform || viewedSite?.areaIds));
@@ -1781,7 +1817,7 @@
 
   function showTip(x, y) {
     const variable = trendMapVariable();
-    const entry = trendMap[variable.id];
+    const entry = mapEntry(variable.id);
     const coords = globe.invert(x, y);
     const index = coords ? gridPointIndex(coords[1], coords[0]) : -1;
     if (!entry || index < 0 || !Number.isFinite(entry.slope[index])) {
@@ -1941,12 +1977,6 @@
     return true;
   }
 
-  heatButton.addEventListener("click", () => {
-    heatVisible = !heatVisible;
-    heatButton.setAttribute("aria-pressed", String(heatVisible));
-    runLensChange();
-    renderTrendMap();
-  });
   areaButton.addEventListener("click", () => setAreaMode(!drawingArea));
   stage.addEventListener("pointerdown", (event) => {
     if (event.button > 0) return;

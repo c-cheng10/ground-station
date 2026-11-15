@@ -23,7 +23,7 @@
   <script defer src="globe-fields.js?v=2"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=7"></script>
+  <script defer src="trend-explorer.js?v=8"></script>
   <script defer src="research.js?v=3"></script>
   <script defer src="assistant-place.js?v=2"></script>
   <script defer src="assistant-question.js?v=2"></script>
@@ -183,10 +183,9 @@
     .hud-actions .icon-button:hover, .map-tools .icon-button:hover { background: var(--tint); border-color: var(--control); }
     #show-assistant { color: var(--control-hover); }
     #draw-circle[aria-pressed="true"] { background: var(--ink); color: var(--space); border-color: var(--ink); }
-    #toggle-heat::before {
-      content: ""; flex: none; width: 7px; height: 7px; border: 1px solid var(--muted);
-    }
-    #toggle-heat[aria-pressed="true"]::before { background: var(--control); border-color: var(--control); }
+    .layer-switch { min-height: 44px; align-items: stretch; background: var(--glass); backdrop-filter: blur(12px); }
+    .layer-switch button { font-size: 0.9rem; font-weight: 600; padding-inline: 13px; }
+    .zoom .icon-button { background: var(--glass); backdrop-filter: blur(12px); }
     .circle-hint {
       position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
       width: max-content; max-width: min(100%, 34rem); margin: 0; padding: 9px 12px;
@@ -436,7 +435,7 @@
     @media (max-width: 760px) {
       :root { --drawer: 100%; --map-inset: 8px; }
       .app[data-drawer] .map-hud { right: max(var(--map-inset), env(safe-area-inset-right)); }
-      #toggle-heat { gap: 5px; padding-inline: 9px; font-size: 0.85rem; }
+      .layer-switch button { padding-inline: 9px; font-size: 0.85rem; }
       .camera-frame, .app[data-drawer] .camera-frame { inset: 156px 16px 39px; }
       .app[data-drawer] .camera-frame { bottom: calc(min(61dvh, 100dvh - 134px) + 17px); }
       .camera-frame > span { width: 15px; height: 12px; }
@@ -490,13 +489,12 @@
       <div class="hud-layout">
         <h1 class="brand">Climate Trend Explorer</h1>
         <div class="map-tools" role="group" aria-label="Map controls">
+          <div class="segmented layer-switch" id="layer-switch" role="group" aria-label="Map layer">
+            <button type="button" data-layer="land" aria-pressed="true">Land</button>
+            <button type="button" data-layer="water" aria-pressed="false">Water</button>
+            <button type="button" data-layer="air" aria-pressed="false">Air</button>
+          </div>
           <label class="map-field" for="map-variable"><span class="sr-only">Measurement</span><select id="map-variable" name="measurement"></select></label>
-          <button type="button" class="button secondary small" id="toggle-heat" aria-pressed="true" aria-controls="trend-map">Heatmap</button>
-          <button type="button" class="icon-button" id="draw-circle" aria-label="Magic select" title="Magic select" aria-pressed="false" aria-controls="trend-map">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-              <path d="M13.5 8.5a7 7 0 1 0 4 6.5" stroke-dasharray="2.2 2.8"/><path d="M18 3v8m-4-4h8"/>
-            </svg>
-          </button>
         </div>
         <div class="hud-actions">
           <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
@@ -539,6 +537,11 @@
     </section>
 
     <div class="zoom" role="group" aria-label="Map zoom">
+      <button type="button" class="icon-button" id="draw-circle" aria-label="Magic select" title="Magic select" aria-pressed="false" aria-controls="trend-map">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <path d="M13.5 8.5a7 7 0 1 0 4 6.5" stroke-dasharray="2.2 2.8"/><path d="M18 3v8m-4-4h8"/>
+        </svg>
+      </button>
       <button type="button" class="icon-button" id="zoom-in" aria-label="Zoom in">+</button>
       <button type="button" class="icon-button" id="zoom-out" aria-label="Zoom out">−</button>
       <button type="button" class="icon-button" id="zoom-reset" aria-label="Show the whole world">
@@ -779,7 +782,7 @@
         <h3>Buttons</h3>
         <dl class="keys">
           <dt>Measurement menu</dt><dd>Choose what the globe and results show</dd>
-          <dt>Heatmap</dt><dd>Show or hide the trend colours</dd>
+          <dt>Land / Water / Air</dt><dd>Switch which part of the Earth the colours and measurements show</dd>
           <dt>Magic select</dt><dd>Draw a circle around an area, or tap its centre then its edge</dd>
           <dt>×</dt><dd>Deselect (same as <kbd>Esc</kbd>)</dd>
           <dt>Globe button</dt><dd>Reset the view to the whole Earth</dd>
