@@ -1023,7 +1023,7 @@
     openDrawer();
     flyTo(mapView.zoom);
     setRegionStatus(atSea ? "Switch to Water to select an ocean location." : useGridCell
-      ? "There’s no stored NASA point for this cell. Select a nearby cell or use Magic select to cover more ground."
+      ? "There’s no stored NASA point for this cell. Select a nearby cell or use Box select to cover more ground."
       : "No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
   }
 
@@ -1736,8 +1736,8 @@
   const effects = byId("globe-effects");
   const mapTip = byId("map-tip");
   const pin = byId("map-pin");
-  const areaButton = byId("draw-circle");
-  const areaHint = byId("circle-hint");
+  const areaButton = byId("select-box");
+  const areaHint = byId("selection-hint");
   const filterEdge = byId("filter-edge");
   const deselectButton = byId("deselect-area");
   const grain = byId("camera-grain");
@@ -1810,17 +1810,13 @@
   let grainTiles;
   let viewedSite = null;
   let drawingArea = false;
-  let magicPath = [];
-  let magicPointer = null;
-  let magicCentre = null;
-  let magicRadius = 34;
-  let sparkles = [];
-  let sparkleFrame = 0;
-  let sparkleSeed = 0;
+  let boxPointer = null;
+  let boxStart = null;
+  let boxEnd = null;
   const pointers = new Map();
   let drag = null;
-  const magicDragThreshold = 6;
-  const magicInstructions = "Draw at least three quarters of a circle, then release. Or tap its centre and edge. Keyboard: move with arrows, Enter marks the centre, + or − changes the radius, Enter selects, Esc cancels.";
+  const boxDragThreshold = 6;
+  const boxInstructions = "Drag a box or tap two opposite corners. With the keyboard, press Enter to place a corner, use arrows to size the box, then press Enter.";
   const mapSize = () => [world.clientWidth, world.clientHeight];
   const radians = Math.PI / 180;
   const ease = (value) => value * value * (3 - 2 * value);
@@ -1855,65 +1851,38 @@
     return Math.min(3.2, globe.zoomFor(spread + 1.25, framing));
   }
 
-  function drawMagicEffects(now) {
+  function boxBounds([x1, y1], [x2, y2]) {
+    return [Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)];
+  }
+
+  function clampBoxPoint([x, y]) {
+    const [width, height] = mapSize();
+    return [Math.max(0, Math.min(width, x)), Math.max(0, Math.min(height, y))];
+  }
+
+  function drawSelectionBox() {
+    if (!drawingArea) return;
     const drawing = prepareCanvas(effects);
     if (!drawing) return;
     const { ctx, width, height } = drawing;
     ctx.clearRect(0, 0, width, height);
-    const [cx, cy] = viewCentre();
-    if (drawingArea && !magicPath.length && !magicCentre) {
-      ctx.strokeStyle = "rgba(244,250,255,.85)";
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(cx - 7, cy);
-      ctx.lineTo(cx + 7, cy);
-      ctx.moveTo(cx, cy - 7);
-      ctx.lineTo(cx, cy + 7);
-      ctx.stroke();
+    ctx.strokeStyle = "#ddf8ff";
+    ctx.lineWidth = 1.35;
+    if (boxStart && boxEnd) {
+      const [left, top, right, bottom] = boxBounds(boxStart, boxEnd);
+      ctx.fillStyle = "rgba(124,222,236,0.15)";
+      ctx.fillRect(left, top, right - left, bottom - top);
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(left, top, right - left, bottom - top);
+      ctx.setLineDash([]);
     }
-    if (magicPath.length || magicCentre) {
-      ctx.beginPath();
-      if (magicPath.length) magicPath.forEach(([x, y], index) => ctx[index ? "lineTo" : "moveTo"](x, y));
-      else ctx.arc(...magicCentre, magicRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(174,228,255,.20)";
-      ctx.lineWidth = 3.5;
-      ctx.shadowColor = "#b1eaff";
-      ctx.shadowBlur = 5;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = "#f8fdff";
-      ctx.lineWidth = 1.35;
-      ctx.stroke();
-    }
-    sparkles = sparkles.filter(({ start }) => now - start < 370);
-    for (const particle of sparkles) {
-      const t = Math.max(0, (now - particle.start) / 370);
-      const x = particle.x + particle.dx * t;
-      const y = particle.y + particle.dy * t;
-      const size = particle.size * (1 - 0.35 * t);
-      ctx.fillStyle = `rgba(220,249,255,${0.64 * (1 - t) ** 1.6})`;
-      ctx.beginPath();
-      ctx.moveTo(x, y - size);
-      ctx.lineTo(x + size * 0.65, y);
-      ctx.lineTo(x, y + size);
-      ctx.lineTo(x - size * 0.65, y);
-      ctx.fill();
-    }
-  }
-
-  function emitSparkle(x, y, angle = sparkleSeed * 2.39996) {
-    if (motion.matches) return;
-    const distance = 4 + sparkleSeed % 6;
-    sparkles.push({ x, y, dx: distance * Math.cos(angle), dy: distance * Math.sin(angle),
-      size: 0.85 + 0.15 * (sparkleSeed++ % 4), start: performance.now() });
-    if (sparkleFrame) return;
-    const update = (now) => {
-      drawMagicEffects(now);
-      sparkleFrame = sparkles.length ? requestAnimationFrame(update) : 0;
-    };
-    sparkleFrame = requestAnimationFrame(update);
+    const [x, y] = boxEnd ?? viewCentre();
+    ctx.beginPath();
+    ctx.moveTo(x - 6, y);
+    ctx.lineTo(x + 6, y);
+    ctx.moveTo(x, y - 6);
+    ctx.lineTo(x, y + 6);
+    ctx.stroke();
   }
 
   function mapLayer({ variable, layer: name, comparison }) {
@@ -1980,7 +1949,7 @@
     cameraCoordinates.textContent = `${coordinates}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
-    drawMagicEffects(now);
+    drawSelectionBox();
     const marked = site?.areaIds ? null : site ?? unmeasuredPoint;
     const anchor = !drawingArea && marked && globe.project(...(marked.mapAnchor ?? [marked.longitude, marked.latitude]));
     pin.hidden = !anchor;
@@ -2219,17 +2188,17 @@
 
   function setAreaMode(enabled) {
     drawingArea = enabled;
-    magicPath = [];
-    magicPointer = null;
-    magicCentre = null;
-    magicRadius = 34;
+    boxPointer = boxStart = boxEnd = null;
+    pointers.clear();
+    drag = null;
+    stage.classList.remove("dragging");
     stage.toggleAttribute("data-drawing", enabled);
+    effects.hidden = !enabled;
     areaButton.setAttribute("aria-pressed", String(enabled));
     areaHint.hidden = !enabled;
-    areaHint.textContent = enabled ? magicInstructions : "";
+    areaHint.textContent = enabled ? boxInstructions : "";
     mapTip.hidden = true;
     if (enabled) {
-      sparkles = [];
       stopFlight();
       app.removeAttribute("data-drawer");
       mapView.offsetX = mapView.offsetY = 0;
@@ -2239,88 +2208,51 @@
     drawTrendMap();
   }
 
-  function fitMagicCircle(path) {
-    if (path.length < 5) return null;
-    const mean = path.reduce(([a, b], [x, y]) => [a + x / path.length, b + y / path.length], [0, 0]);
-    let xx = 0, yy = 0, xy = 0, xr = 0, yr = 0;
-    for (const [x, y] of path) {
-      const a = x - mean[0];
-      const b = y - mean[1];
-      const r2 = a * a + b * b;
-      xx += a * a;
-      yy += b * b;
-      xy += a * b;
-      xr += a * r2 / 2;
-      yr += b * r2 / 2;
-    }
-    const det = xx * yy - xy * xy;
-    if (det <= (xx + yy) ** 2 * 0.013) return null;
-    const x = mean[0] + (yy * xr - xy * yr) / det;
-    const y = mean[1] + (xx * yr - xy * xr) / det;
-    const distances = path.map(([px, py]) => Math.hypot(px - x, py - y)).sort((a, b) => a - b);
-    const radius = distances[Math.floor(distances.length / 2)];
-    if (!Number.isFinite(radius) || radius < 9 || radius > Math.min(...mapSize()) * 0.49) return null;
-    if (distances[Math.floor(distances.length * 0.9)] - distances[Math.floor(distances.length * 0.1)] > radius * 0.7) return null;
-    // Measure the undrawn gap so retracing a short arc cannot count as closure.
-    const angles = path.map(([px, py]) => Math.atan2(py - y, px - x)).sort((a, b) => a - b);
-    let previous = angles.at(-1) - 2 * Math.PI;
-    for (const angle of angles) {
-      if (angle - previous > Math.PI / 2 + 1e-6) return null;
-      previous = angle;
-    }
-    return [x, y, radius];
-  }
-
-  function completeMagicCircle(circle) {
-    magicPath = [];
-    magicCentre = null;
-    if (!circle) {
-      areaHint.textContent = "Draw at least three quarters of a circle, or tap its centre and edge.";
-      drawTrendMap();
+  function completeBox(start, end) {
+    boxStart = boxEnd = null;
+    const [left, top, right, bottom] = boxBounds(start, end);
+    if (right - left < boxDragThreshold || bottom - top < boxDragThreshold) {
+      areaHint.textContent = "Draw a wider and taller box, or tap two opposite corners.";
+      drawSelectionBox();
       return;
     }
-    const [x, y, radius] = circle;
-    const samples = layer === "land" ? landSamples : points;
-    const inside = samples.filter(([lat, lon]) => {
-      const p = globe.project(lon, lat);
-      return p && Math.hypot(p[0] - x, p[1] - y) <= radius;
-    });
+    const contains = (point) => point && point[0] >= left && point[0] <= right && point[1] >= top && point[1] <= bottom;
+    const samples = layer === "land" ? landSamples : layer === "water" ? oceanPoints : points;
+    const inside = samples.filter(([lat, lon]) => contains(globe.project(lon, lat)));
     if (!inside.length) {
-      areaHint.textContent = "No grid points inside. Draw a bigger circle over a coloured part of the globe.";
-      drawTrendMap();
+      areaHint.textContent = "No grid points inside. Draw a bigger box over a coloured part of the globe.";
+      drawSelectionBox();
       return;
     }
-    const [lon, lat] = globe.invert(x, y) ?? [...inside[0]].reverse();
-    const areaIds = inside.map(([latitude, longitude]) => `${latitude},${longitude}`);
-    const outline = Array.from({ length: 48 }, (_, index) => {
-      const angle = index * Math.PI / 24;
-      return globe.invert(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+
+    const [lon, lat] = globe.invert((left + right) / 2, (top + bottom) / 2) ?? [...inside[0]].reverse();
+    const areaIds = inside.map((point) => point.join(","));
+    const corners = [[left, top], [right, top], [right, bottom], [left, bottom]];
+    // Each screen edge curves on the globe, so sample along it as well as at the corners.
+    const outline = corners.flatMap(([x, y], index) => {
+      const [nextX, nextY] = corners[(index + 1) % corners.length];
+      return Array.from({ length: 8 }, (_, step) =>
+        globe.invert(x + (nextX - x) * step / 8, y + (nextY - y) * step / 8));
     });
-    for (let i = 0; i < 8; i += 1) {
-      const angle = i * Math.PI / 4;
-      emitSparkle(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius, angle);
+    const name = areaIds.every((id) => oceanIds.has(id)) ? "Ocean area" : selectionName(inside);
+    const target = { id: "area:" + areaIds.join(";"), name, latitude: lat, longitude: lon,
+      areaIds, outline: outline.every(Boolean) ? outline : null };
+    if (layer === "land") {
+      const selected = new Set(selectedCountries(target));
+      for (const country of countries) {
+        if (selected.has(country)) continue;
+        if (country.polygons.some(([ring]) => ring.some(([x, y]) => contains(globe.project(x, y))))) selected.add(country);
+      }
+      target.platformCountries = [...selected];
     }
-    const target = { id: `area:${areaIds.join(";")}`, name: selectionName(inside), latitude: lat, longitude: lon,
-      areaIds, drawn: true, outline: outline.every(Boolean) ? outline : null };
-    target.platformCountries = selectedCountries(target);
-    for (const country of countries) {
-      if (target.platformCountries.includes(country)) continue;
-      const overlaps = country.polygons.some(([ring]) => ring.some(([lon, lat]) => {
-        const p = globe.project(lon, lat);
-        return p && Math.hypot(p[0] - x, p[1] - y) <= radius;
-      }));
-      if (overlaps) target.platformCountries.push(country);
-    }
-    setAreaMode(false);
     selectSite(target);
   }
 
-  function magicTap(x, y) {
-    if (!magicCentre) {
-      magicCentre = [x, y];
-      areaHint.textContent = "Centre placed. Tap the edge or use + and −, then Enter to select.";
-      drawTrendMap();
-    } else completeMagicCircle([...magicCentre, Math.max(9, Math.hypot(x - magicCentre[0], y - magicCentre[1]))]);
+  function placeBoxCorner(point) {
+    if (boxStart) return completeBox(boxStart, point);
+    boxStart = boxEnd = point;
+    areaHint.textContent = "First corner placed. Tap the opposite corner, or use the arrows and press Enter.";
+    drawSelectionBox();
   }
 
   function selectionCentred() {
@@ -2351,9 +2283,9 @@
     if (event.button > 0) return;
     const point = [event.offsetX, event.offsetY];
     if (drawingArea) {
-      if (magicPointer || !globe.invert(...point)) return;
+      if (boxPointer) return;
       stage.setPointerCapture(event.pointerId);
-      magicPointer = { id: event.pointerId, start: point, tracing: false };
+      boxPointer = { id: event.pointerId, start: point, dragging: false };
       return;
     }
     stage.setPointerCapture(event.pointerId);
@@ -2369,18 +2301,16 @@
   stage.addEventListener("pointermove", (event) => {
     const point = [event.offsetX, event.offsetY];
     if (drawingArea) {
-      if (magicPointer?.id === event.pointerId) {
-        if (!magicPointer.tracing && Math.hypot(point[0] - magicPointer.start[0], point[1] - magicPointer.start[1]) >= magicDragThreshold) {
-          magicPointer.tracing = true;
-          magicCentre = null;
-          magicPath = [magicPointer.start];
+      if (boxPointer?.id === event.pointerId) {
+        const [x, y] = boxPointer.start;
+        if (Math.hypot(point[0] - x, point[1] - y) >= boxDragThreshold) {
+          boxPointer.dragging = true;
+          boxStart = boxPointer.start;
         }
-        const last = magicPath.at(-1);
-        if (last && Math.hypot(point[0] - last[0], point[1] - last[1]) >= 3 && magicPath.length < 1400) {
-          magicPath.push(point);
-          if (magicPath.length % 5 === 0) emitSparkle(...point);
-          drawMagicEffects(performance.now());
-        }
+      }
+      if (boxStart && (!boxPointer || boxPointer.id === event.pointerId)) {
+        boxEnd = clampBoxPoint(point);
+        drawSelectionBox();
       }
       return;
     }
@@ -2420,17 +2350,18 @@
   });
   const endPointer = (event) => {
     if (drawingArea) {
-      if (magicPointer?.id !== event.pointerId) return;
-      const { tracing, start } = magicPointer;
-      magicPointer = null;
+      if (boxPointer?.id !== event.pointerId) return;
+      const { dragging, start } = boxPointer;
+      boxPointer = null;
       if (event.type === "pointercancel") {
-        magicPath = [];
-        drawMagicEffects(performance.now());
-      } else if (tracing) {
-        completeMagicCircle(fitMagicCircle([...magicPath, [event.offsetX, event.offsetY]]));
-      } else if (Math.hypot(event.offsetX - start[0], event.offsetY - start[1]) < magicDragThreshold) {
-        magicTap(event.offsetX, event.offsetY);
-      } else completeMagicCircle(null);
+        boxStart = boxEnd = null;
+        areaHint.textContent = boxInstructions;
+        drawSelectionBox();
+      } else {
+        const end = clampBoxPoint([event.offsetX, event.offsetY]);
+        if (dragging || Math.hypot(end[0] - start[0], end[1] - start[1]) >= boxDragThreshold) completeBox(start, end);
+        else placeBoxCorner(end);
+      }
       return;
     }
     if (!pointers.delete(event.pointerId) || !drag) return;
@@ -2451,7 +2382,7 @@
     }
   };
 
-  // Shift-click and Ctrl-click build an area out of grid squares, like Magic select does.
+  // Shift-click and Ctrl-click build an area out of grid squares, like Box select does.
   function selectCells(ids, name, keepCamera = false) {
     if (layer === "land") ids = ids.filter((id) => !oceanIds.has(id));
     if (!ids.length) return clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: mapView.zoom });
@@ -2486,16 +2417,19 @@
   stage.addEventListener("pointerleave", () => { mapTip.hidden = true; });
   stage.addEventListener("wheel", (event) => {
     event.preventDefault();
-    if (magicPointer) return;
-    if (drawingArea && magicCentre) {
-      magicRadius = Math.min(Math.min(...mapSize()) * 0.48, Math.max(9, magicRadius * Math.exp(-event.deltaY * 0.002)));
-      drawMagicEffects(performance.now());
-    } else zoomBy(Math.exp(-event.deltaY * 0.0015));
+    if (!boxPointer && !boxStart) zoomBy(Math.exp(-event.deltaY * 0.0015));
   }, { passive: false });
   world.addEventListener("keydown", (event) => {
     const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
     if (moves[event.key]) {
       const [dx, dy] = moves[event.key];
+      if (boxStart) {
+        const [x, y] = boxEnd;
+        boxEnd = clampBoxPoint([x + dx * 18, y - dy * 18]);
+        drawSelectionBox();
+        event.preventDefault();
+        return;
+      }
       if (!orbitRegion(dx * 40, dy * 22)) {
         stopFlight();
         mapView.lon = signedLongitude(mapView.lon + dx * 15 / Math.sqrt(mapView.zoom));
@@ -2504,14 +2438,10 @@
       drawTrendMap();
     } else if (["+", "=", "-"].includes(event.key)) {
       const factor = event.key === "-" ? 1 / 1.3 : 1.3;
-      if (drawingArea && magicCentre) {
-        magicRadius = Math.min(Math.min(...mapSize()) * 0.48, Math.max(9, magicRadius * factor));
-        drawMagicEffects(performance.now());
-      } else zoomBy(factor);
+      if (!boxPointer && !boxStart) zoomBy(factor);
     } else if (event.key === "Enter") {
       if (!drawingArea) choosePoint(mapView.lat, mapView.lon, true);
-      else if (magicCentre) completeMagicCircle([...magicCentre, magicRadius]);
-      else magicTap(...viewCentre());
+      else if (!boxPointer) placeBoxCorner(boxEnd ?? viewCentre());
     } else return;
     event.preventDefault();
   });

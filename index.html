@@ -26,10 +26,10 @@
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=7"></script>
   <script defer src="climate-news.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=30"></script>
+  <script defer src="trend-explorer.js?v=31"></script>
   <script defer src="research.js?v=3"></script>
-  <script defer src="assistant-place.js?v=4"></script>
-  <script defer src="correlation-assistant.js?v=8"></script>
+  <script defer src="assistant-place.js?v=5"></script>
+  <script defer src="correlation-assistant.js?v=9"></script>
   <style>
     :root {
       --space: #080b0e;
@@ -169,7 +169,8 @@
     }
     .hud-actions .icon-button:hover { background: var(--tint); border-color: var(--control); }
     #show-assistant { color: var(--control-hover); }
-    #draw-circle[aria-pressed="true"] { background: var(--ink); color: var(--space); border-color: var(--ink); }
+    #select-box:hover { background: var(--tint); border-color: var(--control); }
+    #select-box[aria-pressed="true"] { background: var(--ink); color: var(--space); border-color: var(--ink); }
     .layer-switch {
       grid-area: layers; justify-self: center; min-height: 44px; align-items: stretch;
       pointer-events: auto; background: var(--glass); backdrop-filter: blur(12px);
@@ -179,7 +180,7 @@
     @container (max-width: 650px) {
       .hud-layout { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "brand actions" "layers layers"; }
     }
-    .circle-hint {
+    .selection-hint {
       position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
       width: max-content; max-width: min(100%, 34rem); margin: 0; padding: 9px 12px;
       border: 1px solid var(--rule); background: var(--glass); color: var(--ink); font-size: 0.85rem;
@@ -327,7 +328,7 @@
     .link-button { padding: 2px 0; border: 0; background: transparent; color: var(--control); font-weight: 700; text-align: left; }
     .link-button:hover { text-decoration: underline; text-underline-offset: 0.2em; }
 
-    /* Zoom controls, bottom right (they move left when the panel opens) */
+    /* Map controls, bottom right */
     .zoom { position: absolute; z-index: 5; right: 14px; bottom: calc(max(14px, env(safe-area-inset-bottom)) + var(--filter-lift, 0px)); display: grid; gap: 6px; transition: right 380ms var(--ease-out); }
     .app[data-drawer] .zoom { right: calc(var(--drawer) + 28px); }
 
@@ -548,8 +549,10 @@
       .examples button { min-height: clamp(76px, 11dvh, 88px); padding-block: 8px 39px; }
       .legend-card { width: calc(100% - 68px); padding: 10px 12px; }
       .extremes { max-height: 22dvh; overflow: auto; }
-      .zoom { right: 8px; bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--filter-space)); }
-      .app[data-drawer] :is(.zoom, .legend-card), .app:has(.welcome:not([inert])) .legend-card { visibility: hidden; }
+      .zoom { right: max(8px, env(safe-area-inset-right)); bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--filter-space)); }
+      .app[data-drawer] .zoom { right: max(8px, env(safe-area-inset-right)); bottom: calc(var(--mobile-drawer-height) + var(--filter-space) + var(--map-inset)); }
+      .app[data-drawer] .zoom > :not(#select-box) { display: none; }
+      .app[data-drawer] .legend-card, .app:has(.welcome:not([inert])) .legend-card { visibility: hidden; }
       .drawer { top: auto; height: var(--mobile-drawer-height); transform: translateY(105%); }
       .drawer-body { padding: 0 var(--map-inset) max(12px, env(safe-area-inset-bottom)); }
       .drawer-panel { padding: 12px; }
@@ -576,19 +579,19 @@
   <a class="skip" href="#map-selector">Skip to globe measurements</a>
   <div class="app" id="app">
     <div class="stage" id="trend-map-stage">
-      <canvas id="trend-map" tabindex="0" role="img" aria-label="Interactive climate globe" aria-describedby="map-help circle-hint"></canvas>
+      <canvas id="trend-map" tabindex="0" role="img" aria-label="Interactive climate globe" aria-describedby="map-help selection-hint"></canvas>
       <canvas id="camera-grain" aria-hidden="true"></canvas>
       <div class="camera-scanlines" aria-hidden="true"></div>
       <div class="camera-frame" aria-hidden="true">
         <span></span><span></span><span></span><span></span>
         <output id="camera-coordinates"></output>
       </div>
-      <canvas id="globe-effects" aria-hidden="true"></canvas>
+      <canvas id="globe-effects" aria-hidden="true" hidden></canvas>
       <div id="filter-edge" aria-hidden="true" hidden></div>
       <div class="pin" id="map-pin" hidden></div>
       <div class="tip" id="map-tip" hidden></div>
     </div>
-    <p class="sr-only" id="map-help">Drag or use the arrow keys to rotate the globe or orbit the selected area. Plus and minus zoom. Select a place or press Enter for the centre of the view.</p>
+    <p class="sr-only" id="map-help">Drag or use the arrow keys to rotate the globe or orbit the selected area. Plus and minus zoom. Select a place or press Enter for the centre of the view. Turn on Box select to select several points.</p>
 
     <header class="map-hud" id="map-toolbar">
       <div class="hud-layout">
@@ -599,11 +602,6 @@
           <button type="button" data-layer="air" aria-pressed="false">Air</button>
         </div>
         <div class="hud-actions" role="group" aria-label="Map controls">
-          <button type="button" class="icon-button" id="draw-circle" aria-label="Magic select" title="Magic select" aria-pressed="false" aria-controls="trend-map">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-              <path d="M13.5 8.5a7 7 0 1 0 4 6.5" stroke-dasharray="2.2 2.8"/><path d="M18 3v8m-4-4h8"/>
-            </svg>
-          </button>
           <button type="button" class="button secondary small" id="show-assistant">Ask AI</button>
           <button type="button" class="button secondary small" id="show-help" aria-haspopup="dialog">Help</button>
           <button type="button" class="icon-button" id="show-how" aria-label="How it works">
@@ -611,7 +609,7 @@
           </button>
         </div>
       </div>
-      <p class="circle-hint" id="circle-hint" role="status" hidden></p>
+      <p class="selection-hint" id="selection-hint" role="status" hidden></p>
       <div class="camera-actions">
         <button type="button" class="button secondary small" id="deselect-area" title="Deselect (Esc)" aria-controls="trend-map drawer" hidden>Deselect</button>
       </div>
@@ -663,7 +661,13 @@
       </details>
     </section>
 
-    <div class="zoom" role="group" aria-label="Map zoom">
+    <div class="zoom" role="group" aria-label="Map navigation and selection">
+      <button type="button" class="icon-button" id="select-box" aria-label="Box select" title="Box select" aria-pressed="false" aria-controls="trend-map">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+          <path d="M19.5 11V4.5h-15v15H11" stroke-dasharray="2 2"/>
+          <path d="M10.5 10.5v10l2.7-2.6 2 3 1.7-1.1-2-3h4z" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
       <button type="button" class="icon-button" id="locate-me" aria-label="Go to my location" title="Go to my location">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
       </button>
@@ -976,7 +980,8 @@
           <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Spin the globe or orbit the selection</dd>
           <dt><kbd>+</kbd> <kbd>−</kbd></dt><dd>Zoom in and out</dd>
           <dt><kbd>Enter</kbd></dt><dd>Select the square in the middle of the view</dd>
-          <dt><kbd>Esc</kbd></dt><dd>Close a popup, leave Magic select, or deselect</dd>
+          <dt>Box select</dt><dd>Press <kbd>Enter</kbd> to place the first corner, use the arrow keys to size the box, then press <kbd>Enter</kbd> again</dd>
+          <dt><kbd>Esc</kbd></dt><dd>Close a popup, cancel Box select, or deselect</dd>
         </dl>
         <h3>Touch</h3>
         <dl class="keys">
@@ -987,7 +992,7 @@
         <dl class="keys">
           <dt>Measurement arrows</dt><dd>Cycle through measurements at the bottom of the map</dd>
           <dt>Land / Water / Air</dt><dd>Switch which part of the Earth the colours and measurements show</dd>
-          <dt>Magic select</dt><dd>Draw a circle around an area, or tap its centre then its edge</dd>
+          <dt>Box select</dt><dd>Drag from one corner of the area to the opposite corner, or tap both corners</dd>
           <dt>Deselect</dt><dd>Clear the selection (same as <kbd>Esc</kbd>)</dd>
           <dt>Globe button</dt><dd>Reset the view to the whole Earth</dd>
           <dt>Ask AI</dt><dd>Ask a question in plain words, like “Is it getting wetter in Kenya?”</dd>
@@ -998,7 +1003,7 @@
         <ol class="steps">
           <li><strong>Pick a measurement</strong> with the arrows at the bottom, such as air temperature or rain.</li>
           <li><strong>Look at the colour key.</strong> The left end shows decreases, the right end shows increases.</li>
-          <li><strong>Click a place</strong>, a whole country (<kbd>Ctrl</kbd> + click), or draw around an area with Magic select.</li>
+          <li><strong>Click a place</strong>, a whole country (<kbd>Ctrl</kbd> + click), or drag a box around an area with Box select.</li>
           <li><strong>Read the results panel</strong> on the right: is it changing, by how much, and how sure are we?</li>
         </ol>
         <p>Press <strong>Get started</strong> on the left edge for example investigations.</p>
@@ -1031,7 +1036,7 @@
         <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
         <p id="grid-coverage">Land samples are spaced about 3° apart and ocean samples about 5° apart.</p>
         <p>MERRA-2 provides total column ozone and tropopause temperature (since 1980). Daytime AIRS observations provide total column water vapour, cloud fraction, outgoing longwave radiation, and sea surface skin temperature (since September 2002). GPM precipitation estimates are less certain poleward of 60°.</p>
-        <p>Use Magic select to sketch a ring around a place. The app selects the sampled points inside it. Each point counts equally, and the area chart uses months when every selected point has a value.</p>
+        <p>Box select includes the sampled points inside the rectangle. Each point counts equally, and the area chart uses months when every selected point has a value.</p>
         <p>Selection names describe the sampled grid points. Nearby cities, country outlines and <a href="https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/">state and province boundaries</a> come from Natural Earth. Biome labels use sample centres within <a href="https://ecoregions2017.appspot.com/">RESOLVE Ecoregions 2017</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
         <div class="location-tools">
           <button type="button" class="button secondary small" id="locate">Use my location</button>

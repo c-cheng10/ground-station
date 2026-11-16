@@ -129,7 +129,7 @@
     }
 
     if (/\b(?:biome|ecoregion)$/.test(nameKey(city)) || /^(?:sahel|rain[ -]?forest|savann?ah?|tundra|taiga|desert|steppe)$/.test(key)) {
-      return unresolved(`There’s no saved study area for “${input}”. Use Magic select on the globe to choose the grid points to compare.`);
+      return unresolved(`There’s no saved study area for “${input}”. Use Box select on the globe to choose the grid points to compare.`);
     }
 
     const isWashingtonDC = cityKey === "washington" && qualifier && normalize(qualifier) === "dc";
@@ -158,7 +158,7 @@
         const match = findRegion(cityKey, qualifier, true);
         if (match.entry || match.ambiguous) return regionPlace(match, input);
       }
-      return unresolved(`I couldn’t find “${input}”. Check the spelling, add a country or use Magic select on the globe.`);
+      return unresolved(`I couldn’t find “${input}”. Check the spelling, add a country or use Box select on the globe.`);
     }
 
     // shortcut: qualify close matches until the assistant offers a place picker.

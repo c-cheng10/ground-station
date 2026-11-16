@@ -86,7 +86,7 @@ test("country typos preserve exact countries, directions and ambiguity", async (
   assert.equal(western.country?.name, "Nigeria");
   assert.equal(western.direction, "west");
   assert.match((await place("Austraia")).message, /more than one country/i);
-  assert.match((await place("Sahara biome")).message, /Magic select/);
+  assert.match((await place("Sahara biome")).message, /Box select/);
 });
 
 test("Ask AI sends the resolved site for correlations and dated research", async () => {

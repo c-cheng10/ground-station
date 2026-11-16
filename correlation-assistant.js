@@ -70,7 +70,7 @@
     if (answer.status === "outside_coverage") {
       reply.textContent = answer.region
         ? `No stored NASA grid points in ${answer.region} cover the requested measurements. Try a different measurement or a broader area.`
-        : "No stored NASA grid point is close enough to that place. Try another place or use Magic select on the globe.";
+        : "No stored NASA grid point is close enough to that place. Try another place or use Box select on the globe.";
       return;
     }
     if (answer.status === "unavailable") {
@@ -199,7 +199,7 @@
       const match = window.AssistantPlace.findStudyArea(placeName, config.sites);
       if (match.ambiguous || match.wrongCountry) {
         reply.textContent = match.wrongCountry
-          ? `The saved ${match.wrongCountry.name} study area is in ${match.wrongCountry.region}. Check the place name or use Magic select.`
+          ? `The saved ${match.wrongCountry.name} study area is in ${match.wrongCountry.region}. Check the place name or use Box select.`
           : `More than one study area matches “${placeName}”. Enter its full name.`;
         return;
       }
