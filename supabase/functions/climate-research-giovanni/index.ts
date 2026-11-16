@@ -16,6 +16,12 @@ const variables = new Map([
   ["evland", ["evapotranspiration", "evaporation"]],
   ["ws10m", ["wind speed", "near-surface wind", "surface winds"]],
   ["snow", ["snow depth", "snow cover", "snowpack"]],
+  ["ocean_skin_temp", ["sea surface skin temperature", "sea surface temperature", "marine heatwave"]],
+  ["ozone_column", ["total column ozone", "total ozone", "ozone column", "ozone layer"]],
+  ["tropopause_temp", ["tropopause temperature", "cold point tropopause", "tropopause warming"]],
+  ["column_water_vapour", ["total column water vapour", "total column water vapor", "precipitable water"]],
+  ["cloud_fraction", ["cloud fraction", "cloud cover", "cloud amount"]],
+  ["outgoing_longwave", ["outgoing longwave radiation", "outgoing long-wave radiation", "outgoing thermal radiation"]],
 ]);
 const agencyReports = [
   {

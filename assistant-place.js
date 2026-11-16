@@ -10,6 +10,15 @@
     "uk": "United Kingdom",
     "turkiye": "Turkey",
     "czech republic": "Czechia",
+    "bosnia and herzegovina": "Bosnia and Herz.",
+    "central african republic": "Central African Rep.",
+    "democratic republic of the congo": "Dem. Rep. Congo",
+    "dominican republic": "Dominican Rep.",
+    "equatorial guinea": "Eq. Guinea",
+    "falkland islands": "Falkland Is.",
+    "solomon islands": "Solomon Is.",
+    "south sudan": "S. Sudan",
+    "western sahara": "W. Sahara",
   }));
   const cityNames = new Map([
     ["new york city", "New York"],
@@ -102,6 +111,13 @@
     const key = normalize(input).replace(/^the /, "");
     const country = findCountry(key);
     if (country) return { kind: "country", country };
+    if (key === "tonga") {
+      // The country is below the resolution of the outline map. Use its capital to locate coverage.
+      const capital = window.SELECTION_CITIES?.find(([name]) => name === "Nuku'alofa");
+      return capital
+        ? { kind: "country", name: "Tonga", latitude: capital[1], longitude: capital[2] }
+        : unresolved("Tonga is outside the available country outlines.");
+    }
 
     const cityKey = nameKey(city);
     const lookupRegion = !countryQualifier && !cityNames.has(cityKey) && !cityKey.startsWith("city of ");

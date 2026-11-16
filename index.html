@@ -19,17 +19,17 @@
   <script defer src="featured-stripes.js"></script>
   <script defer src="trend-map.js"></script>
   <script defer src="ice-points.js"></script>
-  <script defer src="ocean-atmosphere.js?v=2"></script>
+  <script defer src="ocean-atmosphere.js?v=3"></script>
   <script defer src="trend-statistics.js"></script>
   <script defer src="world-model.js"></script>
   <script defer src="globe-fields.js?v=7"></script>
   <script defer src="globe-selection-outline.js"></script>
   <script defer src="globe-view.js?v=7"></script>
-  <script defer src="climate-news.js?v=2"></script>
-  <script defer src="trend-explorer.js?v=33"></script>
+  <script defer src="climate-news.js?v=3"></script>
+  <script defer src="trend-explorer.js?v=34"></script>
   <script defer src="research.js?v=3"></script>
-  <script defer src="assistant-place.js?v=6"></script>
-  <script defer src="correlation-assistant.js?v=11"></script>
+  <script defer src="assistant-place.js?v=7"></script>
+  <script defer src="correlation-assistant.js?v=12"></script>
   <style>
     :root {
       --space: #080b0e;
@@ -623,6 +623,22 @@
       .app { --mobile-drawer-height: min(61dvh, max(95px, 100dvh - 184px)); }
       .legend-card { left: calc(44px + env(safe-area-inset-left)); width: calc(100% - 104px - env(safe-area-inset-left)); }
     }
+    @media (max-width: 760px) and (max-height: 500px) and (orientation: landscape) {
+      .app[data-assistant][data-drawer] {
+        --drawer: 50%;
+        --mobile-drawer-height: 42dvh;
+        --assistant-height: calc(var(--mobile-drawer-height) - 2 * var(--map-inset));
+        --assistant-stack: 0px;
+      }
+      .app[data-assistant][data-drawer] .assistant-dock {
+        right: 50%; bottom: max(var(--map-inset), env(safe-area-inset-bottom));
+      }
+      .app:is([data-drawer], [data-assistant]) .map-selector {
+        left: calc((100% - 146px) / 2); width: min(580px, calc(100% - 162px));
+      }
+      .app:is([data-drawer], [data-assistant]) .zoom { bottom: calc(var(--bottom-panels) + var(--map-inset)); }
+      .app[data-drawer] .camera-actions { inset-inline-end: 52px; }
+    }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
     }
@@ -998,11 +1014,11 @@
           <label><input type="checkbox" name="annual" checked> <span><strong>Yearly averages</strong> One row per year, one column per measurement</span></label>
           <label><input type="checkbox" name="monthly"> <span><strong>Monthly values</strong> Every month in the record</span></label>
           <label><input type="checkbox" name="anomalies"> <span><strong>Monthly anomalies</strong> How far each month was from its usual value</span></label>
-          <label><input type="checkbox" name="forecast"> <span><strong>Forecast</strong> <span id="export-forecast-note">The next 12 months with the 90% range</span></span></label>
+          <label><input type="checkbox" name="forecast"> <span><strong>Forecast</strong> <span id="export-forecast-note">Forecast after the last shared input month</span></span></label>
           <label><input type="checkbox" name="news"> <span><strong>News articles</strong> <span id="export-news-note">Headlines and links from the News panel</span></span></label>
           <label><input type="checkbox" name="sources" checked> <span><strong>Sources and methods</strong> Where every number came from and how it was tested</span></label>
         </fieldset>
-        <p class="description">Each choice downloads as its own CSV file (the sources as a text file). Your browser may ask once to allow several downloads.</p>
+        <p class="description">Choose several items to download their files together in one ZIP.</p>
         <p class="description export-status" id="export-status" role="status"></p>
         <div class="export-actions">
           <button type="button" class="button secondary small" id="cancel-export">Cancel</button>
@@ -1020,11 +1036,11 @@
     <div class="help-body">
       <div class="segmented help-tabs" role="tablist" aria-label="Help sections">
         <button type="button" role="tab" aria-selected="true" aria-controls="help-controls" id="tab-controls">Controls</button>
-        <button type="button" role="tab" aria-selected="false" aria-controls="help-start" id="tab-start">Getting started</button>
-        <button type="button" role="tab" aria-selected="false" aria-controls="help-results" id="tab-results">Reading results</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="help-start" id="tab-start" tabindex="-1">Getting started</button>
+        <button type="button" role="tab" aria-selected="false" aria-controls="help-results" id="tab-results" tabindex="-1">Reading results</button>
       </div>
 
-      <section role="tabpanel" id="help-controls" aria-labelledby="tab-controls">
+      <section role="tabpanel" id="help-controls" aria-labelledby="tab-controls" tabindex="0">
         <h3>Mouse</h3>
         <dl class="keys">
           <dt>Click a square</dt><dd>Select it and open its results</dd>
@@ -1058,7 +1074,7 @@
         </dl>
       </section>
 
-      <section role="tabpanel" id="help-start" aria-labelledby="tab-start" hidden>
+      <section role="tabpanel" id="help-start" aria-labelledby="tab-start" tabindex="0" hidden>
         <ol class="steps">
           <li><strong>Pick a measurement</strong> with the arrows at the bottom, such as air temperature or rain.</li>
           <li><strong>Look at the colour key.</strong> The left end shows decreases, the right end shows increases.</li>
@@ -1068,7 +1084,7 @@
         <p>Press <strong>Get started</strong> on the left edge for example investigations.</p>
       </section>
 
-      <section role="tabpanel" id="help-results" aria-labelledby="tab-results" hidden>
+      <section role="tabpanel" id="help-results" aria-labelledby="tab-results" tabindex="0" hidden>
         <dl class="keys">
           <dt>Rising / Falling / No clear trend</dt><dd>Whether the change is strong enough to stand out from normal year-to-year ups and downs.</dd>
           <dt>Change per decade</dt><dd>How much the value goes up or down every 10 years.</dd>
@@ -1076,7 +1092,7 @@
           <dt>Adjusted p-value</dt><dd>How unusual a trend this strong would be if nothing were changing. 0.05 or lower counts as clear.</dd>
           <dt>Graph</dt><dd>Annual shows yearly averages with the trend line. Monthly anomaly shows how far each month was from normal.</dd>
           <dt>Climate stripes</dt><dd>One stripe per year, coloured warmer or cooler than average.</dd>
-          <dt>Forecast</dt><dd>The world model’s guess for the next 12 months, with a shaded range.</dd>
+          <dt>Forecast</dt><dd>Model estimates for the 12 months after the last shared input month.</dd>
           <dt>Compare variables</dt><dd>See whether two measurements rise and fall together, even with a delay.</dd>
         </dl>
         <p>Open the info icon next to a result for its definition. The <strong>?</strong> button explains the data and methods in full.</p>
@@ -1095,7 +1111,7 @@
         <p>All data comes through NASA’s Giovanni tool, and each measurement uses NASA’s most consistent record for it. Air temperature and humidity come from MERRA-2 (available since 1980), a weather model that incorporates observations. Precipitation comes from the GPM satellites (available since 1998). Soil moisture, evaporation, wind, snow and surface temperature come from the GLDAS 2.0 land model (1948–2014).</p>
         <p id="grid-coverage">Land samples are spaced about 3° apart and ocean samples about 5° apart.</p>
         <p>MERRA-2 provides total column ozone and tropopause temperature (since 1980). Daytime AIRS observations provide total column water vapour, cloud fraction, outgoing longwave radiation, and sea surface skin temperature (since September 2002). GPM precipitation estimates are less certain poleward of 60°.</p>
-        <p>Box select includes the sampled points inside the rectangle. Each point counts equally, and the area chart uses months when every selected point has a value.</p>
+        <p>Box select includes the sampled points inside the rectangle. Each measurement weights its contributing points equally and uses months when all those points have a value.</p>
         <p>Selection names describe the sampled grid points. Nearby cities, country outlines and <a href="https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/">state and province boundaries</a> come from Natural Earth. Biome labels use sample centres within <a href="https://ecoregions2017.appspot.com/">RESOLVE Ecoregions 2017</a> (<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).</p>
         <div class="location-tools">
           <button type="button" class="button secondary small" id="locate">Use my location</button>
@@ -1117,7 +1133,7 @@
       </div>
       <div>
         <h3>The forecast</h3>
-        <p>A world model learned how air temperature, humidity and rain push each other from month to month, and how El Niño in the Pacific nudges them. It reads the last 12 months plus the last 5 years’ average, predicts next month, then feeds that prediction back in to reach 12 months.</p>
+        <p>The model uses the last 12 months of temperature, humidity, rainfall and El Niño data, along with the last five years’ average for each measurement. It predicts one month at a time and feeds each prediction into the next.</p>
         <p>It was tested on 2020–2025 at 350 locations held out from training. The 2001–2020 anomaly baseline includes the first test year.</p>
       </div>
       <div>

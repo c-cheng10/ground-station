@@ -258,7 +258,7 @@ export async function refreshGiovanni(request: Request) {
     if (!Object.keys(additions).length && authRejected) {
       return json({ error: "Giovanni rejected the Earthdata token. Check its expiry and approve the Giovanni application in Earthdata Login." }, 503);
     }
-    if (!Object.keys(additions).length && unavailable.length === fields.length) {
+    if (!Object.keys(additions).length && refreshed.every(({ status }) => status === "rejected")) {
       return json({ error: "Giovanni data is temporarily unavailable. Try again later." }, 502);
     }
     for (const values of Object.values(additions)) {

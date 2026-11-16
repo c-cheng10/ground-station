@@ -7,6 +7,7 @@
   const landSamples = [...landPoints, ...(extension?.extraLand ?? [])];
   const oceanPoints = extension?.ocean ?? [];
   const points = [...landSamples, ...oceanPoints];
+  const layerPoints = { land: landSamples, water: oceanPoints, air: points };
   const oceanIds = new Set(oceanPoints.map((point) => point.join(",")));
   const polarIds = new Set(extension?.polarLand?.map((point) => point.join(",")) ?? []);
   const trendMap = { ...landTrends, ...extension?.trends };
@@ -367,12 +368,16 @@
         const rows = await loadPoints(batch, signal);
         for (const row of rows) {
           columns.forEach((column, index) => {
-            if (Array.isArray(row[column])) present[index] += 1;
-            row[column]?.forEach((value, month) => {
+            const values = row[column];
+            if (!Array.isArray(values)) return;
+            let contributes = false;
+            values.forEach((value, month) => {
               if (!Number.isFinite(value)) return;
+              contributes = true;
               totals[index][month] = (totals[index][month] ?? 0) + value;
               counts[index][month] = (counts[index][month] ?? 0) + 1;
             });
+            if (contributes) present[index] += 1;
           });
         }
         loaded += batch.length;
@@ -387,9 +392,10 @@
     }
     signal.throwIfAborted();
     // A month has a mean only when the same set of grid points contributes to it.
-    return Object.fromEntries(columns.map((column, index) => [column,
+    const averages = Object.fromEntries(columns.map((column, index) => [column,
       Array.from(totals[index], (sum, month) => present[index] && counts[index][month] === present[index] ? sum / present[index] : null),
     ]));
+    return { ...averages, contributorCounts: Object.fromEntries(columns.map((column, index) => [column, present[index]])) };
   }
 
   // Choose the longest uninterrupted run of complete years, breaking ties with the newest one.
@@ -413,8 +419,18 @@
     const series = {};
     const residuals = {};
     const starts = {};
+    const observations = {};
     for (const variable of data.variables) {
-      const values = row[variable.id.toLowerCase()] ?? [];
+      const column = variable.id.toLowerCase();
+      const values = row[column] ?? [];
+      const monthlyStart = values.findIndex(Number.isFinite);
+      if (monthlyStart < 0) continue;
+      const observed = {
+        monthlyStart,
+        monthlyValues: values.slice(monthlyStart, values.findLastIndex(Number.isFinite) + 1),
+        contributorCount: row.contributorCounts?.[column] ?? 1,
+      };
+      observations[variable.id] = observed;
       const [firstYear, endYear] = completeYearRun(values);
       if (endYear - firstYear < 4) continue;
       const monthly = values.slice(firstYear * 12, endYear * 12);
@@ -423,21 +439,20 @@
       const result = TrendStatistics.analyseRegion({ annual: { [variable.id]: annual }, monthly: { [variable.id]: monthly } },
         span, [variable.id], span[0], span.at(-1));
       const fitted = result.series[variable.id];
-      const extra = values.slice(endYear * 12, values.findLastIndex(Number.isFinite) + 1);
-      // Include newer observations in monthly views while fitting trends to complete years.
+      // Use the fitted baseline for partial years before and after the trend window.
       const seasonalMean = fitted.monthlyValues.slice(0, 12).map((value, month) => value - fitted.monthlyAnomalies[month]);
       series[variable.id] = {
         ...fitted,
+        ...observed,
         firstYear: span[0], lastYear: span.at(-1),
-        monthlyValues: [...fitted.monthlyValues, ...extra],
-        monthlyAnomalies: [...fitted.monthlyAnomalies, ...extra.map((value, index) =>
-          Number.isFinite(value) ? value - seasonalMean[index % 12] : null)],
+        monthlyAnomalies: observed.monthlyValues.map((value, index) =>
+          Number.isFinite(value) ? value - seasonalMean[(monthlyStart + index) % 12] : null),
       };
       residuals[variable.id] = result.residuals[variable.id];
       starts[variable.id] = firstYear * 12;
     }
     adjustRegionTests(series);
-    return { series, residuals, starts, row };
+    return { series, residuals, starts, row, observations };
   }
 
   async function selectSite(nextSite, { focusDrawer = true } = {}) {
@@ -505,7 +520,7 @@
       analysis = analyseRow(row);
       if (!Object.keys(analysis.series).length) {
         setRegionStatus(nextSite.areaIds
-          ? "No measurement has four consecutive complete years shared by all selected points. Try a smaller area."
+          ? "No measurement has four consecutive complete years across its contributing grid points. Try a smaller area."
           : `No measurement has four consecutive complete years at ${nextSite.name}.`);
         return;
       }
@@ -793,10 +808,6 @@
     return delta && isInDirection(direction, ...delta);
   }
 
-  function pointsCoveredBy(...entries) {
-    return points.filter((_, index) => entries.every((entry) => Number.isFinite(entry?.slope[index])));
-  }
-
   function assistantArea(place, availablePoints = points) {
     const { country, region, direction, interior } = place;
     const name = place.displayName ?? country?.name ?? place.name;
@@ -808,17 +819,22 @@
       const inside = availablePoints.filter((point) =>
         memberIds ? memberIds.has(point.join(",")) : inCountry(country, ...point));
       const scopePoints = region?.samples ?? inside;
-      const longitudeBase = region ? scopePoints[0]?.[1] ?? 0 : 0;
-      const longitudeOffset = ([, lon]) => region ? signedLongitude(lon - longitudeBase) : lon;
+      const mainland = country && mainlandBounds(country);
+      const longitudeBase = mainland ? signedLongitude(mainland.reference + (mainland.west + mainland.east) / 2)
+        : scopePoints[0]?.[1] ?? 0;
+      const longitudeOffset = ([, lon]) => signedLongitude(lon - longitudeBase);
+      const vertical = direction === "north" || direction === "south";
+      const axis = vertical ? ([lat]) => lat : longitudeOffset;
+      const sign = direction === "north" || direction === "east" ? 1 : -1;
       selected = inside;
       if (country && direction && !interior) {
         const insideSet = new Set(inside);
-        selected = availablePoints.filter((coords) => !insideSet.has(coords) && outsideCountryInDirection(country, direction, ...coords));
+        const middle = vertical && mainland ? (mainland.south + mainland.north) / 2 : 0;
+        selected = availablePoints.filter((coords) => sign * (axis(coords) - middle) >= 0 &&
+          !insideSet.has(coords) && outsideCountryInDirection(country, direction, ...coords));
       } else if (direction && inside.length) {
-        const axis = direction === "north" || direction === "south" ? ([lat]) => lat : longitudeOffset;
         const values = scopePoints.map(axis);
         const middle = (Math.min(...values) + Math.max(...values)) / 2;
-        const sign = direction === "north" || direction === "east" ? 1 : -1;
         selected = inside.filter((coords) => sign * (axis(coords) - middle) >= 0);
       }
       if (!selected.length) return null;
@@ -826,7 +842,7 @@
       const longitudes = selected.map(longitudeOffset);
       latitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
       const centre = (Math.min(...longitudes) + Math.max(...longitudes)) / 2;
-      longitude = region ? signedLongitude(longitudeBase + centre) : centre;
+      longitude = signedLongitude(longitudeBase + centre);
     } else {
       const nearby = availablePoints.map((coords) => ({ coords, km: distanceKm(latitude, longitude, ...coords) }))
         .filter(({ coords: [lat, lon], km }) => km <= 700 && (!direction ||
@@ -847,7 +863,10 @@
       : place.id ? place : assistantArea(place, availablePoints);
   }
 
-  window.getClimateSelection = () => ({ site: site?.id, point: site && !site.areaIds ? pointId(site) : undefined });
+  window.getClimateSelection = () => ({
+    site: site?.id, point: site && !site.areaIds ? pointId(site) : undefined,
+    centre: site && `${Number(site.latitude.toFixed(6))},${Number(site.longitude.toFixed(6))}`,
+  });
 
   window.selectClimateArea = (place) => {
     const target = assistantTarget(place, place.kind === "point" ? points : landSamples);
@@ -864,15 +883,15 @@
       renderDetails();
       flyTo(focusZoom(site));
     } else selectSite(target, { focusDrawer: false });
-    return target.name;
+    return { name: target.name, point: target.areaIds ? undefined : pointId(target) };
   };
 
   window.answerClimateArea = async (question, place) => {
     const { ids, lag } = question;
-    const availablePoints = place?.kind === "region" ? pointsCoveredBy(...ids.map((id) => trendMap[id])) : points;
+    const availablePoints = place?.kind === "point" ? points : landSamples;
     const target = place ? assistantTarget(place, availablePoints) : (site?.areaIds || question.kind === "trend") && site;
     if (!target) return place ? { status: "outside_coverage", region: place.kind === "region" ? place.displayName : null } : null;
-    if (place?.kind === "region" && layer === "water") setLayer("land");
+    if (place && layer !== "air") setLayer(target.ocean ? "water" : "land");
     compareMode = ids.length === 2;
     selectedIds = new Set(ids);
     byId("lag").value = lag;
@@ -885,20 +904,22 @@
     }
     const { series, residuals, starts } = analysis;
     const [first, second] = ids;
-    const scope = { name: target.name, count: target.areaIds?.length ?? 1, distance: target.distance,
+    const scope = { name: target.name, distance: target.distance,
       outsideBorder: target.outsideBorder };
     if (ids.some((id) => !series[id])) return { status: "no_data", ...scope };
-    if (!second) return { status: "trend", ...scope, ...series[first] };
+    if (!second) return { status: "trend", ...scope, count: series[first].contributorCount, ...series[first] };
     const from = Math.max(starts[first], starts[second] - lag);
     const to = Math.min(starts[first] + residuals[first].length, starts[second] + residuals[second].length - lag);
     if (to - from < 24) return { status: "no_data", ...scope };
     const r = TrendStatistics.monthlyCorrelations(residuals, ids, lag, starts)[first][second];
-    return { status: "correlation", ...scope, r, from, to };
+    const counts = ids.map((id) => series[id].contributorCount);
+    return { status: "correlation", ...scope, counts, r, from, to };
   };
 
   window.selectAssistantPoint = ({ region_id, lat, lon, variable_x, variable_y, lag_months }) => {
     if (!pointIds.has(`${lat},${lon}`)) return null;
     const target = storedSites.find(({ id }) => id === region_id) ?? pointSite(lat, lon);
+    if (layer !== "air") setLayer(target.ocean ? "water" : "land");
     const ids = [variable_x.toUpperCase(), variable_y.toUpperCase()];
     compareMode = ids[0] !== ids[1];
     selectedIds = new Set(ids);
@@ -1019,14 +1040,18 @@
     list("falling-list", ranked.filter((item) => item.slope < 0).sort((a, b) => a.slope - b.slope).slice(0, 5));
   }
 
-  function choosePoint(latitude, longitude, useGridCell = false) {
-    const landOnly = layer === "land";
+  function selectableSurface(latitude, longitude, name = layer) {
+    if (name === "air") return true;
     const id = `${latitude},${longitude}`;
-    const atSea = landOnly && (oceanIds.has(id) ||
-      ((useGridCell || !pointIds.has(id)) && !countryAtLocation(latitude, longitude)));
-    if (useGridCell && atSea) return;
+    const onLand = pointIds.has(id) ? !oceanIds.has(id) : Boolean(countryAtLocation(latitude, longitude));
+    return onLand === (name === "land");
+  }
+
+  function choosePoint(latitude, longitude, useGridCell = false) {
+    const onLayer = selectableSurface(latitude, longitude);
+    if (useGridCell && !onLayer) return;
     const sample = useGridCell ? points[gridPointIndex(latitude, longitude)] : [latitude, longitude];
-    const target = !atSea && sample && pointSite(...sample, landOnly ? landSamples : points);
+    const target = onLayer && sample && pointSite(...sample, layerPoints[layer]);
     if (target) {
       selectSite(useGridCell ? { ...target, mapAnchor: [longitude, latitude] } : target);
       return;
@@ -1034,7 +1059,7 @@
     regionRequest?.abort();
     regionRequest = null;
     site = null;
-    unmeasuredPoint = atSea ? null : { latitude, longitude };
+    unmeasuredPoint = onLayer ? { latitude, longitude } : null;
     window.ClimateNews?.update();
     deselectButton.hidden = !unmeasuredPoint;
     analysis = null;
@@ -1051,7 +1076,8 @@
     explorer.scrollTop = 0;
     openDrawer();
     flyTo(mapView.zoom);
-    setRegionStatus(atSea ? "Switch to Water to select an ocean location." : useGridCell
+    setRegionStatus(!onLayer ? (layer === "land" ? "Switch to Water to select an ocean location."
+      : "Switch to Land to select a land location.") : useGridCell
       ? "There’s no stored NASA point for this cell. Select a nearby cell or use Box select to cover more ground."
       : "No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
   }
@@ -1074,9 +1100,13 @@
         item.outsideBorder ? " within about 500 km of the border" : "";
       const names = sampledCountryCounts(selectionSamples(item)).map(([country]) => countryLabel(country));
       const locations = names.length > 2 ? ` Sampled in ${new Intl.ListFormat("en-CA").format(names)}.` : "";
-      return `Monthly average across ${format(count, 0)} NASA grid ${count === 1 ? "point" : "points"}${distance}. Each month uses the same points.${locations}`;
+      return `${gridPoints(count)} selected${distance}. Each measurement averages the same contributing points over time.${locations}`;
     }
     return `${item.region} at ${latLon(item)}. Each source uses its own grid resolution.`;
+  }
+
+  function gridPoints(count) {
+    return `${format(count, 0)} NASA grid ${count === 1 ? "point" : "points"}`;
   }
 
   function trendUnit(variable) {
@@ -1134,6 +1164,11 @@
     const others = [...selectedIds].slice(1).filter((id) => id !== variable.id && analysis.series[id]);
     const comparing = Boolean(series && others.length);
     selectedIds = new Set([variable.id, ...(comparing ? others : [])]);
+    if (site.areaIds) {
+      const measurements = [...selectedIds].filter((id) => analysis.observations[id]);
+      const coverage = measurements.map((id) => `${mapVariables.get(id).name} uses ${gridPoints(analysis.observations[id].contributorCount)}.`);
+      byId("site-description").textContent = [coordinates(site), ...coverage].join(" ");
+    }
     regionResults.dataset.variables = series ? [...selectedIds].join(" ") : "";
     renderTrendMap();
 
@@ -1217,13 +1252,14 @@
   // ---- Export: the selected place's numbers as CSV files the user picks in a dialog ----
   const exportDialog = byId("export-dialog");
   const exportForm = byId("export-form");
+  let exportSnapshot;
   // Quote every text cell, and defuse text that a spreadsheet would run as a formula.
   const cell = (value) => typeof value === "number" ? (Number.isFinite(value) ? String(value) : "")
     : value == null ? "" : `"${String(value).replace(/^([=+\-@])/, "'$1").replaceAll('"', '""')}"`;
   const toCsv = (rows) => rows.map((row) => row.map(cell).join(",")).join("\r\n") + "\r\n";
   const round = (value, places = 4) => Number.isFinite(value) ? Number(value.toFixed(places)) : null;
   const monthLabel = (index) => `${data.startYear + Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, "0")}`;
-  const exportVariables = () => data.variables.filter((variable) => analysis?.series[variable.id]);
+  const exportVariables = (records) => data.variables.filter((variable) => records[variable.id]);
   const column = (variable) => `${variable.name} (${variable.unit})`;
 
   function exportForecast() {
@@ -1233,13 +1269,13 @@
     return result ? { variable, index, result } : null;
   }
 
-  function byPeriod(header, key, period) {
-    const variables = exportVariables();
+  function byPeriod(header, records, valuesKey, startKey) {
+    const variables = exportVariables(records);
     const rows = new Map();
     variables.forEach((variable, v) => {
-      const series = analysis.series[variable.id];
-      series[key].forEach((value, i) => {
-        const at = period(series.firstYear, i);
+      const record = records[variable.id];
+      record[valuesKey].forEach((value, i) => {
+        const at = record[startKey] + i;
         if (!rows.has(at)) rows.set(at, Array(variables.length).fill(null));
         rows.get(at)[v] = round(value);
       });
@@ -1247,58 +1283,110 @@
     return [[header, ...variables.map(column)], ...[...rows].sort(([a], [b]) => a - b)
       .map(([at, values]) => [header === "month" ? monthLabel(at) : at, ...values])];
   }
-  const monthOf = (firstYear, i) => (firstYear - data.startYear) * 12 + i;
 
   const exportFiles = {
-    trends: () => [["measurement", "unit per decade", "source", "first year", "last year", "change per decade", "95% low", "95% high",
+    trends: ({ analysis }) => [["measurement", "unit per decade", "source", "grid points used", "first year", "last year", "change per decade", "95% low", "95% high",
       "t-test p (raw)", "t-test p (Holm-adjusted)", "Theil-Sen per decade", "Mann-Kendall p (Holm-adjusted)", "verdict"],
-      ...exportVariables().map((variable) => {
-        const { trend, firstYear, lastYear } = analysis.series[variable.id];
-        return [variable.name, trendUnit(variable), variable.source, firstYear, lastYear, round(trend.slope), round(trend.ciLow),
+      ...exportVariables(analysis.series).map((variable) => {
+        const { trend, firstYear, lastYear, contributorCount } = analysis.series[variable.id];
+        return [variable.name, trendUnit(variable), variable.source, contributorCount, firstYear, lastYear, round(trend.slope), round(trend.ciLow),
           round(trend.ciHigh), round(trend.pValue, 6), round(trend.adjustedPValue, 6), round(trend.senSlope),
           round(trend.mkAdjustedPValue, 6), verdictLabels[trend.verdict]];
       })],
-    annual: () => byPeriod("year", "values", (firstYear, i) => firstYear + i),
-    monthly: () => byPeriod("month", "monthlyValues", monthOf),
-    anomalies: () => byPeriod("month", "monthlyAnomalies", monthOf),
-    forecast: () => {
-      const { variable, index, result } = exportForecast();
-      return [["month", `${variable.name} forecast anomaly (${variable.unit})`, "90% low", "90% high", "normal period"],
+    annual: ({ analysis }) => byPeriod("year", analysis.series, "values", "firstYear"),
+    monthly: ({ analysis }) => byPeriod("month", analysis.observations, "monthlyValues", "monthlyStart"),
+    anomalies: ({ analysis }) => byPeriod("month", analysis.series, "monthlyAnomalies", "monthlyStart"),
+    forecast: ({ forecast: { variable, index, result } }) =>
+      [["month", `${variable.name} forecast anomaly (${variable.unit})`, "90% test range low", "90% test range high", "normal period", "inputs through"],
         ...result.ahead.map((row, k) => {
           const spread = 1.645 * model.rmse[k][index];
-          return [monthLabel(result.months + k), round(row[index]), round(row[index] - spread), round(row[index] + spread), model.normal.join("-")];
-        })];
-    },
-    news: () => [["title", "source", "date", "url"],
-      ...window.ClimateNews.articles().map(({ title, source, date, url }) => [title, source, date, url])],
+          return [monthLabel(result.months + k), round(row[index]), round(row[index] - spread), round(row[index] + spread),
+            model.normal.join("-"), monthLabel(result.months - 1)];
+        })],
+    news: ({ news }) => [["title", "source", "date", "url"],
+      ...news.map(({ title, source, date, url }) => [title, source, date, url])],
   };
 
-  function sourcesText() {
-    const where = site.areaIds ? `${site.areaIds.length} NASA grid points, averaged with equal weight` : `NASA grid point at ${latLon(site)}`;
+  function sourcesText({ site, analysis }) {
+    const where = site.areaIds ? `${gridPoints(site.areaIds.length)} selected` : `NASA grid point at ${site.latitude}, ${site.longitude}`;
     return [
       `Climate Trend Explorer export: ${site.name}`,
       `Exported ${new Date().toISOString().slice(0, 10)} from ${location.origin}${location.pathname}`,
       `Selection: ${where}.`, "",
       "Measurements and sources (all through NASA GES DISC Giovanni):",
-      ...exportVariables().map((variable) => {
-        const { firstYear, lastYear } = analysis.series[variable.id];
-        return `- ${variable.name} (${variable.unit}): ${variable.source}, ${firstYear}-${lastYear}`;
+      ...exportVariables(analysis.observations).map((variable) => {
+        const { monthlyStart, monthlyValues, contributorCount } = analysis.observations[variable.id];
+        const series = analysis.series[variable.id];
+        const observed = `${monthLabel(monthlyStart)} to ${monthLabel(monthlyStart + monthlyValues.length - 1)}`;
+        const fit = series ? `trend fit ${series.firstYear}-${series.lastYear}` : "no complete trend fit";
+        return `- ${variable.name} (${variable.unit}), ${variable.source}, ${observed}, ${gridPoints(contributorCount)}, ${fit}`;
       }),
       "", "Methods:",
-      "- Yearly averages use complete calendar years only.",
+      "- Each measurement averages its contributing grid points with equal weight, using the same points each month.",
+      "- Yearly averages and trends use the longest run of complete calendar years. Monthly values include partial years.",
       "- Change per decade: least-squares straight line through the yearly averages, times 10.",
       "- 95% interval and t-test p-value use Newey-West standard errors (3 years of lag) and Student's t with n-2 degrees of freedom.",
       "- p-values are Holm-adjusted within each group tested at this place: surface measurements together, air measurements (ozone, tropopause, water vapour, clouds, outgoing longwave) together. Rising/Falling means adjusted p <= 0.05.",
       "- Mann-Kendall (with the Hamed-Rao correction) and Theil-Sen give a second, rank-based check.",
-      "- Monthly anomalies are the difference from each calendar month's average over the record.",
-      "- Forecast: ridge world model on monthly anomalies with El Nino (KNMI Climate Explorer, Nino 3.4); the 90% range is 1.645 x test error.",
+      "- Monthly anomalies are the difference from each calendar month's average over the trend fit period.",
+      "- The ridge forecast uses monthly anomalies and El Nino data from KNMI Climate Explorer (Nino 3.4). The range uses 1.645 times pooled test error and covers about 90% of observations across held-out locations. Coverage varies by point.",
       "- News links provide context for the selected measurement. The CSV lists each publisher.",
     ].join("\r\n") + "\r\n";
   }
 
-  function download(name, text, type) {
+  function zipExport(files) {
+    const encoder = new TextEncoder();
+    const contents = [];
+    const directory = [];
+    const now = new Date();
+    const time = now.getHours() << 11 | now.getMinutes() << 5 | now.getSeconds() >> 1;
+    const date = (now.getFullYear() - 1980) << 9 | (now.getMonth() + 1) << 5 | now.getDate();
+    let offset = 0;
+    let directorySize = 0;
+    // A stored ZIP keeps the original CSV format and needs only file headers and a directory.
+    for (const file of files) {
+      const name = encoder.encode(file.name);
+      const bytes = encoder.encode(file.text);
+      let crc = 0xffffffff;
+      for (const byte of bytes) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+      }
+      crc ^= 0xffffffff;
+
+      const local = new DataView(new ArrayBuffer(30));
+      local.setUint32(0, 0x04034b50, true);
+      local.setUint16(4, 20, true);
+      local.setUint16(6, 0x0800, true);
+      local.setUint16(10, time, true);
+      local.setUint16(12, date, true);
+      local.setUint32(14, crc, true);
+      local.setUint32(18, bytes.length, true);
+      local.setUint32(22, bytes.length, true);
+      local.setUint16(26, name.length, true);
+      contents.push(local.buffer, name, bytes);
+
+      const central = new DataView(new ArrayBuffer(46));
+      central.setUint32(0, 0x02014b50, true);
+      central.setUint16(4, 20, true);
+      new Uint8Array(central.buffer, 6, 26).set(new Uint8Array(local.buffer, 4, 26));
+      central.setUint32(42, offset, true);
+      directory.push(central.buffer, name);
+      directorySize += central.byteLength + name.length;
+      offset += local.byteLength + name.length + bytes.length;
+    }
+    const end = new DataView(new ArrayBuffer(22));
+    end.setUint32(0, 0x06054b50, true);
+    end.setUint16(8, files.length, true);
+    end.setUint16(10, files.length, true);
+    end.setUint32(12, directorySize, true);
+    end.setUint32(16, offset, true);
+    return new Blob([...contents, ...directory, end.buffer], { type: "application/zip" });
+  }
+
+  function download(name, blob) {
     const link = create("a");
-    link.href = URL.createObjectURL(new Blob([text], { type }));
+    link.href = URL.createObjectURL(blob);
     link.download = name;
     document.body.append(link);
     link.click();
@@ -1309,33 +1397,40 @@
   byId("open-export").addEventListener("click", () => {
     if (!analysis || !site) return;
     const forecast = exportForecast();
+    const news = [...window.ClimateNews.articles()];
+    exportSnapshot = { site, analysis, forecast, news };
     const elements = exportForm.elements;
     elements.forecast.disabled = !forecast;
     if (!forecast) elements.forecast.checked = false;
-    byId("export-forecast-note").textContent = forecast ? `${forecast.variable.name}, the next 12 months with the 90% range`
+    byId("export-forecast-note").textContent = forecast ? `${forecast.variable.name}, ${forecastDates(forecast.result)}`
       : "Only for single points with air temperature, humidity or rain selected";
-    const newsCount = window.ClimateNews.articles().length;
+    const newsCount = news.length;
     elements.news.disabled = !newsCount;
     if (!newsCount) elements.news.checked = false;
     byId("export-news-note").textContent = newsCount ? `${newsCount} headlines from the News panel` : "Open the News panel first";
-    byId("export-scope").textContent = `${site.name} · ${exportVariables().length} measurements`;
+    byId("export-scope").textContent = `${site.name} · ${exportVariables(analysis.observations).length} measurements`;
     byId("export-status").textContent = "";
     exportDialog.showModal();
   });
   for (const id of ["close-export", "cancel-export"]) byId(id).addEventListener("click", () => exportDialog.close());
   exportDialog.addEventListener("click", (event) => { if (event.target === exportDialog) exportDialog.close(); });
+  exportDialog.addEventListener("close", () => { if (!exportDialog.open) exportSnapshot = null; });
   exportForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (!exportSnapshot) return;
     const chosen = [...exportForm.querySelectorAll("input:checked:not(:disabled)")].map((input) => input.name);
     if (!chosen.length) {
       byId("export-status").textContent = "Pick at least one thing to download.";
       return;
     }
-    const slug = site.name.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "selection";
-    // Space the downloads out so browsers treat them as separate files.
-    chosen.forEach((name, i) => setTimeout(() => name === "sources"
-      ? download(`${slug}-sources-and-methods.txt`, sourcesText(), "text/plain;charset=utf-8")
-      : download(`${slug}-${name}.csv`, "﻿" + toCsv(exportFiles[name]()), "text/csv;charset=utf-8"), i * 350));
+    const slug = exportSnapshot.site.name.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "selection";
+    const files = chosen.map((name) => name === "sources"
+      ? { name: `${slug}-sources-and-methods.txt`, text: sourcesText(exportSnapshot), type: "text/plain;charset=utf-8" }
+      : { name: `${slug}-${name}.csv`, text: "\uFEFF" + toCsv(exportFiles[name](exportSnapshot)), type: "text/csv;charset=utf-8" });
+    if (files.length === 1) {
+      const [file] = files;
+      download(file.name, new Blob([file.text], { type: file.type }));
+    } else download(`${slug}-data.zip`, zipExport(files));
     exportDialog.close();
   });
 
@@ -1366,11 +1461,16 @@
   }
 
   const model = window.WORLD_MODEL;
-  const forecastViews = { ahead: "Next 12 months", backtest: `Test on ${model?.testYears.join("–")}` };
+  const forecastViews = { ahead: "After last input month", backtest: "Historical check" };
   const forecastButtons = new Map();
   let forecastView = "ahead";
   let forecastCache = null;
   const monthsText = (count) => count === 1 ? "1 month" : `${count} months`;
+  const monthAt = (index) => monthFormat.format(new Date(Date.UTC(data.startYear, index)));
+
+  function forecastDates(result) {
+    return `${monthAt(result.months)}–${monthAt(result.months + result.ahead.length - 1)}`;
+  }
 
   function forecastData() {
     if (forecastCache?.analysis === analysis) return forecastCache;
@@ -1412,11 +1512,15 @@
     badge.textContent = good === 0
       ? `For ${variable.name.toLowerCase()}, the model can’t beat a simple guess yet, so treat this forecast as a rough sketch.`
       : `Tested on ${model.unseenPoints} places it never trained on, over ${model.testYears.join("–")}: it beats a simple guess by at least 5% for ${good === model.leads ? `all ${good} months` : monthsText(good)} ahead.`;
+    const now = new Date();
+    const currentMonth = (now.getUTCFullYear() - data.startYear) * 12 + now.getUTCMonth();
+    const past = forecast.months + forecast.ahead.length <= currentMonth ? "This entire forecast period has passed. "
+      : forecast.months < currentMonth ? "Part of this forecast period has passed. " : "";
     byId("forecast-text").textContent = forecastView === "ahead"
-      ? `The dashed line is the forecast for the 12 months after the record ends (${monthFormat.format(new Date(Date.UTC(model.startYear, forecast.months)))} onward), shown as the difference from this point’s ${model.normal.join("–")} normal for that month. The shaded band is where 9 in 10 real months landed during testing. The simple guess it has to beat says each month will match its average over the last 5 years.`
-      : `The dashed line shows one-month-ahead predictions for ${model.testYears.join(" to ")} at held-out locations. The anomaly baseline uses ${model.normal.join("–")} and overlaps the first test year.`;
+      ? `Forecast for ${forecastDates(forecast)}, using inputs through ${monthAt(forecast.months - 1)}. ${past}Values are differences from this point’s ${model.normal.join("–")} monthly averages. The shaded range covered about 90% of observations across held-out locations in testing. Coverage varies by location.`
+      : `The dashed line shows one-month-ahead predictions at the selected point, from ${monthAt(forecast.testStart)} to ${monthAt(forecast.months - 1)}. Its ${model.normal.join("–")} anomaly baseline includes the first test year. The skill figures above use held-out locations.`;
     const legend = [["", "Actual"], ["forecast", forecastView === "ahead" ? "Forecast" : "Predicted one month ahead"]];
-    if (forecastView === "ahead") legend.push(["band", "Likely range (90%)"]);
+    if (forecastView === "ahead") legend.push(["band", "90% range across test locations"]);
     byId("forecast-legend").replaceChildren(...legend.map(([kind, label]) => {
       const item = create("span", "", "legend-item");
       const swatch = create("span", "", `swatch ${kind}`);
@@ -1468,9 +1572,11 @@
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
+    const years = [];
     for (let i = 0; i < total; i += 1) {
-      if ((firstMonth + i) % 12 === 0) ctx.fillText(String(model.startYear + Math.floor((firstMonth + i) / 12)), x(i), bottom + 10);
+      if ((firstMonth + i) % 12 === 0) years.push(model.startYear + (firstMonth + i) / 12);
     }
+    drawAxisYears(ctx, years, (year) => x((year - model.startYear) * 12 - firstMonth), bottom + 10, width);
 
     if (ahead) {
       ctx.fillStyle = "#ff9c822e";
@@ -1512,10 +1618,10 @@
     byId("trend-legend").hidden = view !== "annual";
     const note = byId("chart-note");
     const shown = analysis?.series[[...selectedIds][0]];
-    const monthlyEnd = shown && monthFormat.format(new Date(Date.UTC(shown.firstYear, shown.monthlyValues.length - 1)));
+    const observations = shown && `Observations from ${monthAt(shown.monthlyStart)} through ${monthAt(shown.monthlyStart + shown.monthlyValues.length - 1)}.`;
     note.textContent = view === "anomaly" && shown
-      ? `Compared with the average for the same calendar month over ${shown.firstYear}–${shown.lastYear}. Observations through ${monthlyEnd}.`
-      : view === "monthly" && shown ? `Observations through ${monthlyEnd}.` : "";
+      ? `Compared with the average for the same calendar month over ${shown.firstYear}–${shown.lastYear}. ${observations}`
+      : view === "monthly" && shown ? observations : "";
     note.hidden = !note.textContent;
     drawChart();
   }
@@ -1532,6 +1638,22 @@
     const decimals = Math.max(0, -Math.floor(Math.log10(step)) + (step / power === 2.5 ? 1 : 0));
     const ticks = Array.from({ length: Math.round((ceiling - floor) / step) + 1 }, (_, index) => floor + index * step);
     return { floor, ceiling, decimals, ticks };
+  }
+
+  function drawAxisYears(ctx, years, xForYear, y, width) {
+    const ticks = years.map((year) => {
+      const label = String(year);
+      const half = ctx.measureText(label).width / 2;
+      const x = Math.max(half, Math.min(width - half, xForYear(year)));
+      return { label, x, left: x - half, right: x + half };
+    });
+    const last = ticks.at(-1);
+    let edge = -Infinity;
+    for (const tick of ticks) {
+      if (tick.left < edge + 6 || (tick !== last && tick.right + 6 > last.left)) continue;
+      ctx.fillText(tick.label, tick.x, y);
+      edge = tick.right;
+    }
   }
 
   function drawChart() {
@@ -1572,16 +1694,14 @@
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    const { firstYear } = series;
-    const lastYear = annual ? series.lastYear : firstYear + Math.floor((values.length - 1) / 12);
+    const firstYear = annual ? series.firstYear : data.startYear + Math.floor(series.monthlyStart / 12);
+    const lastYear = annual ? series.lastYear : data.startYear + Math.floor((series.monthlyStart + values.length - 1) / 12);
     const years = [firstYear];
     const interval = width < 420 || lastYear - firstYear > 40 ? 20 : 10;
-    for (let year = Math.ceil((firstYear + 4) / interval) * interval; year < lastYear - 3; year += interval) years.push(year);
+    for (let year = Math.ceil((firstYear + 1) / interval) * interval; year < lastYear; year += interval) years.push(year);
     years.push(lastYear);
-    for (const year of years) {
-      const index = (year - firstYear) * (annual ? 1 : 12);
-      ctx.fillText(String(year), x(index), bottom + 10);
-    }
+    const xForYear = (year) => x(annual ? year - firstYear : Math.max(0, (year - data.startYear) * 12 - series.monthlyStart));
+    drawAxisYears(ctx, years, xForYear, bottom + 10, width);
 
     ctx.strokeStyle = "#7cdeec";
     ctx.lineWidth = 2.1;
@@ -1622,7 +1742,7 @@
         ctx.arc(xPos, yPos, 4.5, 0, 2 * Math.PI);
         ctx.fill();
       }
-      const period = annual ? series.firstYear + activeIndex : monthFormat.format(new Date(Date.UTC(series.firstYear, activeIndex)));
+      const period = annual ? series.firstYear + activeIndex : monthAt(series.monthlyStart + activeIndex);
       const measurement = Number.isFinite(value) ? `${format(value, variable.decimals, view === "anomaly")} ${variable.unit}` : "No observation";
       const label = `${period} · ${measurement}`;
       tooltip.textContent = label;
@@ -1644,8 +1764,9 @@
     const name = event.target.closest("[data-layer]")?.dataset.layer;
     if (!name || name === layer || !layerOptions[name].length) return;
     setLayer(name);
-    const pinAtSea = unmeasuredPoint && !countryAtLocation(unmeasuredPoint.latitude, unmeasuredPoint.longitude);
-    if (name === "land" && (pinAtSea || selectedCells().some((id) => oceanIds.has(id)))) {
+    const locationOffLayer = unmeasuredPoint && !selectableSurface(unmeasuredPoint.latitude, unmeasuredPoint.longitude, name);
+    const cellsOffLayer = name !== "air" && selectedCells().some((id) => oceanIds.has(id) !== (name === "water"));
+    if (locationOffLayer || cellsOffLayer) {
       clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
     }
     chooseMeasurement(layerOptions[name][0]);
@@ -2171,15 +2292,17 @@
   }
 
   function gridPointIndex(lat, lon, name = layer) {
-    if (name === "land" && !countryAtLocation(lat, lon)) return -1;
+    if (!selectableSurface(lat, lon, name)) return -1;
     let best = -1;
     let bestDistance = Infinity;
-    const samples = name === "land" ? landSamples : points;
-    samples.forEach(([pLat, pLon], index) => {
+    const start = name === "water" ? landSamples.length : 0;
+    const end = start + layerPoints[name].length;
+    for (let index = start; index < end; index++) {
+      const [pLat, pLon] = points[index];
       const distance = Math.max(Math.abs(pLat - lat), Math.abs(signedLongitude(pLon - lon)));
-      const step = oceanIds.has(`${pLat},${pLon}`) ? oceanSpacing : gridSpacing;
+      const step = index < landSamples.length ? gridSpacing : oceanSpacing;
       if (distance <= step / 2 && distance < bestDistance) [best, bestDistance] = [index, distance];
-    });
+    }
     return best;
   }
 
@@ -2255,7 +2378,7 @@
       return;
     }
     const contains = (point) => point && point[0] >= left && point[0] <= right && point[1] >= top && point[1] <= bottom;
-    const samples = layer === "land" ? landSamples : layer === "water" ? oceanPoints : points;
+    const samples = layerPoints[layer];
     const inside = samples.filter(([lat, lon]) => contains(globe.project(lon, lat)));
     if (!inside.length) {
       areaHint.textContent = "No grid points inside. Draw a bigger box over a coloured part of the globe.";
@@ -2422,7 +2545,7 @@
 
   // Shift-click and Ctrl-click build an area out of grid squares, like Box select does.
   function selectCells(ids, name, keepCamera = false) {
-    if (layer === "land") ids = ids.filter((id) => !oceanIds.has(id));
+    if (layer !== "air") ids = ids.filter((id) => oceanIds.has(id) === (layer === "water"));
     if (!ids.length) return clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: mapView.zoom });
     if (ids.length === 1) return selectSite({ ...pointSite(...ids[0].split(",").map(Number)), keepCamera });
     const cells = ids.map((id) => id.split(",").map(Number));
@@ -2445,6 +2568,7 @@
   }
 
   function chooseCountry(latitude, longitude, add) {
+    if (layer === "water") return choosePoint(latitude, longitude, true);
     const country = countryAtLocation(latitude, longitude);
     const inside = country ? points.filter(([lat, lon]) => countryForSample(lat, lon) === country).map((cell) => cell.join(",")) : [];
     if (!inside.length) return choosePoint(latitude, longitude, true);
@@ -2547,12 +2671,26 @@
   });
   const help = byId("help");
   const helpTabs = [...help.querySelectorAll('[role="tab"]')];
-  for (const tab of helpTabs) {
+  for (const [index, tab] of helpTabs.entries()) {
     tab.addEventListener("click", () => {
       for (const other of helpTabs) {
         other.setAttribute("aria-selected", String(other === tab));
+        other.tabIndex = other === tab ? 0 : -1;
         byId(other.getAttribute("aria-controls")).hidden = other !== tab;
       }
+    });
+    tab.addEventListener("keydown", (event) => {
+      const last = helpTabs.length - 1;
+      const target = {
+        ArrowLeft: index === 0 ? last : index - 1,
+        ArrowRight: index === last ? 0 : index + 1,
+        Home: 0,
+        End: last,
+      }[event.key];
+      if (target === undefined) return;
+      event.preventDefault();
+      helpTabs[target].click();
+      helpTabs[target].focus();
     });
   }
   byId("show-help").addEventListener("click", () => help.showModal());

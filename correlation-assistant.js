@@ -74,15 +74,15 @@
       reply.textContent = `The grid points in ${answer.name} don’t share enough complete months for this question. Try another measurement or draw a smaller area.`;
       return;
     }
-    const { count, distance, name, outsideBorder } = answer;
+    const { count, counts, distance, name, outsideBorder } = answer;
     const [first, second] = question.ids.map((id) => variables.get(id));
     const coverage = distance ? `, within ${distance} km of the city` : outsideBorder ? ", within about 500 km of the border" : "";
-    const scope = `${count} NASA grid ${count === 1 ? "point" : "points"}${coverage}`;
+    const points = (count) => `${count} NASA grid ${count === 1 ? "point" : "points"}`;
     if (answer.status === "trend") {
       const { slope, ciLow, ciHigh, verdict } = answer.trend;
       const unit = first.trendUnit === "pp" ? "percentage points" : first.trendUnit || first.unit;
       const rate = (value) => `${quantity.format(value)} ${unit}`;
-      reply.textContent = `The trend uses annual averages from ${scope}. ${verdict === "inconclusive"
+      reply.textContent = `The trend uses annual averages from ${points(count)}${coverage}. ${verdict === "inconclusive"
         ? "The trend tests found no clear change." : `The measurement is ${verdict}.`}`;
       resultTitle.textContent = `${name} · ${first.name}`;
       resultValue.textContent = `${rate(slope)} per decade, with a 95% range of ${rate(ciLow)} to ${rate(ciHigh)}`;
@@ -93,7 +93,7 @@
       const dates = (offset) => `${month(answer.from + offset)}–${month(answer.to - 1 + offset)}`;
       reply.textContent = answer.r === null
         ? "One measurement is constant after removing the seasonal cycle and trend, so a correlation is unavailable."
-        : `This compares monthly averages across ${scope} after removing seasonal cycles and long-term trends.`;
+        : `This compares monthly averages after removing seasonal cycles and long-term trends. ${first.name} uses ${points(counts[0])} and ${second.name.toLowerCase()} uses ${points(counts[1])}${coverage}.`;
       resultTitle.textContent = `${name} · ${first.name} ${lag ? "→" : "and"} ${second.name}`;
       resultValue.textContent = `${answer.r === null ? "Pearson r unavailable" : `Pearson r = ${answer.r.toFixed(4)}`} · ${lag ? `${lag} month${lag === 1 ? "" : "s"} later` : "Same month"}`;
       resultWindow.textContent = `${answer.to - answer.from} paired months · ${first.name} (${first.source}): ${dates(0)} · ${second.name} (${second.source}): ${dates(lag)}`;
@@ -154,15 +154,21 @@
     reply.textContent = reply.textContent ? `${reply.textContent}\n\n${answer.reply}` : answer.reply;
   }
 
+  function coordinatePair(name) {
+    const coordinate = typeof name === "string"
+      ? name.match(/^([+-]?\d{1,3}(?:\.\d{1,6})?)\s*,\s*([+-]?\d{1,3}(?:\.\d{1,6})?)$/) : null;
+    return coordinate?.slice(1).map(Number);
+  }
+
   async function resolvePlace(name, localOnly = false) {
     const { entry, ambiguous, wrongCountry } = window.AssistantPlace.findStudyArea(name, config.sites);
     const unresolved = (message) => ({ kind: "unresolved", message });
     if (wrongCountry) return unresolved(`The saved ${wrongCountry.name} study area is in ${wrongCountry.region}. Check the place name or use Box select.`);
     if (ambiguous) return unresolved(`More than one study area matches “${name}”. Enter its full name.`);
     if (entry) return entry;
-    const coordinate = name.match(/^([+-]?\d{1,3}(?:\.\d{1,6})?)\s*,\s*([+-]?\d{1,3}(?:\.\d{1,6})?)$/);
+    const coordinate = coordinatePair(name);
     if (coordinate) {
-      const [latitude, longitude] = coordinate.slice(1).map(Number);
+      const [latitude, longitude] = coordinate;
       return Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180 ? { kind: "point", latitude, longitude }
         : unresolved("Enter latitude from −90° to 90° and longitude from −180° to 180°.");
     }
@@ -170,9 +176,10 @@
   }
 
   function selectPlace(place, reply) {
-    const name = window.selectClimateArea(place);
-    reply.textContent = name ? `Selected ${name} on the globe.`
+    const target = window.selectClimateArea(place);
+    reply.textContent = target ? `Selected ${target.name} on the globe.`
       : "No stored NASA grid points are close enough to that place. Try another location.";
+    return target;
   }
 
   form.addEventListener("submit", async (event) => {
@@ -199,11 +206,11 @@
     reply.textContent = "Looking up your question…";
     history.append(message, response);
     history.scrollTop = history.scrollHeight;
-    const { site: selected, point: selectedPoint } = window.getClimateSelection();
+    const { site: selected, point: selectedPoint, centre } = window.getClimateSelection();
     const selectedRegion = regionNames.has(selected) ? selected : undefined;
 
     try {
-      const candidate = question.replace(/^(?:(?:can|could) you )?(?:show (?:me )?|take me to |go to |zoom (?:in )?on |select |tell me about |what about )/i, "")
+      const candidate = question.replace(/^(?:please )?(?:(?:can|could) you )?(?:show (?:me )?|take me to |go to |zoom (?:in )?on |select |tell me about |what about )/i, "")
         .replace(/[.!?]+$/, "").trim();
       const localPlace = await resolvePlace(candidate, true);
       if (localPlace && localPlace.kind !== "unresolved") return selectPlace(localPlace, reply);
@@ -216,8 +223,20 @@
       let interpreted;
       try {
         if (!config.supabaseUrl || !config.supabaseAnonKey) throw new Error("The climate assistant is unavailable.");
-        interpreted = await askAssistant({ mode: "interpret", question, has_selection: Boolean(selected),
-          region_id: selectedRegion, point_id: selectedPoint });
+        const interpret = (prompt) => askAssistant({ mode: "interpret", question: prompt,
+          has_selection: Boolean(selected), region_id: selectedRegion, point_id: selectedPoint });
+        interpreted = await interpret(question);
+        if (centre && interpreted?.intent?.kind === "clarify" && interpreted.intent.reason === "place") {
+          // Older interpreters sometimes overlook has_selection. Preserve the original map area on retry.
+          const contextual = question.replace(/\b(?:(?:at|in|around) )?(?:here|this (?:area|place|point|region|location))\b/i, `at ${centre}`);
+          if (contextual !== question && contextual.length <= 500) {
+            const retry = (await interpret(contextual))?.intent;
+            if (["trend", "correlation"].includes(retry?.kind) &&
+                (retry.place === null || coordinatePair(retry.place)?.join(",") === centre)) {
+              interpreted = { intent: { ...retry, place: null } };
+            }
+          }
+        }
       } catch (error) {
         const place = await fallbackPlace();
         if (!place || place.kind === "unresolved") throw error;
@@ -249,8 +268,6 @@
         return;
       }
       const region_id = place?.id ?? (!place ? selectedRegion : undefined);
-      const point_id = region_id ? undefined : place?.kind === "point" ? `${place.latitude},${place.longitude}`
-        : !place ? selectedPoint : undefined;
       if (area.kind === "research") {
         reply.textContent = "";
         if (place) selectPlace(place, reply);
@@ -264,9 +281,11 @@
         reply.textContent = clarification.place;
         return;
       }
-      if (area.kind === "correlation" && (region_id || point_id)) {
+      if (area.kind === "correlation" && (region_id || place?.kind === "point" || (!place && selectedPoint))) {
         reply.textContent = "";
-        if (place) selectPlace(place, reply);
+        const target = place && selectPlace(place, reply);
+        const point_id = region_id ? undefined : target ? target.point : !place ? selectedPoint : undefined;
+        if (!region_id && !point_id) return;
         await showLookup(await askAssistant({ mode: "lookup", tool: "get_correlation", region_id, point_id,
           variable_ids: area.variable_ids, lag_months: area.lag }), turn);
         return;

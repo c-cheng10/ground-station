@@ -55,3 +55,20 @@ test("heat coverage still follows Land and Water masks, while Air crosses the co
     assert.deepEqual([pixel(air, -0.125, channel), pixel(air, 0.125, channel)], [255, 255]);
   }
 });
+
+test("specific humidity covers the extended land grid", () => {
+  const window = {};
+  for (const file of ["points-index.js", "ocean-atmosphere.js"]) {
+    runInNewContext(readFileSync(path.join(__dirname, "..", file), "utf8"), { window });
+  }
+  const { extraLand, ocean, trends } = window.GIOVANNI_EXTENSION;
+  const land = [...window.POINTS_INDEX, ...extraLand];
+  const { slope, oceanStart } = trends.QV2M;
+  assert.equal(oceanStart, land.length);
+  assert.equal(slope.length, land.length + ocean.length);
+  for (const id of ["44.625,-73.375", "-87.375,-100.375"]) {
+    const index = land.findIndex((point) => point.join(",") === id);
+    assert.ok(index >= window.POINTS_INDEX.length && Number.isFinite(slope[index]), id);
+  }
+  assert.ok(slope.slice(oceanStart).every((value) => value === null));
+});

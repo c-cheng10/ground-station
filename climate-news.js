@@ -44,10 +44,10 @@
       signal.throwIfAborted();
     }
 
-    // The assistant can return news links while climate-news is awaiting deployment.
+    // The fallback needs time for the assistant's quota check, interpretation and news search.
     try {
       const question = `Recent news about ${topics.join(" or ")} in ${places.join(" or ")}.`;
-      const body = await post("climate-assistant-giovanni", { mode: "interpret", question, has_selection: false }, signal, 20_000);
+      const body = await post("climate-assistant-giovanni", { mode: "interpret", question, has_selection: false }, signal, 42_000);
       if (Array.isArray(body?.sources) && body.sources.length) return body.sources;
     } catch {
       signal.throwIfAborted();

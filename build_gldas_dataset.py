@@ -19,6 +19,7 @@ import csv
 import json
 import math
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -254,18 +255,33 @@ def write_trend_map(data, spans):
     (ROOT / "trend-map.js").write_text("window.TREND_MAP = " + json.dumps(out, separators=(",", ":")) + ";\n", encoding="utf-8")
 
 
+def upload_points(env, rows):
+    key = env.get("SUPABASE_SERVICE_ROLE_KEY", "").strip("\"'")
+    if not key:
+        raise SystemExit("Set SUPABASE_SERVICE_ROLE_KEY in .env before uploading.")
+    url = env["SUPABASE_URL"].rstrip("/") + "/rest/v1/rpc/import_giovanni_points"
+    headers = {"apikey": key, "Content-Type": "application/json"}
+    if key.startswith("eyJ"):
+        headers["Authorization"] = f"Bearer {key}"
+    body = json.dumps({"points": rows, "history_months": MONTHS}, separators=(",", ":")).encode()
+    try:
+        with urlopen(Request(url, data=body, headers=headers, method="POST"), timeout=180):
+            pass
+    except HTTPError as error:
+        if error.code == 404:
+            raise SystemExit("Apply supabase/giovanni_import.sql before uploading.") from None
+        raise SystemExit(f"Upload stopped at {rows[0]['id']}: HTTP {error.code}. Rerun after resolving the error.") from None
+    except (URLError, TimeoutError) as error:
+        raise SystemExit(f"Upload stopped at {rows[0]['id']}: {error}. Rerun to resume.") from None
+
+
 def upload(env, lats, lons, data):
-    url = env["SUPABASE_URL"].rstrip("/") + "/rest/v1/climate_points?on_conflict=id"
-    key = env["SUPABASE_SERVICE_ROLE_KEY"]
-    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json",
-               "Prefer": "resolution=merge-duplicates,return=minimal"}
     clean = lambda a: [None if math.isnan(x) else round(float(x), 3) for x in a]
     for start in range(0, len(lats), 40):
         rows = [{"id": f"{lats[i]},{lons[i]}", "lat": lats[i], "lon": lons[i],
                  **{vid.lower(): clean(data[i, :, k]) for k, vid in enumerate(IDS)}}
                 for i in range(start, min(start + 40, len(lats)))]
-        with urlopen(Request(url, data=json.dumps(rows).encode(), headers=headers, method="POST"), timeout=180):
-            pass
+        upload_points(env, rows)
         print(f"  uploaded {min(start + 40, len(lats))}/{len(lats)}", flush=True)
 
 
@@ -289,9 +305,9 @@ def main():
                         enso=enso(), ids=np.array(IDS), start_year=START_YEAR)
     write_site_files(lats, lons, data, spans)
     write_trend_map(data, spans)
-    env = read_env()
     if "--no-upload" in __import__("sys").argv:
         return
+    env = read_env()
     if env.get("SUPABASE_SERVICE_ROLE_KEY"):
         upload(env, lats, lons, data)
     else:

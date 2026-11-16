@@ -5,7 +5,8 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 function loadAssistant(fetch) {
-  const countries = ["Australia", "Austria", "Georgia", "Madagascar", "Niger", "Nigeria"].map((name) => ({ name }));
+  const countries = ["Australia", "Austria", "Georgia", "Madagascar", "Niger", "Nigeria",
+    "Bosnia and Herz.", "Dominican Rep."].map((name) => ({ name }));
   const window = { WORLD_MAP: { countries } };
   const createNode = () => {
     const selectors = new Map();
@@ -30,11 +31,11 @@ function loadAssistant(fetch) {
   const history = element("assistant-history");
   element("assistant-message-template").content = { firstElementChild: { cloneNode: createNode } };
   window.getClimateSelection = () => element("region-results").dataset;
-  window.selectClimateArea = (place) => place.displayName ?? place.name ?? place.country?.name;
+  window.selectClimateArea = (place) => ({ name: place.displayName ?? place.name ?? place.country?.name });
   const document = { getElementById: element, createElement: createNode };
   const context = vm.createContext({ window, document, fetch, URL, URLSearchParams, AbortSignal });
   const load = (file) => vm.runInContext(readFileSync(resolve(__dirname, "..", file), "utf8"), context, { filename: file });
-  for (const file of ["trend-config.js", "selection-admin1.js", "assistant-place.js", "correlation-assistant.js"]) {
+  for (const file of ["trend-config.js", "selection-admin1.js", "selection-cities.js", "assistant-place.js", "correlation-assistant.js"]) {
     load(file);
   }
   const ask = async (question) => {
@@ -198,17 +199,19 @@ test("Ask AI selects local place-only prompts without a request and keeps earlie
   const { window, ask, history, replies } = loadAssistant(() => assert.fail("Local places need no request"));
   const selections = [];
   window.selectClimateArea = (place) => {
-    selections.push(place.id ?? place.region.code);
-    return place.displayName ?? place.name;
+    selections.push(place.id ?? place.region?.code ?? place.country.name);
+    return { name: place.displayName ?? place.name };
   };
 
   await ask("the Cerrado");
   await ask("Show me Ontario, Canada");
+  await ask("Please take me to western Nigeria.");
 
-  assert.deepEqual(selections, ["cerrado", "CA-ON"]);
+  assert.deepEqual(selections, ["cerrado", "CA-ON", "Nigeria"]);
   assert.deepEqual(history.children.filter((_, index) => index % 2 === 0).map((message) => message.textContent),
-    ["the Cerrado", "Show me Ontario, Canada"]);
-  assert.deepEqual(replies(), ["Selected Cerrado on the globe.", "Selected Ontario, Canada on the globe."]);
+    ["the Cerrado", "Show me Ontario, Canada", "Please take me to western Nigeria."]);
+  assert.deepEqual(replies(), ["Selected Cerrado on the globe.", "Selected Ontario, Canada on the globe.",
+    "Selected Western Nigeria on the globe."]);
 });
 
 test("Ask AI selects a place from an interpreted location request", async () => {
@@ -221,9 +224,85 @@ test("Ask AI selects a place from an interpreted location request", async () => 
   window.selectClimateArea = (place) => {
     assert.equal(place.country.name, "Nigeria");
     assert.equal(place.direction, "west");
-    return place.displayName;
+    return { name: place.displayName };
   };
 
   await ask(question);
   assert.deepEqual(replies(), ["Selected Western Nigeria on the globe."]);
+});
+
+test("full country names and the unoutlined country Tonga resolve before city search", async () => {
+  const { window } = loadAssistant(() => assert.fail("Known country aliases do not need geocoding"));
+  for (const [name, label] of [["Bosnia and Herzegovina", "Bosnia and Herz."], ["Dominican Republic", "Dominican Rep."]]) {
+    const result = await window.AssistantPlace.resolve(name);
+    assert.equal(result.country.name, label);
+  }
+  const tonga = await window.AssistantPlace.resolve("Tonga");
+  assert.equal(tonga.kind, "country");
+  assert.equal(tonga.name, "Tonga");
+  assert.equal(tonga.latitude, -21.139);
+  assert.equal(tonga.longitude, -175.221);
+});
+
+test("contextual retry retains the selected area and only uses the centre to clarify intent", async () => {
+  const prompts = [];
+  const { window, element, ask, replies } = loadAssistant(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(body.has_selection, true);
+    prompts.push(body.question);
+    return respond(prompts.length === 1 ? interpret({ kind: "clarify", reason: "place" })
+      : interpret({ place: "53,-88", variable_ids: ["prectotcorr"] }));
+  });
+  element("region-results").dataset = { site: "area:Ontario", centre: "53,-88" };
+  window.answerClimateArea = async (question, place) => {
+    assert.equal(question.ids[0], "PRECTOTCORR");
+    assert.equal(place, null, "The synthetic coordinate must not narrow the selected area");
+    return { status: "no_data", name: "Custom Ontario area" };
+  };
+  await ask("Has rainfall changed here?");
+  assert.deepEqual(prompts, ["Has rainfall changed here?", "Has rainfall changed at 53,-88?"]);
+  assert.match(replies().at(-1), /Custom Ontario area/);
+});
+
+test("coordinate correlation queries the point selected on the map instead of the typed coordinates", async () => {
+  const requests = [];
+  const { window, ask, replies } = loadAssistant(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    return respond(body.mode === "interpret"
+      ? interpret({ kind: "correlation", place: "45.5,-75.5", variable_ids: ["t2m", "rh2m"] }) : { reply: "Correlation result" });
+  });
+  window.selectClimateArea = (place) => {
+    assert.equal(place.latitude, 45.5);
+    assert.equal(place.longitude, -75.5);
+    return { name: "Eastern Ontario", point: "44.625,-76.375" };
+  };
+  await ask("Correlate air temperature and relative humidity at 45.5,-75.5.");
+  assert.equal(requests[1].point_id, "44.625,-76.375");
+  assert.match(replies().at(-1), /Selected Eastern Ontario.*\n\nCorrelation result/);
+});
+
+test("country area directions use wrapped longitude and exclude far-away border outliers", async () => {
+  const window = {};
+  const context = vm.createContext({ window, countryBounds: new Map() });
+  const read = (file) => readFileSync(resolve(__dirname, "..", file), "utf8");
+  for (const file of ["points-index.js", "ocean-atmosphere.js", "world-map.js", "assistant-place.js"]) {
+    vm.runInContext(read(file), context, { filename: file });
+  }
+  const source = read("trend-explorer.js");
+  const section = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
+  context.points = [...window.POINTS_INDEX, ...window.GIOVANNI_EXTENSION.extraLand];
+  vm.runInContext(section("  function inCountry(", "  function countryForSample(") +
+    section("  function distanceKm(", "  function regionalName(") +
+    section("  function isInDirection(", "  function assistantTarget("), context);
+
+  const local = async (name) => window.AssistantPlace.resolve(name, { localOnly: true });
+  const russia = await local("Russia");
+  const full = context.assistantArea(russia);
+  const west = context.assistantArea(await local("western Russia"));
+  assert.ok(context.inCountry(russia.country, full.latitude, full.longitude));
+  assert.ok(west.longitude < full.longitude && west.areaIds.length > 100);
+  const south = context.assistantArea(await local("south of Canada"));
+  assert.ok(south.latitude < 49 && south.areaIds.length > 20);
+  assert.ok(south.areaIds.every((id) => Number(id.split(",")[0]) < 49));
 });

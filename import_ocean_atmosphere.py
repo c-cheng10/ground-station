@@ -3,12 +3,10 @@
 import argparse
 import json
 from concurrent.futures import ThreadPoolExecutor
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 import numpy as np
 
-from build_gldas_dataset import MONTHS, START_YEAR, annual, benjamini_hochberg, read_series, trend_test
+from build_gldas_dataset import MONTHS, START_YEAR, annual, benjamini_hochberg, read_series, trend_test, upload_points
 from download_gldas import CACHE, ROOT, grid, ocean_grid, polar_land, read_env
 
 FIELDS = (
@@ -26,6 +24,7 @@ FIELDS = (
      "Daytime temperature at the ocean surface measured by infrared satellite retrievals."),
 )
 SHARED = {"t2m": ("merra_T2M", 1, -273.15), "prectotcorr": ("gpm_precipitation", 24, 0)}
+SPECIFIC_HUMIDITY = ("merra_QV2M", 1000, 0)
 
 
 def read_point(point, ocean, existing):
@@ -36,8 +35,10 @@ def read_point(point, ocean, existing):
         if name != "OCEAN_SKIN_TEMP" or ocean:
             data[name.lower()] = (source, multiplier, offset)
     if not ocean and not existing:
-        data["qv2m"] = ("merra_QV2M", 1000, 0)
+        data["qv2m"] = SPECIFIC_HUMIDITY
     fields = data | SHARED
+    if not ocean:
+        fields["qv2m"] = SPECIFIC_HUMIDITY
     series = {}
     for name, (source, multiplier, offset) in fields.items():
         values = read_series(folder / f"{source}.csv")
@@ -96,31 +97,9 @@ def existing_land_trends(path, land_count):
 
 def upload(groups):
     env = read_env()
-    base = env["SUPABASE_URL"].rstrip("/") + "/rest/v1/climate_points"
-    key = env["SUPABASE_SERVICE_ROLE_KEY"].strip("\"'")
-    if not key:
-        raise SystemExit("Set SUPABASE_SERVICE_ROLE_KEY in .env before uploading.")
-    headers = {"apikey": key, "Content-Type": "application/json",
-               "Prefer": "resolution=merge-duplicates,return=minimal"}
-    if key.startswith("eyJ"):
-        headers["Authorization"] = f"Bearer {key}"
-
-    try:
-        with urlopen(Request(base + "?select=id,is_ocean,ocean_skin_temp&limit=1", headers=headers), timeout=30):
-            pass
-    except HTTPError as error:
-        raise SystemExit(f"Supabase schema check returned HTTP {error.code}. Apply supabase/giovanni_ocean_atmosphere.sql first.") from None
-
     for group in groups:
         for i in range(0, len(group), 40):
-            batch = group[i:i + 40]
-            request = Request(base + "?on_conflict=id", headers=headers, method="POST",
-                              data=json.dumps(batch, separators=(",", ":")).encode())
-            try:
-                with urlopen(request, timeout=90):
-                    pass
-            except (HTTPError, URLError, TimeoutError) as error:
-                raise SystemExit(f"Upload stopped at {batch[0]['id']}: {error}. Rerun to resume by upserting the same rows.") from None
+            upload_points(env, group[i:i + 40])
         print(f"Uploaded {len(group):,} rows", flush=True)
 
 
@@ -150,6 +129,7 @@ def main():
                               source=source, decimals=2, description=description, firstMonth=first, lastMonth=last))
     for name in SHARED:
         _, _, trends[name.upper()] = map_entry([values[name] for values in series], ocean_start)
+    _, _, trends["QV2M"] = map_entry([values.get("qv2m") for values in series], ocean_start)
     target = ROOT / "ocean-atmosphere.js"
     extension = dict(extraLand=extra_land, polarLand=polar, ocean=ocean, oceanSpacing=3,
                      variables=variables, trends=trends, landTrends=existing_land_trends(target, len(land)))

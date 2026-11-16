@@ -22,15 +22,15 @@ Each measurement uses the most consistent NASA record Giovanni offers for it:
 
 1. Copy `.env.example` to `.env`. Add an Earthdata token (urs.earthdata.nasa.gov → Generate Token) and approve the Giovanni app once by visiting https://api.giovanni.earthdata.nasa.gov/signin.
 2. `python download_gldas.py --pilot` fetches one point and checks the token. `python download_gldas.py --spacing 3 --workers 8` fetches about 1,700 land points (about an hour). Responses are cached in `giovanni-cache/`, so reruns resume.
-3. Run `supabase/climate_points.sql` once in the Supabase SQL Editor, and add the service-role key to `.env`.
+3. In the Supabase SQL Editor, apply `supabase/climate_points.sql`, `supabase/giovanni_ocean_atmosphere.sql` and `supabase/giovanni_import.sql` in that order. Add the service-role key to `.env`.
 4. `python build_gldas_dataset.py` builds `gldas-dataset.npz` (training), `points-index.js`, `featured-stripes.js`, `study-areas.csv` and `trend-config.js`, and upserts every point into Supabase.
 5. `python train_world_model.py` trains the forecast and writes `world-model.js`.
 
-The table `climate_points` holds one row per land point: every measurement is a monthly array starting January 1948, with nulls outside its record. Anyone can read it with the public anon key; only the service role writes.
+The table `climate_points` holds one row per grid point. Every measurement is a monthly array starting January 1948, with nulls outside its record. Anyone can read it with the public anon key. The service role imports valid readings by calendar month. A supplied reading replaces the stored value for that month. Missing or null readings leave stored values intact, including readings added by a concurrent refresh.
 
 ## Current build
 
-1,656 land points (58 coastal cells were skipped because the models treat them as ocean). The trend map flags a significant change at 73% of places for air temperature, 77% for specific humidity, but only 4% for precipitation.
+The base land build has 1,656 points (58 coastal cells were skipped because the models treat them as ocean). At those points, the base trend map flagged a significant change for 73% of air temperature trends, 77% of specific humidity trends and 4% of precipitation trends. The extended specific humidity map covers 2,362 land points, including Antarctica, over 1980–2025.
 
 World model skill against the recent-average guess on 2020–2025, at 350 held-out locations (lead 1 / 3 / 6 / 12 months). The anomaly baseline includes 2020, so the first test year overlaps preprocessing.
 
@@ -55,25 +55,26 @@ The historical [POWER correlation migration](supabase/correlations.sql) belongs 
 
 The extended import uses the 3° land, polar land, and ocean Giovanni grids.
 Download with `python download_gldas.py --spacing 3 --ocean-spacing 3 --workers 8`. Apply
-[`supabase/giovanni_ocean_atmosphere.sql`](supabase/giovanni_ocean_atmosphere.sql)
-in the project SQL Editor, then run `python import_ocean_atmosphere.py --upload`
+the ocean and import migrations above in the project SQL Editor, then run `python import_ocean_atmosphere.py --upload`
 with the Supabase backend key in `.env`. Run without `--upload` to validate the
 local cache and rebuild `ocean-atmosphere.js`. The import adds atmospheric arrays
 to existing land rows and inserts ocean and additional land rows. Monthly arrays
 use the January 1948 origin. The ocean rows carry MERRA-2 air temperature and
 GPM precipitation in addition to the new measurements. Polar land rows carry
 the available atmosphere, air temperature, specific humidity, and precipitation
-records. Giovanni series with no valid observations are saved as SQL nulls.
+records. Giovanni series with no valid observations are stored as SQL nulls for new grid points.
 The import also omits GPM series poleward of 60° that report zero for every
 observed month. [NASA describes reduced precipitation accuracy at high latitudes.](https://gpm.nasa.gov/resources/faq/what-difference-between-global-90degn-s-and-full-60degn-s-coverage-imerg)
 
 ## Refresh a stored point
 
-**Refresh from Giovanni** fetches newly available complete months for the selected point. It can extend MERRA-2 temperature and humidity, GPM IMERG precipitation, and the GLDAS 2.1 temperature comparison. The GLDAS 2.0 land measurements retain their fixed record ending in 2014. Existing observations are preserved, including when requests overlap.
+**Refresh from Giovanni** fetches newly available complete months for the selected point. It extends MERRA-2 temperature and humidity and the GLDAS 2.1 temperature comparison as months become available. The GLDAS 2.0 land measurements retain their fixed record ending in 2014. Existing observations are preserved, including when requests overlap.
+
+The pinned GPM IMERG Final V07 precipitation record ends in September 2025. Updating precipitation beyond that date requires processing the replacement version across the historical record. [NASA IMERG transition notice](https://gpm.nasa.gov/data/news/imerg-v08-transition-schedule)
 
 Apply [giovanni_refresh.sql](supabase/giovanni_refresh.sql) and deploy [refresh-climate-giovanni](supabase/functions/refresh-climate-giovanni/index.ts) with legacy JWT verification enabled. Set the server-only `EARTHDATA_TOKEN` to a current [Earthdata token](https://urs.earthdata.nasa.gov/documentation/for_users/user_token) for an account that has authorised [Giovanni](https://api.giovanni.earthdata.nasa.gov/signin).
 
-Monthly charts read refreshed observations. Annual trends and correlations use complete calendar years. The bundled trend map, CSV and forecast evaluation update when the dataset and model are rebuilt.
+Monthly charts and selection CSV exports include refreshed observations. Annual trends and correlations use complete calendar years. The bundled trend map, `study-areas.csv` and model artefacts reflect their last rebuild.
 
 ## Graph neural network world model (experimental)
 
