@@ -115,7 +115,7 @@ test("exports the selection shown by the dialog in one readable ZIP", {
     assert.match(csv, /^\uFEFF"month","Air temperature \(°C\)"\r\n"2000-09",8\r\n/);
     assert.match(csv, /"2005-04",63\r\n$/);
     const methods = execFileSync("unzip", ["-p", zipPath, entries[1]], { encoding: "utf8" });
-    assert.match(methods, /Southern Ontario/);
+    assert.match(methods, /^Ground Station export: Southern Ontario/);
     assert.match(methods, /44\.125, -80\.625/);
   } finally {
     rmSync(temporary, { recursive: true, force: true });

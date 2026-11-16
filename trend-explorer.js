@@ -1310,7 +1310,7 @@
   function sourcesText({ site, analysis }) {
     const where = site.areaIds ? `${gridPoints(site.areaIds.length)} selected` : `NASA grid point at ${site.latitude}, ${site.longitude}`;
     return [
-      `Climate Trend Explorer export: ${site.name}`,
+      `Ground Station export: ${site.name}`,
       `Exported ${new Date().toISOString().slice(0, 10)} from ${location.origin}${location.pathname}`,
       `Selection: ${where}.`, "",
       "Measurements and sources (all through NASA GES DISC Giovanni):",
