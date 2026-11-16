@@ -161,6 +161,7 @@
   const refreshGiovanni = byId("refresh-giovanni");
   const refreshStatus = byId("refresh-status");
   let site = null;
+  let unmeasuredPoint = null;
   let analysis = null;
   let regionRequest = null;
   let selectedIds = new Set([data.variables.find((item) => item.id === "T2M")?.id || data.variables[0].id]);
@@ -440,6 +441,7 @@
   }
 
   async function selectSite(nextSite) {
+    unmeasuredPoint = null;
     if (regionRequest && site.id === nextSite.id) {
       openDrawer();
       renderTrendMap();
@@ -1003,18 +1005,21 @@
     regionRequest?.abort();
     regionRequest = null;
     site = null;
+    unmeasuredPoint = atSea ? null : { latitude, longitude };
     window.ClimateNews?.update();
-    deselectButton.hidden = true;
+    deselectButton.hidden = !unmeasuredPoint;
     analysis = null;
     chartLayout = null;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
-    byId("drawer-place").textContent = "No data for this location";
-    byId("site-description").textContent = "";
+    const location = unmeasuredPoint && latLon(unmeasuredPoint, 2);
+    byId("drawer-place").textContent = location || "No data for this location";
+    byId("site-description").textContent = location ? `Selected location at ${location}.` : "";
     byId("site-ecoregion").textContent = "";
     regionResults.hidden = true;
     byId("story").hidden = true;
     byId("point-tools").hidden = true;
+    explorer.scrollTop = 0;
     openDrawer();
     flyTo(mapView.zoom);
     setRegionStatus(atSea ? "Switch to Water to select an ocean location." : useGridCell
@@ -1022,8 +1027,8 @@
       : "No stored Giovanni point is close enough. Choose a place near a coloured part of the globe.");
   }
 
-  function latLon(item) {
-    const latitude = `${format(Math.abs(item.latitude), 1)}° ${item.latitude < 0 ? "S" : "N"}`;
+  function latLon(item, latitudeDecimals = 1) {
+    const latitude = `${format(Math.abs(item.latitude), latitudeDecimals)}° ${item.latitude < 0 ? "S" : "N"}`;
     const longitude = `${format(Math.abs(item.longitude), 2)}° ${item.longitude < 0 ? "W" : "E"}`;
     return `${latitude}, ${longitude}`;
   }
@@ -1610,7 +1615,8 @@
     const name = event.target.closest("[data-layer]")?.dataset.layer;
     if (!name || name === layer || !layerOptions[name].length) return;
     setLayer(name);
-    if (name === "land" && selectedCells().some((id) => oceanIds.has(id))) {
+    const pinAtSea = unmeasuredPoint && !countryAtLocation(unmeasuredPoint.latitude, unmeasuredPoint.longitude);
+    if (name === "land" && (pinAtSea || selectedCells().some((id) => oceanIds.has(id)))) {
       clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
     }
     chooseMeasurement(layerOptions[name][0]);
@@ -1970,11 +1976,13 @@
       selectionSegments: plain ? viewedSite?.squareSegments : viewedSite?.selectionSegments,
       outlineSea: plain || Boolean(viewedSite?.squares?.length), outlineOpacity: drawingArea ? 0 : mapView.outlineOpacity,
       selection: plain || platform ? null : fields.select(viewedSite), relief: hasRelief ? mapView.rise : 0 });
-    cameraCoordinates.textContent = `${latLon({ latitude: mapView.lat, longitude: mapView.lon })}  /  ${format(mapView.zoom, 1)}×`;
+    const coordinates = unmeasuredPoint ? latLon(unmeasuredPoint, 2) : latLon({ latitude: mapView.lat, longitude: mapView.lon });
+    cameraCoordinates.textContent = `${coordinates}  /  ${format(mapView.zoom, 1)}×`;
     const reliefNote = byId("relief-note");
     if (reliefNote) reliefNote.hidden = !(globe.reliefAvailable && hasRelief);
     drawMagicEffects(now);
-    const anchor = !drawingArea && site && !site.areaIds && globe.project(...(site.mapAnchor ?? [site.longitude, site.latitude]));
+    const marked = site?.areaIds ? null : site ?? unmeasuredPoint;
+    const anchor = !drawingArea && marked && globe.project(...(marked.mapAnchor ?? [marked.longitude, marked.latitude]));
     pin.hidden = !anchor;
     if (anchor) {
       pin.style.left = `${anchor[0]}px`;
@@ -2056,8 +2064,8 @@
   }
 
   function flyTo(zoom, { avoidPanel = true,
-    lat = site?.mapAnchor?.[1] ?? site?.latitude ?? mapView.lat,
-    lon = site?.mapAnchor?.[0] ?? site?.longitude ?? mapView.lon } = {}) {
+    lat = site?.mapAnchor?.[1] ?? site?.latitude ?? unmeasuredPoint?.latitude ?? mapView.lat,
+    lon = site?.mapAnchor?.[0] ?? site?.longitude ?? unmeasuredPoint?.longitude ?? mapView.lon } = {}) {
     const selection = site;
     const [width] = mapSize();
     const open = avoidPanel && app.hasAttribute("data-drawer");
@@ -2515,6 +2523,7 @@
     regionRequest?.abort();
     regionRequest = null;
     site = null;
+    unmeasuredPoint = null;
     window.ClimateNews?.update();
     analysis = null;
     deselectButton.hidden = true;
@@ -2635,7 +2644,7 @@
     } else if (drawingArea) {
       setAreaMode(false);
       areaButton.focus();
-    } else if (site || app.hasAttribute("data-drawer")) clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
+    } else if (site || unmeasuredPoint || app.hasAttribute("data-drawer")) clearSelection({ lat: mapView.lat, lon: mapView.lon, zoom: 1 });
     else if (!welcome.inert) hideWelcome();
   });
   // The position stays in the browser; only the nearest grid point is selected.
