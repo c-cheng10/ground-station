@@ -440,10 +440,10 @@
     return { series, residuals, starts, row };
   }
 
-  async function selectSite(nextSite) {
+  async function selectSite(nextSite, { focusDrawer = true } = {}) {
     unmeasuredPoint = null;
     if (regionRequest && site.id === nextSite.id) {
-      openDrawer();
+      openDrawer(focusDrawer);
       renderTrendMap();
       if (nextSite.mapAnchor) {
         site.mapAnchor = nextSite.mapAnchor;
@@ -484,7 +484,7 @@
     byId("point-tools").hidden = true;
     byId("point-tools").open = false;
     explorer.scrollTop = 0;
-    openDrawer();
+    openDrawer(focusDrawer);
     renderTrendMap();
     if (nextSite.keepCamera) {
       // No flight, so swap the outlined selection in place; reuse the lifted countries when unchanged.
@@ -842,20 +842,44 @@
       outsideBorder: Boolean(country && direction && !interior) };
   }
 
+  function assistantTarget(place, availablePoints) {
+    return place.kind === "point" ? pointSite(place.latitude, place.longitude, availablePoints)
+      : place.id ? place : assistantArea(place, availablePoints);
+  }
+
+  window.getClimateSelection = () => ({ site: site?.id, point: site && !site.areaIds ? pointId(site) : undefined });
+
+  window.selectClimateArea = (place) => {
+    const target = assistantTarget(place, place.kind === "point" ? points : landSamples);
+    if (!target) return null;
+    const surface = target.ocean ? "water" : "land";
+    if ((layer === "water" && surface === "land") || (layer === "land" && surface === "water")) {
+      setLayer(surface);
+      const active = trendMapVariable().id;
+      selectedIds = new Set([layerOptions[surface].includes(active) ? active : layerOptions[surface][0]]);
+      compareMode = false;
+    }
+    if (site?.id === target.id && (analysis || regionRequest)) {
+      openDrawer(false);
+      renderDetails();
+      flyTo(focusZoom(site));
+    } else selectSite(target, { focusDrawer: false });
+    return target.name;
+  };
+
   window.answerClimateArea = async (question, place) => {
     const { ids, lag } = question;
     const availablePoints = place?.kind === "region" ? pointsCoveredBy(...ids.map((id) => trendMap[id])) : points;
-    const target = place?.kind === "point" ? pointSite(place.latitude, place.longitude) :
-      place ? (place.id ? place : assistantArea(place, availablePoints)) : (site?.areaIds || question.kind === "trend") && site;
+    const target = place ? assistantTarget(place, availablePoints) : (site?.areaIds || question.kind === "trend") && site;
     if (!target) return place ? { status: "outside_coverage", region: place.kind === "region" ? place.displayName : null } : null;
     if (place?.kind === "region" && layer === "water") setLayer("land");
     compareMode = ids.length === 2;
     selectedIds = new Set(ids);
     byId("lag").value = lag;
     if (site !== target || !analysis) {
-      if (!await selectSite(target)) return { status: "unavailable" };
+      if (!await selectSite(target, { focusDrawer: false })) return { status: "unavailable" };
     } else {
-      openDrawer();
+      openDrawer(false);
       explorer.scrollTop = 0;
       renderDetails();
     }
@@ -872,14 +896,19 @@
     return { status: "correlation", ...scope, r, from, to };
   };
 
-  window.selectAssistantPoint = ({ lat, lon, variable_x, variable_y, lag_months }) => {
+  window.selectAssistantPoint = ({ region_id, lat, lon, variable_x, variable_y, lag_months }) => {
     if (!pointIds.has(`${lat},${lon}`)) return null;
-    const target = pointSite(lat, lon);
+    const target = storedSites.find(({ id }) => id === region_id) ?? pointSite(lat, lon);
     const ids = [variable_x.toUpperCase(), variable_y.toUpperCase()];
     compareMode = ids[0] !== ids[1];
     selectedIds = new Set(ids);
     byId("lag").value = lag_months;
-    return selectSite(target);
+    if (site?.id === target.id && analysis) {
+      openDrawer(false);
+      renderDetails();
+      return true;
+    }
+    return selectSite(target, { focusDrawer: false });
   };
 
   function trendMapVariable() {
@@ -1720,7 +1749,8 @@
       if (target === byId("chart-stage")) drawChart();
       else if (target === byId("forecast-stage")) drawForecast();
       else if (target === byId("trend-map-stage")) {
-        drawTrendMap();
+        if (app.hasAttribute("data-drawer") || !assistantPanel.hidden) flyTo(site ? focusZoom(site) : mapView.zoom);
+        else drawTrendMap();
         syncStatic();
       }
       else if (liveStripes.has(target)) drawStripes(target, ...liveStripes.get(target));
@@ -1729,6 +1759,7 @@
 
   // ---- Satellite globe and input ----
   const app = byId("app");
+  const assistantPanel = byId("assistant-dialog");
   const welcome = byId("welcome");
   const welcomeTab = byId("show-welcome");
   const stage = byId("trend-map-stage");
@@ -1842,13 +1873,22 @@
       }
     }
     const spread = Math.max(2.5, Math.min(countrySpread, 7), ...samples);
-    const [width, height] = mapSize();
-    const mobile = width <= 760;
-    const visibleWidth = mobile ? width : width - byId("drawer").offsetWidth;
-    const visibleHeight = mobile ? height - byId("drawer").offsetHeight - byId("map-toolbar").offsetHeight - 38 : height;
-    const available = Math.min(visibleWidth, visibleHeight);
-    const framing = Math.max(30, available * (mobile ? 0.44 : 0.46));
+    const { right, top, bottom } = visibleMap();
+    const framing = Math.max(30, Math.min(right, bottom - top) * 0.44);
     return Math.min(3.2, globe.zoomFor(spread + 1.25, framing));
+  }
+
+  function visibleMap() {
+    const [width, height] = mapSize();
+    const drawer = app.hasAttribute("data-drawer") ? byId("drawer") : null;
+    const chat = assistantPanel.hidden ? null : assistantPanel;
+    if (width <= 760 && (drawer || chat)) {
+      const top = byId("map-toolbar").getBoundingClientRect().bottom;
+      const bottom = Math.min(drawer?.offsetTop ?? height, chat?.offsetTop ?? height) - mapSelector.offsetHeight - 8;
+      return { right: width, top, bottom: Math.max(top, bottom) };
+    }
+    const gap = chat ? parseFloat(getComputedStyle(app).getPropertyValue("--map-inset")) : 0;
+    return { right: width - (drawer?.offsetWidth ?? 0) - (chat?.offsetWidth ?? 0) - gap, top: 0, bottom: height };
   }
 
   function boxBounds([x1, y1], [x2, y2]) {
@@ -2032,16 +2072,14 @@
     }
   }
 
-  function flyTo(zoom, { avoidPanel = true,
+  function flyTo(zoom, {
     lat = site?.mapAnchor?.[1] ?? site?.latitude ?? unmeasuredPoint?.latitude ?? mapView.lat,
     lon = site?.mapAnchor?.[0] ?? site?.longitude ?? unmeasuredPoint?.longitude ?? mapView.lon } = {}) {
     const selection = site;
-    const [width] = mapSize();
-    const open = avoidPanel && app.hasAttribute("data-drawer");
-    const panel = byId("drawer");
-    const offsetX = open && width > 760 ? -panel.offsetWidth / 2 : 0;
-    const toolbar = open && width <= 760 ? byId("map-toolbar").getBoundingClientRect().bottom : 0;
-    const offsetY = toolbar ? (toolbar - panel.offsetHeight - mapSelector.offsetHeight - 8) / 2 : 0;
+    const [width, height] = mapSize();
+    const { right, top, bottom } = visibleMap();
+    const offsetX = (right - width) / 2;
+    const offsetY = (top + bottom - height) / 2;
     const from = { ...mapView };
     const previous = viewedSite;
     const changingSite = previous?.id !== selection?.id;
@@ -2173,16 +2211,16 @@
     mapTip.style.top = `${y}px`;
   }
 
-  function openDrawer() {
+  function openDrawer(focus = true) {
     if (drawingArea) setAreaMode(false);
     app.setAttribute("data-drawer", "");
     setWelcomeOpen(false);
-    byId("drawer-title").focus({ preventScroll: true });
+    if (focus) byId("drawer-title").focus({ preventScroll: true });
   }
 
   function closeDrawer() {
     app.removeAttribute("data-drawer");
-    if (flight || mapView.offsetX || mapView.offsetY) flyTo(mapView.zoom, { avoidPanel: false });
+    if (flight || mapView.offsetX || mapView.offsetY) flyTo(mapView.zoom);
     world.focus({ preventScroll: true });
   }
 
@@ -2460,7 +2498,7 @@
     regionResults.hidden = true;
     delete regionResults.dataset.site;
     delete regionResults.dataset.point;
-    flyTo(view.zoom, { avoidPanel: false, lat: view.lat, lon: view.lon });
+    flyTo(view.zoom, { lat: view.lat, lon: view.lon });
     world.focus({ preventScroll: true });
   }
   byId("zoom-reset").addEventListener("click", () => clearSelection(home));
@@ -2521,11 +2559,25 @@
   byId("close-help").addEventListener("click", () => help.close());
   help.addEventListener("click", (event) => { if (event.target === help) help.close(); });
   const how = byId("how");
-  const assistantDialog = byId("assistant-dialog");
-  for (const id of ["show-assistant", "ask-at-point"]) {
-    byId(id).addEventListener("click", () => assistantDialog.showModal());
+  const assistantButton = byId("show-assistant");
+  let assistantOpener;
+  function setAssistantOpen(open, opener = assistantButton) {
+    assistantPanel.hidden = !open;
+    app.toggleAttribute("data-assistant", open);
+    assistantButton.setAttribute("aria-expanded", String(open));
+    if (open) {
+      assistantOpener = opener;
+      setWelcomeOpen(false);
+      byId("assistant-question").focus({ preventScroll: true });
+    } else {
+      const opener = assistantOpener?.getClientRects().length ? assistantOpener : assistantButton;
+      opener.focus({ preventScroll: true });
+    }
+    flyTo(site ? focusZoom(site) : mapView.zoom);
   }
-  byId("close-assistant").addEventListener("click", () => assistantDialog.close());
+  assistantButton.addEventListener("click", () => setAssistantOpen(assistantPanel.hidden));
+  byId("ask-at-point").addEventListener("click", (event) => setAssistantOpen(true, event.currentTarget));
+  byId("close-assistant").addEventListener("click", () => setAssistantOpen(false));
   byId("show-how").addEventListener("click", () => how.showModal());
   byId("close-how").addEventListener("click", () => how.close());
   how.addEventListener("click", (event) => { if (event.target === how) how.close(); });
@@ -2566,7 +2618,11 @@
     });
   }
   document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || how.open || help.open || assistantDialog.open || exportDialog.open) return;
+    if (event.key !== "Escape" || how.open || help.open || exportDialog.open) return;
+    if (!assistantPanel.hidden && assistantPanel.contains(document.activeElement)) {
+      setAssistantOpen(false);
+      return;
+    }
     const info = explorer.querySelector("details[open] > .info-icon, #point-tools[open] > summary");
     if (info && app.hasAttribute("data-drawer")) {
       info.parentElement.open = false;

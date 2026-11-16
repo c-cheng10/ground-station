@@ -7,19 +7,32 @@ const vm = require("node:vm");
 function loadAssistant(fetch) {
   const countries = ["Australia", "Austria", "Georgia", "Madagascar", "Niger", "Nigeria"].map((name) => ({ name }));
   const window = { WORLD_MAP: { countries } };
-  const nodes = new Map();
-  const element = (id) => {
-    if (!nodes.has(id)) nodes.set(id, {
+  const createNode = () => {
+    const selectors = new Map();
+    return {
+      children: [],
       dataset: {},
       addEventListener(type, handler) { this[type] = handler; },
+      append(...children) { this.children.push(...children); },
       focus() {},
-      querySelector: () => element("fieldset"),
+      querySelector(selector) {
+        if (!selectors.has(selector)) selectors.set(selector, createNode());
+        return selectors.get(selector);
+      },
       querySelectorAll: () => [],
-      replaceChildren() {},
-    });
+    };
+  };
+  const nodes = new Map();
+  const element = (id) => {
+    if (!nodes.has(id)) nodes.set(id, createNode());
     return nodes.get(id);
   };
-  const context = vm.createContext({ window, document: { getElementById: element }, fetch, URL, URLSearchParams, AbortSignal });
+  const history = element("assistant-history");
+  element("assistant-message-template").content = { firstElementChild: { cloneNode: createNode } };
+  window.getClimateSelection = () => element("region-results").dataset;
+  window.selectClimateArea = (place) => place.displayName ?? place.name ?? place.country?.name;
+  const document = { getElementById: element, createElement: createNode };
+  const context = vm.createContext({ window, document, fetch, URL, URLSearchParams, AbortSignal });
   const load = (file) => vm.runInContext(readFileSync(resolve(__dirname, "..", file), "utf8"), context, { filename: file });
   for (const file of ["trend-config.js", "selection-admin1.js", "assistant-place.js", "correlation-assistant.js"]) {
     load(file);
@@ -28,7 +41,9 @@ function loadAssistant(fetch) {
     element("assistant-question").value = question;
     await element("assistant-form").submit({ preventDefault() {} });
   };
-  return { window, element, ask };
+  const replies = () => history.children.filter((_, index) => index % 2 === 1)
+    .map((message) => message.querySelector(".assistant-reply").textContent);
+  return { window, element, ask, history, replies };
 }
 
 const interpret = (details) => ({ intent: { kind: "trend", place: null, variable_ids: [], lag_months: 0,
@@ -97,7 +112,7 @@ test("Ask AI sends the resolved site for correlations and dated research", async
     interpret({ place: "the Cerado biome", variable_ids: ["t2m"] }),
     interpret({ place: "the Cerado in Canada", variable_ids: ["t2m"] }),
   ];
-  const { window, element, ask } = loadAssistant(async (url, options) => {
+  const { window, element, ask, replies } = loadAssistant(async (url, options) => {
     assert.equal(url.pathname, "/functions/v1/climate-assistant-giovanni");
     const body = JSON.parse(options.body);
     if (body.mode === "interpret") return respond(turns.shift());
@@ -118,15 +133,15 @@ test("Ask AI sends the resolved site for correlations and dated research", async
     return { status: "no_data", name: place.name };
   };
   await ask("How has air temperature changed in the Cerado biome over time?");
-  assert.match(element("assistant-reply").textContent, /grid points in Cerrado/);
+  assert.match(replies().at(-1), /grid points in Cerrado/);
   await ask("What is the air temperature trend in the Cerado in Canada?");
-  assert.match(element("assistant-reply").textContent, /Cerrado study area is in Brazil/);
+  assert.match(replies().at(-1), /Cerrado study area is in Brazil/);
   assert.equal(requests.length, 2);
 });
 
 test("Ask AI submits casual wording as written and uses the interpreted place ahead of a selection", async () => {
   const requests = [];
-  const { window, element, ask } = loadAssistant(async (_url, options) => {
+  const { window, element, ask, replies } = loadAssistant(async (_url, options) => {
     requests.push(JSON.parse(options.body));
     return respond(interpret({ place: "Madagascar", variable_ids: ["prectotcorr"] }));
   });
@@ -141,12 +156,12 @@ test("Ask AI submits casual wording as written and uses the interpreted place ah
   assert.equal(requests.length, 1);
   assert.equal(requests[0].mode, "interpret");
   assert.equal(requests[0].question, "tell me about madagascar's rain");
-  assert.match(element("assistant-reply").textContent, /grid points in Madagascar/);
+  assert.match(replies().at(-1), /grid points in Madagascar/);
 });
 
 test("Ask AI resolves the Ontario soil question to the province's grid points", async () => {
   const question = "tell me about ontario, Canada and its soil levels";
-  const { window, element, ask } = loadAssistant(async (url, options) => {
+  const { window, ask, replies } = loadAssistant(async (url, options) => {
     assert.equal(url.pathname, "/functions/v1/climate-assistant-giovanni");
     assert.equal(JSON.parse(options.body).question, question);
     return respond(interpret({ place: "Ontario, Canada", variable_ids: ["gwetroot"] }));
@@ -159,22 +174,56 @@ test("Ask AI resolves the Ontario soil question to the province's grid points", 
     return { status: "no_data", name: place.displayName };
   };
   await ask(question);
-  assert.match(element("assistant-reply").textContent, /grid points in Ontario, Canada/);
+  assert.match(replies().at(-1), /grid points in Ontario, Canada/);
 });
 
 test("Ask AI stops on invalid measurements, time windows or unclear intent", async () => {
   const intents = [interpret({ place: "Madagascar", variable_ids: ["unlisted"] }),
     interpret({ place: "Madagascar", variable_ids: ["prectotcorr"], start_year: 2020, end_year: 2021 }),
     interpret({ kind: "clarify", reason: "measurement" })];
-  const { window, element, ask } = loadAssistant(async (_url, options) => {
+  const { window, ask, replies } = loadAssistant(async (_url, options) => {
     assert.equal(JSON.parse(options.body).mode, "interpret");
     return respond(intents.shift());
   });
   window.answerClimateArea = async () => assert.fail("Invalid intent cannot load climate data");
   await ask("Show Madagascar's oxidation");
-  assert.match(element("assistant-reply").textContent, /could not identify/);
+  assert.match(replies().at(-1), /could not identify/);
   await ask("Show Madagascar's rainfall trend from 2020 to 2021");
-  assert.match(element("assistant-reply").textContent, /could not identify/);
+  assert.match(replies().at(-1), /could not identify/);
   await ask("What about Madagascar's humidity?");
-  assert.match(element("assistant-reply").textContent, /Which measurement/);
+  assert.match(replies().at(-1), /Which measurement/);
+});
+
+test("Ask AI selects local place-only prompts without a request and keeps earlier turns", async () => {
+  const { window, ask, history, replies } = loadAssistant(() => assert.fail("Local places need no request"));
+  const selections = [];
+  window.selectClimateArea = (place) => {
+    selections.push(place.id ?? place.region.code);
+    return place.displayName ?? place.name;
+  };
+
+  await ask("the Cerrado");
+  await ask("Show me Ontario, Canada");
+
+  assert.deepEqual(selections, ["cerrado", "CA-ON"]);
+  assert.deepEqual(history.children.filter((_, index) => index % 2 === 0).map((message) => message.textContent),
+    ["the Cerrado", "Show me Ontario, Canada"]);
+  assert.deepEqual(replies(), ["Selected Cerrado on the globe.", "Selected Ontario, Canada on the globe."]);
+});
+
+test("Ask AI selects a place from an interpreted location request", async () => {
+  const question = "Could you put my view over western Nigeria?";
+  const { window, ask, replies } = loadAssistant(async (url, options) => {
+    assert.equal(url.pathname, "/functions/v1/climate-assistant-giovanni");
+    assert.equal(JSON.parse(options.body).question, question);
+    return respond(interpret({ kind: "select", place: "western Nigeria" }));
+  });
+  window.selectClimateArea = (place) => {
+    assert.equal(place.country.name, "Nigeria");
+    assert.equal(place.direction, "west");
+    return place.displayName;
+  };
+
+  await ask(question);
+  assert.deepEqual(replies(), ["Selected Western Nigeria on the globe."]);
 });

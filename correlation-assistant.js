@@ -5,17 +5,10 @@
   const form = document.getElementById("assistant-form");
   if (!config || !form) return;
 
-  const dialog = document.getElementById("assistant-dialog");
-  const viewArea = document.getElementById("assistant-view-area");
-  const fieldset = form.querySelector("fieldset");
+  const history = document.getElementById("assistant-history");
+  const template = document.getElementById("assistant-message-template");
+  const send = form.querySelector('button[type="submit"]');
   const input = document.getElementById("assistant-question");
-  const reply = document.getElementById("assistant-reply");
-  const result = document.getElementById("assistant-result");
-  const resultTitle = document.getElementById("assistant-result-title");
-  const resultValue = document.getElementById("assistant-result-value");
-  const resultWindow = document.getElementById("assistant-result-window");
-  const researchNotice = document.getElementById("assistant-research-notice");
-  const researchSources = document.getElementById("assistant-research-sources");
   const regionNames = new Map(config.sites.map(({ id, name }) => [id, name]));
   const variables = new Map(config.variables.map((variable) => [variable.id, variable]));
   const monthFormat = new Intl.DateTimeFormat("en-CA", { month: "short", year: "numeric", timeZone: "UTC" });
@@ -39,7 +32,7 @@
     return monthFormat.format(new Date(Date.UTC(Math.floor(yyyymm / 100), yyyymm % 100 - 1, 1)));
   }
 
-  function showCorrelation(row) {
+  function showCorrelation(row, { result, resultTitle, resultValue, resultWindow }) {
     const { region_id, lat, lon, variable_x, variable_y, paired_months, lag_months, pearson_r,
       first_month_x, last_month_x, first_month_y, last_month_y, source_x, source_y } = row;
     const region = regionNames.get(region_id) ?? `${lat}°, ${lon}°`;
@@ -66,7 +59,7 @@
     result.hidden = false;
   }
 
-  function showAreaAnswer(answer, question) {
+  function showAreaAnswer(answer, question, { reply, result, resultTitle, resultValue, resultWindow }) {
     if (answer.status === "outside_coverage") {
       reply.textContent = answer.region
         ? `No stored NASA grid points in ${answer.region} cover the requested measurements. Try a different measurement or a broader area.`
@@ -77,7 +70,6 @@
       reply.textContent = "The selected area could not be loaded. Try again or choose a different place.";
       return;
     }
-    viewArea.hidden = false;
     if (answer.status === "no_data") {
       reply.textContent = `The grid points in ${answer.name} don’t share enough complete months for this question. Try another measurement or draw a smaller area.`;
       return;
@@ -109,11 +101,6 @@
     result.hidden = false;
   }
 
-  viewArea.addEventListener("click", () => {
-    dialog.close();
-    document.getElementById("drawer-title").focus({ preventScroll: true });
-  });
-
   async function askAssistant(body) {
     const response = await fetch(new URL("/functions/v1/climate-assistant-giovanni", config.supabaseUrl), {
       method: "POST",
@@ -129,10 +116,15 @@
 
   function validateIntent(intent) {
     const { kind, place, variable_ids, lag_months, start_year, end_year, reason } = intent ?? {};
+    const hasPlace = typeof place === "string" && place.trim() && place.length <= 100;
     const count = kind === "trend" ? 1 : kind === "correlation" ? 2 : null;
-    if (kind === "clarify" && typeof reason === "string" && Object.hasOwn(clarification, reason)) return { kind, reason };
+    if (kind === "clarify" && typeof reason === "string" && Object.hasOwn(clarification, reason)) {
+      return { kind, reason, place: hasPlace ? place.trim() : null };
+    }
+    if (kind === "select" && hasPlace && Array.isArray(variable_ids) && variable_ids.length === 0 && lag_months === 0 &&
+        start_year === null && end_year === null && reason === null) return { kind, place: place.trim() };
     if ((count === null && kind !== "research") || reason !== null ||
-        (place !== null && (typeof place !== "string" || !place.trim() || place.length > 100)) ||
+        (place !== null && !hasPlace) ||
         !Array.isArray(variable_ids) || !variable_ids.length || (count !== null && variable_ids.length !== count) ||
         new Set(variable_ids).size !== variable_ids.length ||
         !variable_ids.every((id) => typeof id === "string" && id === id.toLowerCase() && variables.has(id.toUpperCase())) ||
@@ -146,13 +138,12 @@
       variable_ids, start_year, end_year };
   }
 
-  async function showLookup(answer, pointId) {
+  async function showLookup(answer, turn) {
+    const { reply, researchNotice, researchSources } = turn;
     if (typeof answer?.reply !== "string") throw new Error("The assistant returned an invalid reply.");
     if (answer.correlation) {
-      showCorrelation(answer.correlation);
-      if (!pointId || answer.correlation.point_id !== pointId) {
-        viewArea.hidden = !await window.selectAssistantPoint(answer.correlation);
-      }
+      showCorrelation(answer.correlation, turn);
+      await window.selectAssistantPoint(answer.correlation);
     }
     const research = window.ClimateResearch;
     if (research && Array.isArray(answer.sources)) research.renderSources(researchSources, answer.sources);
@@ -160,93 +151,145 @@
       researchNotice.hidden = false;
       researchNotice.textContent = research.partialNotice;
     }
-    reply.textContent = answer.reply;
+    reply.textContent = reply.textContent ? `${reply.textContent}\n\n${answer.reply}` : answer.reply;
+  }
+
+  async function resolvePlace(name, localOnly = false) {
+    const { entry, ambiguous, wrongCountry } = window.AssistantPlace.findStudyArea(name, config.sites);
+    const unresolved = (message) => ({ kind: "unresolved", message });
+    if (wrongCountry) return unresolved(`The saved ${wrongCountry.name} study area is in ${wrongCountry.region}. Check the place name or use Box select.`);
+    if (ambiguous) return unresolved(`More than one study area matches “${name}”. Enter its full name.`);
+    if (entry) return entry;
+    const coordinate = name.match(/^([+-]?\d{1,3}(?:\.\d{1,6})?)\s*,\s*([+-]?\d{1,3}(?:\.\d{1,6})?)$/);
+    if (coordinate) {
+      const [latitude, longitude] = coordinate.slice(1).map(Number);
+      return Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180 ? { kind: "point", latitude, longitude }
+        : unresolved("Enter latitude from −90° to 90° and longitude from −180° to 180°.");
+    }
+    return window.AssistantPlace.resolve(name, { localOnly, signal: AbortSignal.timeout(8_000) });
+  }
+
+  function selectPlace(place, reply) {
+    const name = window.selectClimateArea(place);
+    reply.textContent = name ? `Selected ${name} on the globe.`
+      : "No stored NASA grid points are close enough to that place. Try another location.";
   }
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const question = input.value.trim();
-    if (!question || fieldset.disabled) return;
-    result.hidden = true;
-    viewArea.hidden = true;
-    researchNotice.hidden = true;
-    researchSources.replaceChildren();
-    researchSources.hidden = true;
-    if (!config.supabaseUrl || !config.supabaseAnonKey) {
-      reply.textContent = "The climate assistant is unavailable.";
-      return;
-    }
-
-    const selection = document.getElementById("region-results")?.dataset;
-    const selected = selection?.site;
-    const selectedRegion = regionNames.has(selected) ? selected : undefined;
-    const selectedPoint = selection?.point || undefined;
-    fieldset.disabled = true;
+    if (!question || send.disabled) return;
+    const message = document.createElement("p");
+    message.className = "assistant-message";
+    message.textContent = question;
+    const response = template.content.firstElementChild.cloneNode(true);
+    const turn = {
+      reply: response.querySelector(".assistant-reply"),
+      result: response.querySelector(".assistant-result"),
+      resultTitle: response.querySelector(".assistant-result-title"),
+      resultValue: response.querySelector(".assistant-result-value"),
+      resultWindow: response.querySelector(".assistant-result-window"),
+      researchNotice: response.querySelector(".assistant-research-notice"),
+      researchSources: response.querySelector(".assistant-research-sources"),
+    };
+    const { reply } = turn;
+    input.value = "";
+    input.focus({ preventScroll: true });
+    send.disabled = true;
     reply.textContent = "Looking up your question…";
+    history.append(message, response);
+    history.scrollTop = history.scrollHeight;
+    const { site: selected, point: selectedPoint } = window.getClimateSelection();
+    const selectedRegion = regionNames.has(selected) ? selected : undefined;
+
     try {
-      const interpreted = await askAssistant({ mode: "interpret", question, has_selection: Boolean(selected),
-        region_id: selectedRegion, point_id: selectedPoint });
+      const candidate = question.replace(/^(?:(?:can|could) you )?(?:show (?:me )?|take me to |go to |zoom (?:in )?on |select |tell me about |what about )/i, "")
+        .replace(/[.!?]+$/, "").trim();
+      const localPlace = await resolvePlace(candidate, true);
+      if (localPlace && localPlace.kind !== "unresolved") return selectPlace(localPlace, reply);
+
+      // Direct names still work when the deployed interpreter is older or rate-limited.
+      const bareName = candidate.split(/\s+/).length <= 6 &&
+        /^[\p{L}\p{M}][\p{L}\p{M} .,’'\p{Pd}]*$/u.test(candidate) &&
+        !/^(?:how|what|where|why|does|did|is|has|find|news|research|compare)\b|\b(?:and|trend|correlation)\b|[’']s /i.test(candidate);
+      const fallbackPlace = async () => bareName ? localPlace ?? await resolvePlace(candidate).catch(() => null) : null;
+      let interpreted;
+      try {
+        if (!config.supabaseUrl || !config.supabaseAnonKey) throw new Error("The climate assistant is unavailable.");
+        interpreted = await askAssistant({ mode: "interpret", question, has_selection: Boolean(selected),
+          region_id: selectedRegion, point_id: selectedPoint });
+      } catch (error) {
+        const place = await fallbackPlace();
+        if (!place || place.kind === "unresolved") throw error;
+        return selectPlace(place, reply);
+      }
+
       if (!interpreted?.intent) {
-        await showLookup(interpreted, selectedPoint);
+        const name = typeof interpreted?.place === "string" ? interpreted.place : null;
+        const hasEvidence = interpreted?.sources || interpreted?.correlation;
+        const place = name ? await resolvePlace(name).catch(() => null) : hasEvidence ? null : await fallbackPlace();
+        reply.textContent = "";
+        if (place && place.kind !== "unresolved") selectPlace(place, reply);
+        if (name && place?.kind === "unresolved") reply.textContent = place.message;
+        if (name || hasEvidence || !place || place.kind === "unresolved") await showLookup(interpreted, turn);
         return;
       }
       const area = validateIntent(interpreted.intent);
+      const placeName = area.place ?? (area.kind === "clarify" && bareName ? candidate : null);
+      const place = placeName ? await resolvePlace(placeName) : null;
+      if (place?.kind === "unresolved") {
+        reply.textContent = area.place ? place.message : clarification[area.reason];
+        return;
+      }
+      if (area.kind === "select") return selectPlace(place, reply);
       if (area.kind === "clarify") {
-        reply.textContent = clarification[area.reason];
+        if (place) selectPlace(place, reply);
+        if (!place || area.place) reply.textContent = place
+          ? `${reply.textContent}\n\n${clarification[area.reason]}` : clarification[area.reason];
         return;
       }
-      const placeName = area.place;
-      const match = window.AssistantPlace.findStudyArea(placeName, config.sites);
-      if (match.ambiguous || match.wrongCountry) {
-        reply.textContent = match.wrongCountry
-          ? `The saved ${match.wrongCountry.name} study area is in ${match.wrongCountry.region}. Check the place name or use Box select.`
-          : `More than one study area matches “${placeName}”. Enter its full name.`;
-        return;
-      }
-      const namedSite = match.entry;
-      const region_id = namedSite?.id ?? (!placeName ? selectedRegion : undefined);
+      const region_id = place?.id ?? (!place ? selectedRegion : undefined);
+      const point_id = region_id ? undefined : place?.kind === "point" ? `${place.latitude},${place.longitude}`
+        : !place ? selectedPoint : undefined;
       if (area.kind === "research") {
-        if (!region_id) reply.textContent = "Research search covers the six saved study areas. Choose one to find sources.";
+        reply.textContent = "";
+        if (place) selectPlace(place, reply);
+        if (!region_id) reply.textContent += `${place ? "\n\n" : ""}Research search covers the six saved study areas. Choose one to find sources.`;
         else await showLookup(await askAssistant({ mode: "lookup", tool: "find_research", region_id,
           variable_ids: area.variable_ids, start_year: area.start_year ?? config.startYear,
-          end_year: area.end_year ?? config.endYear }), selectedPoint);
+          end_year: area.end_year ?? config.endYear }), turn);
         return;
       }
-      if (!placeName && !selected) {
+      if (!place && !selected) {
         reply.textContent = clarification.place;
         return;
       }
-
-      const coordinate = placeName?.match(/^([+-]?\d{1,3}(?:\.\d{1,6})?)\s*,\s*([+-]?\d{1,3}(?:\.\d{1,6})?)$/);
-      const [latitude, longitude] = coordinate ? coordinate.slice(1).map(Number) : [];
-      if (coordinate && (Math.abs(latitude) > 90 || Math.abs(longitude) > 180)) {
-        reply.textContent = "Enter latitude from −90° to 90° and longitude from −180° to 180°.";
-        return;
-      }
-      const point_id = region_id ? undefined : coordinate ? `${latitude},${longitude}` : !placeName ? selectedPoint : undefined;
       if (area.kind === "correlation" && (region_id || point_id)) {
+        reply.textContent = "";
+        if (place) selectPlace(place, reply);
         await showLookup(await askAssistant({ mode: "lookup", tool: "get_correlation", region_id, point_id,
-          variable_ids: area.variable_ids, lag_months: area.lag }), selectedPoint);
+          variable_ids: area.variable_ids, lag_months: area.lag }), turn);
         return;
       }
 
-      reply.textContent = placeName ? `Finding ${placeName} on the map…` : "Loading the selected area…";
-      const place = namedSite ?? (coordinate ? { kind: "point", latitude, longitude } : placeName
-        ? await window.AssistantPlace.resolve(placeName, { signal: AbortSignal.timeout(8_000) }) : null);
-      if (place?.kind === "unresolved") {
-        reply.textContent = place.message;
-        return;
-      }
+      reply.textContent = "Loading NASA data…";
       const answer = await window.answerClimateArea(area, place);
-      if (answer) showAreaAnswer(answer, area);
+      if (answer) showAreaAnswer(answer, area, turn);
       else reply.textContent = clarification.place;
     } catch (error) {
       reply.textContent = error instanceof TypeError || error.name === "TimeoutError"
         ? "Could not reach the climate assistant. Try again."
         : error.message;
     } finally {
-      fieldset.disabled = false;
+      send.disabled = false;
+      history.scrollTop = history.scrollHeight;
     }
+  });
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    form.requestSubmit();
   });
 
   for (const button of form.querySelectorAll("button[data-question]")) {

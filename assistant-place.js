@@ -90,7 +90,7 @@
     return { kind: "region", displayName: `${name}, ${country}`, region: { name, country, code, samples } };
   }
 
-  async function resolve(name, { signal } = {}) {
+  async function resolve(name, { signal, localOnly = false } = {}) {
     const input = typeof name === "string" ? name.trim() : "";
     const [city, qualifier, countryQualifier, ...extra] = input.split(/,|\s+in\s+/i).map((part) => part.trim());
     if (input.length < 2 || input.length > 100 || extra.length ||
@@ -115,8 +115,8 @@
       const [, article, direction, connector, base] = directional;
       const bearing = direction.toLowerCase();
       const interior = Boolean(article) || /^ern/i.test(connector);
-      const result = await resolve(base, { signal });
-      if (result.kind === "unresolved") return result;
+      const result = await resolve(base, { signal, localOnly });
+      if (!result || result.kind === "unresolved") return result;
       if (result.region && !interior) {
         return unresolved("Use a direction within a state or province, such as “northern Ontario”.");
       }
@@ -131,6 +131,7 @@
     if (/\b(?:biome|ecoregion)$/.test(nameKey(city)) || /^(?:sahel|rain[ -]?forest|savann?ah?|tundra|taiga|desert|steppe)$/.test(key)) {
       return unresolved(`There’s no saved study area for “${input}”. Use Box select on the globe to choose the grid points to compare.`);
     }
+    if (localOnly) return null;
 
     const isWashingtonDC = cityKey === "washington" && qualifier && normalize(qualifier) === "dc";
     const searchName = isWashingtonDC ? "Washington D.C." : cityNames.get(cityKey) ?? city.replace(/^city of\s+/i, "");
